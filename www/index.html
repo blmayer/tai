@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tai.nvim + tai-server</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto}a{color:#ff00ff}</style>
+<pre><i><b>tai.nvim + tai-server</b></i>
+
+a minimal Neovim plugin paired with a unix socket server,
+built to bring AI-powered text and code insights directly
+to your editor.
+
+the plugin connects to <i>/tmp/tai.sock</i> and sends
+selections, prompts, or full files for processing by
+a backend server using the groq API.
+
+
+<b>features</b>
+
+- send motions or visual selections from Neovim
+- prompt for input and combine it with text or files
+- server caches summaries for faster, smarter replies
+- responses show up in a bottom split buffer in Neovim
+- requires environment variable <i>GROQ_API_KEY</i>
+- simple lua and go code for easy customization
+
+
+<b>keybindings</b>
+
+gT + motion      - send motion selection
+gP + motion      - send motion selection with prompted input
+&lt;leader&gt;ti (normal) - prompt input and send
+&lt;leader&gt;tf (normal) - prompt input and send with full file
+
+
+<b>installation</b>
+
+clone or place <i>lua/tai.lua</i> into your Neovim config directory
+<code>~/.config/nvim/lua/</code> and add keymaps to <i>init.lua</i>:
+
+  vim.g.mapleader = " "
+
+  local tai = require("tai")
+
+  vim.keymap.set("n", "gT", function()
+    vim.cmd("set operatorfunc=v:lua.tai_operator_send")
+    vim.api.nvim_feedkeys("g@", "n", false)
+  end)
+
+  vim.keymap.set("n", "gP", function()
+    vim.cmd("set operatorfunc=v:lua.tai_operator_send_with_prompt")
+    vim.api.nvim_feedkeys("g@", "n", false)
+  end)
+
+  vim.keymap.set("v", "&lt;leader&gt;t", function()
+    tai.operator_send("char")
+  end, { noremap = true, silent = true })
+
+  vim.keymap.set("i", "&lt;leader&gt;ti", function()
+    vim.schedule(tai.prompt_input)
+  end, { noremap = true })
+
+  vim.keymap.set("i", "&lt;leader&gt;tf", function()
+    vim.schedule(tai.prompt_full_file)
+  end, { noremap = true })
+
+build and run the go server:
+
+  go build -o tai-server ./path/to/server
+  ./tai-server
+
+make sure <i>/tmp/tai.sock</i> exists and
+the <i>GROQ_API_KEY</i> environment variable is set.
+
+
+<b>usage</b>
+
+send text or prompts from Neovim using the
+keybindings above. the server will cache file
+summaries and respond with enhanced context-aware
+answers.
+
+
+<b>license</b>
+
+MIT License
+
+(C) 2025 Brian Mayer
+</pre>
+
