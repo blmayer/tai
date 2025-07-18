@@ -99,10 +99,10 @@ end
 function tai.prompt_input()
   vim.ui.input({ prompt = "Tai Input:" }, function(input)
     if input and input ~= "" then
-      if tai.sock then
+      if sock then
 	local filename = vim.fn.expand("%:p")                -- absolute path
 	local preamble = string.format("I'm edditing %s, please consider:\n", filename)
-        tai.sock:write(preamble .. input .. "\n")
+        tai.send_text(preamble .. input .. "\n")
       else
         vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
       end
@@ -128,8 +128,8 @@ function tai.prompt_full_file()
     local preamble = string.format("I'm edditing %s with cursor at %s, please consider my demand:\n", filename, location)
     local payload = preamble .. "\n" .. input .. "\n***\nFile content:\n\n" .. text
 
-    if tai.sock then
-      tai.sock:write(payload .. "\n")
+    if sock then
+      tai.send_text(payload .. "\n")
     else
       vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
     end
@@ -161,6 +161,37 @@ function tai.operator_send(type)
   local preamble = string.format("I'm edditing %s at %s, consider the selection:\n", filename, location)
 
   tai.send_text(preamble .. text)
+end
+
+function tai.operator_send_with_prompt(type)
+  -- Get the selected text range (like operator_send)
+  local start_pos = vim.api.nvim_buf_get_mark(0, "[")
+  local end_pos = vim.api.nvim_buf_get_mark(0, "]")
+  local start_row = start_pos[1] - 1
+  local start_col = start_pos[2]
+  local end_row = end_pos[1] - 1
+  local end_col = end_pos[2] + 1 -- inclusive
+
+  local lines = vim.api.nvim_buf_get_text(0, start_row, start_col, end_row, end_col, {})
+  local text = table.concat(lines, "\n")
+
+  -- Prompt user for input, then send combined
+  vim.ui.input({ prompt = "Tai Input:" }, function(input)
+    if not input or input == "" then return end
+
+    local filename = vim.fn.expand("%:p")
+    local location = string.format("# From line %d, col %d to line %d, col %d",
+    start_pos[1], start_pos[2] + 1, end_pos[1], end_pos[2] + 1)
+
+    local payload = string.format("I'm edditing %s at %s, consider the selection:\n\n%s\n\nAnd the input:\n%s",
+    filename, location, text, input)
+
+    if sock then
+      tai.send_text(payload .. "\n")
+    else
+      vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+    end
+  end)
 end
 
 tai.connect()
