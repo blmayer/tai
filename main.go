@@ -4,6 +4,7 @@ import (
 	"golang.org/x/term"
 
 	"fmt"
+	"log"
 	"io"
 	"os"
 	"strings"
@@ -62,7 +63,7 @@ func pipelineMode(model string) {
 }
 
 func interactiveMode(model string) {
-	fmt.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
+	log.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
 	messages := []ChatMessage{
 		{Role: "system", Content: "You are 'tai', a command-line AI assistant running in interactive mode."},
 	}
@@ -82,7 +83,6 @@ func interactiveMode(model string) {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			break
 		}
-		fmt.Println(resp)
 		messages = append(messages, ChatMessage{Role: "assistant", Content: resp})
 	}
 }
@@ -94,7 +94,7 @@ func ideMode(model string) {
 		os.Exit(1)
 	}
 
-	fmt.Println("Socket ready")
+	log.Println("Socket ready")
 	taiSocket(sockPath)
 }
 

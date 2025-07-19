@@ -21,9 +21,17 @@ var (
 // describing the file structure.
 func InitProjectPrompt() error {
 	fmt.Println("Starting project")
+	dir, err := os.Getwd()
+	if err != nil {
+        	return err
+    	}
 
-	prompt = "The project contains the following files and structure:\n"
-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+	prompt = fmt.Sprintf(
+		"You are managing a project at %s, which contains the following files and structure:\n",
+		dir,
+	)
+
+	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -135,7 +143,7 @@ func process(message string) (string, error) {
 
 	messages := []ChatMessage{
 		{Role: "system", Content: prompt},
-		{Role: "system", Content: "Your answear must me a valid MIME message. Dont include anything outside the MIME message."},
+		{Role: "system", Content: "Your answear must me a valid MIME message, start with MIME-version, and create a valid boundary. For code changes you must send it in the path format, do it in a separate part in me MIMEv format. Don't include anything outside the MIME message like backticks or other formating things."},
 		{Role: "user", Content: message},
 	}
 
