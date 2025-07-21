@@ -4,22 +4,85 @@ local uv = vim.loop
 local sock_path = "/tmp/tai.sock"
 local sock = nil
 
+local function parse_mime(mime_text)
+  local parts = {}
+  local boundary = mime_text:match("boundary=\"?([^\"]+)\"?")
+  if not boundary then return parts end
+
+  -- Split the entire message into parts using boundary
+  for part in mime_text:gmatch("--" .. boundary .. "%s*(.-)%s*--" .. boundary .. "[%s%-]*") do
+    local headers = {}
+    local body = part:match("\r?\n\r?\n(.*)")
+    local header_section = part:match("^(.-)\r?\n\r?\n")
+
+    if header_section then
+      for name, value in header_section:gmatch("([%w%-]+):%s*(.-)\r?\n") do
+        headers[name:lower()] = value
+      end
+
+      -- Try to get a name (e.g., from Content-Disposition or Content-Type)
+      local name = headers["content-disposition"] and headers["content-disposition"]:match('filename="?(.-)"?')
+
+      if name and body then
+        parts[name] = body:gsub("\r\n", "\n") -- normalize line endings
+      end
+    end
+  end
+
+  return parts
+end
+
+local function parse_named_mime_fields(raw)
+  local result = {}
+
+  -- Extract the boundary
+  local boundary = raw:match("boundary=\"?([^\"]+)\"?")
+  if not boundary then return nil, "No boundary found" end
+  boundary = "--" .. boundary
+      vim.schedule(function()
+	  vim.notify("boundary " .. boundary)
+  end)
+
+  -- Split parts
+  for part in raw:gmatch(boundary .. "\r?\n(.-)\r?\n" .. boundary) do
+      vim.schedule(function()
+	  vim.notify("part " .. part)
+  end)
+    local headers, body = part:match("^(.-)\r?\n\r?\n(.*)")
+    if headers and body then
+      local name = headers:match('filename="([^"]+)"')
+      if name then
+        -- Remove any trailing boundary marker
+        body = body:gsub("\r?\n$", "")
+        result[name] = body
+      end
+    end
+  end
+
+      vim.schedule(function()
+        vim.notify("[tai] parsed text " .. result.text, vim.log.levels.INFO)
+        vim.notify("[tai] parsed patch " .. result.patch, vim.log.levels.INFO)
+       end)
+  return result
+end
+
 -- Connect to the socket at startup
 function tai.connect()
   sock = uv.new_pipe(false)
   sock:connect(sock_path, function(err)
     if err then
-      vim.notify("[tai] Could not connect to " .. sock_path .. ": " .. err, vim.log.levels.ERROR)
-      return
+      vim.schedule(function()
+        vim.notify("[tai] Could not connect to " .. sock_path .. ": " .. err, vim.log.levels.ERROR)
+       end)
+    return
     end
     vim.schedule(function()
-	    vim.notify("[tai] Connected to " .. sock_path)
+	vim.notify("[tai] Connected to " .. sock_path)
     end)
     return
   end)
 
   sock:read_start(function(err, chunk)
-    local chunks = {}
     if err then
       vim.schedule(function()
         vim.notify("[tai] Read error: " .. err, vim.log.levels.ERROR)
@@ -27,15 +90,28 @@ function tai.connect()
       return
     end
 
-    local full_response = table.concat(chunks)
-    if chunk then
-      table.insert(chunks, chunk)
-    else
-      full_response = table.concat(chunks)
+    if not chunk then
+      return
     end
-    vim.schedule(function()
-        tai.show_output_in_split(chunk)
-    end)
+
+    local fields, err = parse_named_mime_fields(chunk)
+    if err then
+      vim.schedule(function()
+        vim.notify("[tai] Parse error: " .. err, vim.log.levels.ERROR)
+      end)
+      return
+    end
+
+    if fields.text then
+      vim.schedule(function()
+          tai.show_output_in_split(fields.text)
+      end)
+    end
+    if fields.patch then
+      vim.schedule(function()
+          tai.show_output_in_vsplit(fields.patch)
+      end)
+    end
   end)
 end
 
@@ -44,6 +120,27 @@ function tai.show_output_in_split(content)
 
   -- Create a new horizontal split
   vim.cmd("botright 8new")
+  local bufnr = vim.api.nvim_get_current_buf()
+
+  -- Set buffer options to make it a scratch window
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].swapfile = false
+  vim.bo[bufnr].modifiable = true
+  vim.bo[bufnr].filetype = "tai-output"
+
+  -- Insert content
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+
+  -- Optional: prevent accidental edits
+  vim.bo[bufnr].modifiable = false
+end
+
+function tai.show_output_in_vsplit(content)
+  local lines = vim.split(content or "", "\n", { trimempty = true })
+
+  -- Create a new vertical split
+  vim.cmd("vnew")
   local bufnr = vim.api.nvim_get_current_buf()
 
   -- Set buffer options to make it a scratch window
@@ -111,7 +208,7 @@ function tai.prompt_input()
 end
 
 function tai.prompt_full_file()
-  vim.ui.input({ prompt = "TAI Input (contextual):" }, function(input)
+  vim.ui.input({ prompt = "Tai Input (contextual):" }, function(input)
     if not input or input == "" then return end
 
     local buf = vim.api.nvim_get_current_buf()

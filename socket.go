@@ -52,7 +52,7 @@ func handleSocketConnection(conn net.Conn) {
 		if prompt == "" {
 			continue
 		}
-		reply, err := process(prompt)
+		reply, err := processRequest(prompt)
 		if err != nil {
 			log.Println("process error:", err)
 			continue
