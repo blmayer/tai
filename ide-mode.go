@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"mime"
 	"mime/multipart"
 	"os"
@@ -16,26 +16,79 @@ const cacheDir = ".tai-cache"
 
 var (
 	preamble string
-	
-	instructionMessage = ChatMessage{
-		Role: "system", 
-		Content: `Please format your responses as a valid multipart MIME message with named parts.
-		Do not include any extraneous data outside of the MIME message like a preamble or backticks.
-		The resonse must start with MIME-version and boundary headers, do not use spaces or special characters for the boundary. 
-		Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
-		For user-facing text, use a plain/text part named 'text'. 
-		For code changes, include a text/x-diff in a part named 'patch'. 
-		If you need to execute commands, include them in a part named 'commands'. 
-		If your response involves multiple steps, include them in a part named 'plan'. 
-		Do not send plan for only one step.
-		Do not nest MIME messages.
 
-		Available commands:
-		 - read <path to file>: use this if you need to know the file's contents.
-		Do not send the commands section for other operations.`,
+	history = []ChatMessage{
+		{
+			Role: "system",
+			Content: `### System
+			You are Tai, a coding assistant for nvim that can return code changes, execute commands and give general code advice.
+			Return **ONLY** valid multipart MIME message with named parts.
+
+			### Intructions
+			Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
+			The response must start with MIME-version and boundary headers, vary and do not use spaces or special characters for the boundary. 
+			- Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
+			- Always use \r\n (CRLF) for line endings.
+			- For user-facing text, use a plain/text part named 'text'. 
+			- For code changes, include a text/x-diff in a part named 'patch'. 
+			- If you need to execute commands, include them in a part named 'commands'. 
+			- If your response involves multiple steps, include them in a part named 'plan'. 
+			- Do not nest MIME messages.
+
+			#### patch
+			For the patch part return a valid patch text to be used by the patch program. Use correct locations based on
+			the provided cursor position, or the file content if sent.
+			If the location is needed and was not sent use a @read command to request the file content.
+			If the location is not important also include the patch in a human friendly form in the "text" part.
+
+			#### plan
+			Do not send the "plan" part for plans with only 1 step. Use [ ] and [X] to keep track of the progress.
+
+			#### commands
+			Commands have 2 types: internal and external ones. Use them sparingly as they are very expensive.
+
+			##### Internal
+			They are intended to be handled by Tai, they **MUST** start with @.
+
+			- @read <relative path to file>: use this if you need to know the file's contents.
+
+			##### External
+			They are run as normal commands on the shell, these can be any programs on a shell pipeline.
+			Be very considerate to the user's current setup to not use programs the user lacks, or designed for other OSs.
+
+			### Context
+			Users basically want one of 2 things: code changes or general info.
+			For code changes use the unified format so users can easily spot the differences, the text section can contain notes but be brief.
+			General info is more informal but include important details and comparisons if requested, be concise.
+
+			### Example output
+			MIME-Version: 1.0
+			Content-Type: multipart/mixed; boundary="asdfasdfasdf"
+
+			--asdfasdfasdf
+			Content-Type: text/plain; charset="utf-8"
+			Content-Disposition: form-data; name="text"
+
+			I'm considering you want a doc string.
+
+			--asdfasdfasdf
+			Content-Type: text/x-patch; charset="utf-8"
+			Content-Disposition: form-data; name="patch"
+
+			diff --git a/abc.py b/abc.py
+			--- a/abc.py
+			+++ b/abc.py
+			@@ -0,0 +1,5 @@
+			-# The function sendRequest ... complete this comment
+			+# The function sendRequest is used to send a request
+			+# Parameters:
+			+# @method: str
+			+# @url: str
+			+# @body: str
+			--asdfasdfasdf--
+			`,
+		},
 	}
-
-	history = []ChatMessage{}
 )
 
 // InitProjectPrompt scans the current directory and returns a prompt
@@ -44,8 +97,8 @@ func InitProjectPrompt() error {
 	fmt.Println("[tai] Starting project")
 	dir, err := os.Getwd()
 	if err != nil {
-        	return err
-    	}
+		return err
+	}
 
 	preamble = fmt.Sprintf(
 		"You are managing a project at %s, which contains the following files and structure:\n",
@@ -90,8 +143,8 @@ func InitProjectPrompt() error {
 // It caches the summaries in .tai-cache/filename.summary.txt
 func getFilesSummary() (string, error) {
 	log.Println("[tai] Creating file caches")
-	os.MkdirAll(cacheDir, 0755)
-	var summaries = ""
+	os.MkdirAll(cacheDir, 0o755)
+	summaries := ""
 
 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
 		log.Printf("[tai] Checking file %s\n", path)
@@ -140,9 +193,9 @@ func getFilesSummary() (string, error) {
 				return fmt.Errorf("[tai] error summarizing %s: %w", path, err)
 			}
 
-			os.WriteFile(summaryPath, []byte(reply), 0644)
+			os.WriteFile(summaryPath, []byte(reply), 0o644)
 			summary = reply
-			log.Printf("Updated %s\n", path)
+			log.Printf("[tai] Updated %s\n", path)
 		} else {
 			file, err := os.Open(summaryPath)
 			if err != nil {
@@ -163,13 +216,13 @@ func getFilesSummary() (string, error) {
 	})
 
 	return summaries, err
-} 
+}
 
 type Response struct {
 	Text     string
 	Plan     string
 	Patch    string
-	Commands string
+	Commands []string
 }
 
 func parseMIMEString(raw string) (Response, error) {
@@ -206,7 +259,6 @@ func parseMIMEString(raw string) (Response, error) {
 
 	// Create a multipart reader from the body
 	reader := multipart.NewReader(bytes.NewBufferString(bodyText), params["boundary"])
-
 	for {
 		part, err := reader.NextPart()
 		if err == io.EOF {
@@ -237,22 +289,18 @@ func parseMIMEString(raw string) (Response, error) {
 		case "patch":
 			result.Patch = string(data)
 		case "commands":
-			result.Commands = string(data)
+			cmds := strings.Split(string(data), "\n")
+			result.Commands = cmds
 		}
 	}
 
 	return result, nil
 }
 
-
 func processRequest(prompt string) (string, error) {
 	log.Printf("[tai] Received prompt %s\n", prompt)
 
-	messages := []ChatMessage{
-		{Role: "system", Content: preamble},
-		instructionMessage,
-		{Role: "user", Content: prompt},
-	}
+	messages := append(history, ChatMessage{Role: "user", Content: prompt})
 
 	reply, err := SendChat(messages)
 	if err != nil {
@@ -261,6 +309,6 @@ func processRequest(prompt string) (string, error) {
 	}
 
 	log.Println("[tai] got response:", reply)
-
+	history = append(history, ChatMessage{Role: "assistant", Content: reply})
 	return reply, nil
 }

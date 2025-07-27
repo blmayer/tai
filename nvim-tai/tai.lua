@@ -4,67 +4,66 @@ local uv = vim.loop
 local sock_path = "/tmp/tai.sock"
 local sock = nil
 
-local function parse_mime(mime_text)
-  local parts = {}
-  local boundary = mime_text:match("boundary=\"?([^\"]+)\"?")
-  if not boundary then return parts end
-
-  -- Split the entire message into parts using boundary
-  for part in mime_text:gmatch("--" .. boundary .. "%s*(.-)%s*--" .. boundary .. "[%s%-]*") do
-    local headers = {}
-    local body = part:match("\r?\n\r?\n(.*)")
-    local header_section = part:match("^(.-)\r?\n\r?\n")
-
-    if header_section then
-      for name, value in header_section:gmatch("([%w%-]+):%s*(.-)\r?\n") do
-        headers[name:lower()] = value
-      end
-
-      -- Try to get a name (e.g., from Content-Disposition or Content-Type)
-      local name = headers["content-disposition"] and headers["content-disposition"]:match('filename="?(.-)"?')
-
-      if name and body then
-        parts[name] = body:gsub("\r\n", "\n") -- normalize line endings
-      end
-    end
+-- returns header, body
+local function read_until_blank_line(chunk)
+  local i, j = chunk:find("\r?\n\r?\n")
+  if i and j then
+    return chunk:sub(1, i - 1), chunk:sub(j)
+  else
+    return chunk, ""
   end
-
-  return parts
 end
 
-local function parse_named_mime_fields(raw)
+
+local function parse_mime_header_name(header)
+  local name = header:match('name="([^"]+)"')
+  if name then
+    return name
+  else
+    return nil
+  end
+end
+
+local function parse_mime(raw)
   local result = {}
 
-  -- Extract the boundary
-  local boundary = raw:match("boundary=\"?([^\"]+)\"?")
+  local header, remaining = read_until_blank_line(raw)
+  local boundary = header:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
   if not boundary then return nil, "No boundary found" end
-  boundary = "--" .. boundary
-      vim.schedule(function()
-	  vim.notify("boundary " .. boundary)
-  end)
+  print("[tai] boundary: " .. boundary)
 
-  -- Split parts
-  for part in raw:gmatch(boundary .. "\r?\n(.-)\r?\n" .. boundary) do
-      vim.schedule(function()
-	  vim.notify("part " .. part)
-  end)
-    local headers, body = part:match("^(.-)\r?\n\r?\n(.*)")
-    if headers and body then
-      local name = headers:match('filename="([^"]+)"')
-      if name then
-        -- Remove any trailing boundary marker
-        body = body:gsub("\r?\n$", "")
-        result[name] = body
-      end
-    end
+  local s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+  if not s then
+    return nil, "no body"
   end
 
-      vim.schedule(function()
-        vim.notify("[tai] parsed text " .. result.text, vim.log.levels.INFO)
-        vim.notify("[tai] parsed patch " .. result.patch, vim.log.levels.INFO)
-       end)
-  return result
+  while s do
+    remaining = remaining:sub(s)
+    print("[tai] re: " .. remaining)
+
+    local header, body = read_until_blank_line(remaining)
+    if not header then
+      return nil, "no header part"
+    end
+
+    local name = parse_mime_header_name(header)
+    if not name then
+      return nil, "no name in header"
+    end
+
+    s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+    if not s then
+      print("[tai] last body: " .. body)
+      result[name] = body
+      break
+    end
+    print("[tai] body: " .. body:sub(s - #header))
+    result[name] = body:sub(1, s - #header)
+  end
+
+  return result, nil
 end
+
 
 -- Connect to the socket at startup
 function tai.connect()
@@ -73,13 +72,12 @@ function tai.connect()
     if err then
       vim.schedule(function()
         vim.notify("[tai] Could not connect to " .. sock_path .. ": " .. err, vim.log.levels.ERROR)
-       end)
+      end)
     return
     end
     vim.schedule(function()
 	vim.notify("[tai] Connected to " .. sock_path)
     end)
-    return
   end)
 
   sock:read_start(function(err, chunk)
@@ -91,13 +89,23 @@ function tai.connect()
     end
 
     if not chunk then
+      vim.schedule(function()
+        vim.notify("[tai] empty response", vim.log.levels.WARN)
+      end)
       return
     end
 
-    local fields, err = parse_named_mime_fields(chunk)
+    local fields, err = parse_mime(chunk)
     if err then
       vim.schedule(function()
         vim.notify("[tai] Parse error: " .. err, vim.log.levels.ERROR)
+      end)
+      return
+    end
+
+    if fields == {} then
+      vim.schedule(function()
+        vim.notify("[tai] Parse error: empty fields", vim.log.levels.ERROR)
       end)
       return
     end
@@ -114,6 +122,18 @@ function tai.connect()
     end
   end)
 end
+
+-- Create a custom command to prompt the user for input and run a command
+vim.api.nvim_create_user_command("TaiApplyPatch", function(opts)
+  vim.ui.input({ prompt = "Apply this patch? [y/N]" }, function(input)
+    if input == "y" then
+      -- Run the command to apply the patch
+      vim.api.nvim_command("vert diffpatch %")
+    else
+      -- Do nothing if the user enters anything other than "y"
+    end
+  end)
+end, { nargs = 0 })
 
 function tai.show_output_in_split(content)
   local lines = vim.split(content or "", "\n", { trimempty = true })
@@ -254,7 +274,7 @@ function tai.operator_send(type)
   local filename = vim.fn.expand("%:p")
   local location = string.format("# From line %d, col %d to line %d, col %d",
     start_pos[1], start_pos[2] + 1, end_pos[1], end_pos[2] + 1)
-  
+
   local preamble = string.format("I'm edditing %s at %s, consider the selection:\n", filename, location)
 
   tai.send_text(preamble .. text)
