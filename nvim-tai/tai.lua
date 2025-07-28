@@ -27,18 +27,22 @@ end
 local function parse_mime(raw)
   local result = {}
 
-  local header, remaining = read_until_blank_line(raw)
-  local boundary = header:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
+  local start, remaining = read_until_blank_line(raw)
+  local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
   if not boundary then return nil, "No boundary found" end
+  boundary = boundary:gsub("-", "%-")
   print("[tai] boundary: " .. boundary)
 
-  local s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
-  if not s then
-    return nil, "no body"
-  end
-
-  while s do
-    remaining = remaining:sub(s)
+  while 1 do
+    local _, e = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+    if not e then
+      print("missing boundary")
+      break
+    end
+    remaining = remaining:sub(e+1)
+    if not remaining or remaining == "" then
+      break
+    end
     print("[tai] re: " .. remaining)
 
     local header, body = read_until_blank_line(remaining)
@@ -48,17 +52,17 @@ local function parse_mime(raw)
 
     local name = parse_mime_header_name(header)
     if not name then
-      return nil, "no name in header"
-    end
-
-    s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
-    if not s then
-      print("[tai] last body: " .. body)
-      result[name] = body
+      print("name not found in header")
       break
     end
-    print("[tai] body: " .. body:sub(s - #header))
-    result[name] = body:sub(1, s - #header)
+
+    local s = body:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+    if not s then
+      print("no more boundaries")
+      break
+    end
+    print("[tai] " .. name .. ": " .. body:sub(1, s))
+    result[name] = body:sub(1, s)
   end
 
   return result, nil
