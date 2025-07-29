@@ -76,7 +76,6 @@ func pipelineMode(prompt string) {
 			notes.md
 
 			Your example output:
-
 			garbage.txt
 			my-ugly-photo.png
 			things-i-keep-forgeting.md
@@ -116,24 +115,8 @@ func interactiveMode() {
 	}
 }
 
-func projectMode() {
-	err := InitProjectPrompt()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "init error:", err)
-		os.Exit(1)
-	}
-
-	log.Println("[tai] Socket ready")
-	taiSocket(sockPath)
-}
-
 // tai This is a go package that ... continue this comment
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "-s" {
-		projectMode()
-		return
-	}
-
 	fi, _ := os.Stdin.Stat()
 	if (fi.Mode() & os.ModeCharDevice) == 0 {
 		prompt := ""
