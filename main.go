@@ -48,11 +48,40 @@ func readLineRaw() (string, error) {
 	}
 }
 
-func pipelineMode(model string) {
+func pipelineMode(prompt string) {
 	input, _ := io.ReadAll(os.Stdin)
 	messages := []ChatMessage{
-		{Role: "system", Content: "You are 'tai', a command-line AI assistant running on a shell pipeline."},
-		{Role: "user", Content: string(input)},
+		{Role: "system", Content: `### System
+			You are 'tai', a command-line AI assistant running on a shell pipeline.
+
+			### Instructions
+			You are part of a UNIX style pipeline, so the user will give you the output from other commands such as ls, cat, grep etc; and your output will probably be used for other commands or the terminal. So:
+			- Format your responses in a line oriented way or whatever the user instructs you.
+			- You can use ANSI escapes and other terminal formating sequences for prettier output.
+			- Be concise and tune your output so other programs can easily read your output.
+			- Output **ONLY** what was requested for you, do not add comments or metadata.
+
+			### Input Format
+			You will receive the input in two optional parts:
+			1. The user prompt with instructions and
+			2. The standard input from the pipeline.
+
+			#### Example
+			Prompt:
+			Return a funny name for each file name
+
+			Input:
+			file1.txt
+			avatar.png
+			notes.md
+
+			Your example output:
+
+			garbage.txt
+			my-ugly-photo.png
+			things-i-keep-forgeting.md
+			`},
+		{Role: "user", Content: fmt.Sprintf("Prompt:\n%s\n\nInput:\n%s", prompt, string(input))},
 	}
 	resp, err := SendChat(messages)
 	if err != nil {
@@ -62,7 +91,7 @@ func pipelineMode(model string) {
 	fmt.Println(resp)
 }
 
-func interactiveMode(model string) {
+func interactiveMode() {
 	log.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
 	messages := []ChatMessage{
 		{Role: "system", Content: "You are 'tai', a command-line AI assistant running in interactive mode."},
@@ -87,31 +116,33 @@ func interactiveMode(model string) {
 	}
 }
 
-func ideMode(model string) {
+func projectMode() {
 	err := InitProjectPrompt()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "init error:", err)
 		os.Exit(1)
 	}
 
-	log.Println("Socket ready")
+	log.Println("[tai] Socket ready")
 	taiSocket(sockPath)
 }
 
 // tai This is a go package that ... continue this comment
 func main() {
-	model := "llama3-70b-8192"
-
-	if len(os.Args) > 1 && os.Args[1] == "-c" {
-		ideMode(model)
+	if len(os.Args) > 1 && os.Args[1] == "-s" {
+		projectMode()
 		return
 	}
 
 	fi, _ := os.Stdin.Stat()
 	if (fi.Mode() & os.ModeCharDevice) == 0 {
-		pipelineMode(model)
+		prompt := ""
+		if len(os.Args) > 1 {
+			prompt = strings.Join(os.Args[1:], " ")
+		}
+		pipelineMode(prompt)
 	} else {
-		interactiveMode(model)
+		interactiveMode()
 	}
 }
 

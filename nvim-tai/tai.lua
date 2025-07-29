@@ -30,7 +30,7 @@ local function parse_mime(raw)
   local start, remaining = read_until_blank_line(raw)
   local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
   if not boundary then return nil, "No boundary found" end
-  boundary = boundary:gsub("-", "%-")
+  boundary = boundary:gsub("%-", "%%%-")
   print("[tai] boundary: " .. boundary)
 
   while 1 do

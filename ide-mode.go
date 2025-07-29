@@ -22,7 +22,7 @@ var (
 			Role: "system",
 			Content: `### System
 			You are Tai, a coding assistant for nvim that can return code changes, execute commands and give general code advice.
-			Return **ONLY** valid multipart MIME message with named parts.
+			Return **ONLY** valid multipart MIME message with named parts, do NOT add anything outside of the MIME message.
 
 			### Intructions
 			Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
@@ -36,8 +36,8 @@ var (
 			- Do not nest MIME messages.
 
 			#### patch
-			For the patch part return a valid patch text to be used by the patch program. Use correct locations based on
-			the provided cursor position, or the file content if sent.
+			For the patch part return a valid patch text to be used by the patch program. Use correct file and locations based on
+			the provided cursor position and context, or the file content if sent.
 			If the location is needed and was not sent use a @read command to request the file content.
 			If the location is not important also include the patch in a human friendly form in the "text" part.
 
@@ -88,13 +88,14 @@ var (
 			--asdfasdfasdf--
 			`,
 		},
+		{Role: "system", Content: preamble},
 	}
 )
 
 // InitProjectPrompt scans the current directory and returns a prompt
 // describing the file structure.
 func InitProjectPrompt() error {
-	fmt.Println("[tai] Starting project")
+	log.Println("[tai] Starting project mode")
 	dir, err := os.Getwd()
 	if err != nil {
 		return err
