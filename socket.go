@@ -26,10 +26,9 @@ func taiSocket(sockPath string) error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
-			log.Println("accept error:", err)
+			log.Println("[tai] accept error:", err)
 			continue
 		}
-		log.Println("Got a client")
 		go handleSocketConnection(conn)
 	}
 }
@@ -39,14 +38,12 @@ func handleSocketConnection(conn net.Conn) {
 		buf := make([]byte, 2<<20)
 		n, err := conn.Read(buf)
 		if err == io.EOF {
-			log.Println("client disconnected")
 			break
 		}
 		if err != nil {
-			log.Println("read error:", err)
+			log.Println("[tai] read error:", err)
 			continue
 		}
-		log.Printf("[tai] read %s\n", buf)
 
 		prompt := strings.TrimSpace(string(buf[:n]))
 		if prompt == "" {
@@ -54,14 +51,14 @@ func handleSocketConnection(conn net.Conn) {
 		}
 		reply, err := processRequest(prompt)
 		if err != nil {
-			log.Println("process error:", err)
+			log.Println("[tai] process error:", err)
 			continue
 		}
 		
-		log.Printf("Sending reply %s\n", reply)
+		log.Printf("[tai] Sending reply %s\n", reply)
 		_, err = conn.Write([]byte(reply))
 		if err != nil {
-			log.Println("write error:", err)
+			log.Println("[tai] write error:", err)
 			continue
 		}
 	}

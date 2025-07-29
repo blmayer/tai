@@ -26,7 +26,7 @@ var (
 
 			### Intructions
 			Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
-			The response must start with MIME-version and boundary headers, vary and do not use spaces or special characters for the boundary. 
+			The response must start with MIME-version and boundary headers, vary it and use **ONLY** alphanumeric characters for the boundary. 
 			- Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
 			- Always use \r\n (CRLF) for line endings.
 			- For user-facing text, use a plain/text part named 'text'. 
@@ -34,6 +34,7 @@ var (
 			- If you need to execute commands, include them in a part named 'commands'. 
 			- If your response involves multiple steps, include them in a part named 'plan'. 
 			- Do not nest MIME messages.
+			- Do not add blank lines or other separators before the boundary
 
 			#### patch
 			For the patch part return a valid patch text to be used by the patch program. Use correct file and locations based on
@@ -70,7 +71,6 @@ var (
 			Content-Disposition: form-data; name="text"
 
 			I'm considering you want a doc string.
-
 			--asdfasdfasdf
 			Content-Type: text/x-patch; charset="utf-8"
 			Content-Disposition: form-data; name="patch"
