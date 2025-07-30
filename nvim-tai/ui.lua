@@ -3,12 +3,12 @@ local M = {}
 
 function M.show_response(fields)
   if not fields.text and not fields.patch then
+    vim.notify("[tai] response fields empty")
     return
   end
   local lines = vim.split(fields.text .. fields.patch or "", "\n", { trimempty = true })
 
   vim.schedule(function()
-    -- Create a new horizontal split
     vim.cmd("vnew")
     local new_win = vim.api.nvim_get_current_win()
     local bufnr = vim.api.nvim_get_current_buf()

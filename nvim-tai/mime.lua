@@ -27,19 +27,16 @@ function M.parse(raw)
   local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
   if not boundary then return nil, "No boundary found" end
   boundary = boundary:gsub("%-", "%%%-")
-  print("[tai] boundary: " .. boundary)
 
   while 1 do
     local _, e = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
     if not e then
-      print("missing boundary")
       break
     end
     remaining = remaining:sub(e+1)
     if not remaining or remaining == "" then
       break
     end
-    print("[tai] re: " .. remaining)
 
     local header, body = read_until_blank_line(remaining)
     if not header then
@@ -48,16 +45,14 @@ function M.parse(raw)
 
     local name = parse_mime_header_name(header)
     if not name then
-      print("name not found in header")
       break
     end
 
     local s = body:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
     if not s then
-      print("no more boundaries")
       break
     end
-    print("[tai] " .. name .. ": " .. body:sub(1, s))
+
     result[name] = body:sub(1, s)
   end
 
