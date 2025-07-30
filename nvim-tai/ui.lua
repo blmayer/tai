@@ -11,8 +11,8 @@ function M.show_response(fields)
   vim.schedule(function()
     vim.cmd("vnew")
     local new_win = vim.api.nvim_get_current_win()
+    vim.api.nvim_win_set_width(new_win, 60)
     local bufnr = vim.api.nvim_get_current_buf()
-    vim.api.nvim_win_set_width(new_win, 40)
 
     -- Set buffer options to make it a scratch window
     vim.bo[bufnr].buftype = "nofile"
