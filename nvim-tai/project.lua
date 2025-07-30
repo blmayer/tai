@@ -73,15 +73,14 @@ function M.request_file_prompt(filepath, prompt)
 end
 
 function M.process_request(prompt)
-	vim.notify("[tai] processing request: " .. prompt, vim.log.levels.TRACE)
 	local messages = vim.deepcopy(history)
 	table.insert(messages, { role = "user", content = prompt })
 
 	local reply = chat.send_chat(messages)
 	if not reply then return nil end
-	vim.notify("[tai] received response: text: " .. reply.text or "" .. "\npatch: " .. reply.patch or "", vim.log.levels.TRACE)
+	--vim.api.nvim_echo({{"[tai] received response: text: " .. reply.text or "" .. "\npatch: " .. reply.patch or "", "None"}}, false, {})
 
-	table.insert(history, { role = "assistant", content = reply })
+	table.insert(history, { role = "assistant", content = vim.fn.json_encode(reply) })
 	return reply
 end
 

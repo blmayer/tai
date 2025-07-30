@@ -71,7 +71,7 @@ function M.send_chat(messages)
 		end)
 		return nil
 	end
-	vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
+	--vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
 
 	local ok, parsed = pcall(json.decode, response)
 	if not ok then
