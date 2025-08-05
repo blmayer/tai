@@ -11,8 +11,8 @@ end
 function M.prompt_input()
 	ui.input("Tai Input: ", function(input)
 		if input and input ~= "" then
-			local result = chat.send_chat(input)
-			ui.show_output_in_vsplit(result)
+			local result = project.process_request(input)
+			ui.show_response(result)
 		end
 	end)
 end
@@ -20,7 +20,7 @@ end
 function M.prompt_full_file()
 	local path = vim.fn.expand("%:p")
 
-	ui.input("Tai Input: ", function(user_input)
+	ui.input("Tai Input (Context): ", function(user_input)
 		if not user_input or user_input == "" then return end
 		local result = project.request_file_prompt(path, user_input)
 		ui.show_response(result)

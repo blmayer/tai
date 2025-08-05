@@ -8,8 +8,7 @@ function M.show_response(fields)
 	end
 
 	if fields.patch then
-		content = content .. "\n\n------------------\nPatch:\n\n" .. fields.patch
-		vim.api.nvim_command("au BufDelete <buffer> lua require('tai').apply_patch('" .. fields.patch .. "')")
+		M.apply_patch(fields.patch)
 	end
 	local lines = vim.split(content, "\n", { trimempty = true })
 
@@ -74,6 +73,13 @@ function M.input(prompt, callback)
 	vim.ui.input({ prompt = prompt or "Input:" }, function(text)
 		if text then callback(text) end
 	end)
+end
+
+function M.apply_patch(patch)
+    local f = io.popen("git apply -", "w")
+    f:write(patch)
+    f:close()
+    vim.api.nvim_command("checktime!")
 end
 
 return M
