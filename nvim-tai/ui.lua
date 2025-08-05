@@ -1,22 +1,18 @@
 local M = {}
 
-
 function M.show_response(fields)
 	local content = ""
+	local bufname = "tai-output"
 	if fields.text then
 		content = fields.text
 	end
 
-	if fields.patch then
-		M.apply_patch(fields.patch)
-	end
-	local lines = vim.split(content, "\n", { trimempty = true })
-
-	vim.schedule(function()
+	local bufnr = vim.fn.bufnr(bufname)
+	if bufnr == -1 then
 		vim.cmd("vnew")
 		local new_win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_width(new_win, 80)		-- this is THE number
-		local bufnr = vim.api.nvim_get_current_buf()
+		bufnr = vim.api.nvim_get_current_buf()
+		vim.api.nvim_win_set_width(new_win, 80) -- this is THE number
 
 		-- Set buffer options to make it a scratch window
 		vim.bo[bufnr].buftype = "nofile"
@@ -24,13 +20,22 @@ function M.show_response(fields)
 		vim.bo[bufnr].swapfile = false
 		vim.bo[bufnr].modifiable = true
 		vim.bo[bufnr].filetype = "tai-output"
+		vim.api.nvim_buf_set_name(bufnr, bufname)
+	end
 
-		-- Insert content
-		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+	if fields.patch then
+		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+		vim.schedule(function()
+			local patch = fields.patch
+			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch) end,
+				{})
+		end)
+	end
 
-		-- Optional: prevent accidental edits
-		vim.bo[bufnr].modifiable = false
-	end)
+	local lines = vim.split(content, "\n", { trimempty = true })
+
+	-- Insert content
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 end
 
 -- Insert the content at the cursor (insert mode)
@@ -68,18 +73,45 @@ function M.replace_visual_selection(content)
 	vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
 end
 
--- Prompt user for input
-function M.input(prompt, callback)
-	vim.ui.input({ prompt = prompt or "Input:" }, function(text)
-		if text then callback(text) end
-	end)
+-- Prompt user for multi-line input with Shift+Enter support
+function M.input(callback)
+	local bufnr = vim.api.nvim_create_buf(false, true)
+	local width = math.min(80, vim.o.columns - 10)
+	local height = math.min(10, vim.o.lines - 10)
+
+	local winnr = vim.api.nvim_open_win(bufnr, true, {
+		relative = 'editor',
+		width = width,
+		height = height,
+		col = (vim.o.columns - width) / 2,
+		row = (vim.o.lines - height) / 2,
+		style = 'minimal',
+		border = 'rounded'
+	})
+
+	vim.bo[bufnr].buftype = 'nofile'
+	vim.bo[bufnr].bufhidden = 'wipe'
+	vim.bo[bufnr].swapfile = false
+	vim.bo[bufnr].filetype = 'tai-input'
+
+	--vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {prompt or "Enter your message:"})
+
+	vim.keymap.set('n', '<CR>', function()
+		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+		local text = table.concat(lines, '\n')
+		vim.api.nvim_win_close(winnr, false)
+		vim.schedule(function()
+			vim.notify("[tai] Got prompt", vim.log.levels.TRACE)
+		end)
+		callback(text)
+	end, { buffer = bufnr })
 end
 
 function M.apply_patch(patch)
-    local f = io.popen("git apply -", "w")
-    f:write(patch)
-    f:close()
-    vim.api.nvim_command("checktime!")
+	local f = io.popen("patch -p0", "w")
+	f:write(patch)
+	f:close()
+	vim.api.nvim_command("checktime")
 end
 
 return M

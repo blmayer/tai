@@ -12,7 +12,7 @@ end
 
 
 local function parse_mime_header_name(header)
-  local name = header:match('name="([^"]+)"')
+  local name = header:match('filename="([^"]+)"')
   if name then
     return name
   else

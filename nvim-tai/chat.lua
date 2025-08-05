@@ -11,7 +11,8 @@ if not api_key then
 end
 
 local groq_url = "https://api.groq.com/openai/v1/chat/completions"
-local model = "llama3-70b-8192"
+local model = "moonshotai/kimi-k2-instruct"
+--local model = "llama3-70b-8192"
 
 function M.send_chat(messages)
 	local req_body = {
@@ -20,14 +21,12 @@ function M.send_chat(messages)
 	}
 
 	local json_data = json.encode(req_body)
-
 	local stdout = uv.new_pipe(false)
 	local stderr = uv.new_pipe(false)
-
 	local result = {}
 	local err_data = {}
-
 	local handle
+
 	handle = uv.spawn("curl", {
 		args = {
 			"-s", "-X", "POST",
@@ -48,6 +47,7 @@ function M.send_chat(messages)
 		end
 	end)
 
+	vim.notify("[tai] Waiting for response", vim.log.levels.TRACE)
 	uv.read_start(stdout, function(_, chunk)
 		if chunk then
 			table.insert(result, chunk)
@@ -60,7 +60,7 @@ function M.send_chat(messages)
 		end
 	end)
 
-	vim.wait(10000, function()
+	vim.wait(60000, function()
 		return not uv.is_active(handle)
 	end, 10)
 
@@ -71,7 +71,7 @@ function M.send_chat(messages)
 		end)
 		return nil
 	end
-	--vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
+	vim.notify("[tai] Got response", vim.log.levels.TRACE)
 
 	local ok, parsed = pcall(json.decode, response)
 	if not ok then
@@ -86,7 +86,7 @@ function M.send_chat(messages)
 
 	local fields, err = mime.parse(parsed.choices[1].message.content)
 	if err then
-		vim.notify("[tai] Failed to decode MIME message: " .. err, vim.log.levels.ERROR)
+		vim.notify("[tai] Failed to decode MIME message: " .. response, vim.log.levels.ERROR)
 		return nil
 	end
 
