@@ -1,60 +1,51 @@
-# tai.nvim + tai
-
-> A simple Neovim plugin paired with a Unix socket server to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim.
+> This project contains two utilities: A simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim and a command line program to integrate AI into your shell.
 
 
-## Features
-
-### Automatic File Summarization
-
-The server creates summaries of your files and caches them to improve response relevance and speed on repeated queries.
+# Features
 
 
-### Groq Integration
+## Groq Integration
 
 This project uses the Groq API for processing requests. Make sure to set the environment variable:
 
       GROQ_API_KEY=your_api_key_here
 
 
-### Caching
-
-Summaries and previous interactions are cached on the server side to optimize performance and reduce API calls.
-
-
-### Integrated workflow
+## Integrated workflow
 
 Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
 
 
-## Project Components
+# Project Components
 
-### 1. **tai.nvim** (Neovim Plugin)
+1. **tai.nvim** (Neovim Plugin)
 
-- Connects to a Unix socket (`/tmp/tai.sock`) on startup
 - Sends operator-motion or visual selections to the server
 - Optionaly prompts for freeform input
 - Sends file context along with prompts
-- Displays server responses in a bottom split buffer
+- Displays server responses in a split buffer
 - Minimal, dependency-free Lua code for Neovim
+- Can run commands with safety validation
+- Follows plans for complex tasks
 
 
-### 2. **tai** (Go Unix Socket Server)
+2. **tai** (CLI)
 
-- Listens on a Unix domain socket (`/tmp/tai.sock`)
-- Receives text payloads from the Neovim plugin
-- Processes requests asynchronously (you can customize the processing)
-- Sends responses back to the plugin in one write operation
-- Designed for easy integration with any backend logic or AI models
+- Receives text payloads and standard input
+- Sends responses back to the standard output
+- Designed for easy integration with shell pipelines
 
 
-## Installation
+## tai.nvim
 
-### Neovim Plugin
+
+### Installation
 
 Place the plugin code at:
 
-    ~/.config/nvim/lua/tai.lua
+    ~/.config/nvim/lua/tai/
+
+A proper plugin is install method is underway.
 
 and load it in your `init.lua`:
 
@@ -82,17 +73,7 @@ and load it in your `init.lua`:
     end, { noremap = true })
 
 
-### Server
-
-Build and run the Go server:
-
-    go build -o tai .
-    ./tai -c
-
-Make sure it creates and listens on `/tmp/tai.sock`.
-
-
-## Usage
+### Usage
 
 - Use `gT` plus a motion to send a text selection to the server.
 - Use `gP` plus a motion to send a text selection **with** a prompted input.
@@ -100,11 +81,23 @@ Make sure it creates and listens on `/tmp/tai.sock`.
 - Use insert mode `<leader>tf` to prompt input and send along with the full file context.
 
 
-## Requirements
+### Requirements
 
 - Neovim 0.5 or newer
-- Unix-like OS with Unix domain socket support
-- Go compiler to build the server
+- Unix-like OS
+- curl
+
+
+## tai
+
+
+### Building
+
+Clone this repo and run:
+
+    go build -o tai .
+
+Move the binary to a folder in your path for best results.
 
 
 ## License
