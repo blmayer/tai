@@ -1,26 +1,24 @@
 <!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>tai.nvim + tai-server</title>
+<title>tai.nvim + tai</title>
 <meta name="color-scheme" content="light dark">
 <link rel=icon href=data:,>
 <style>pre{width:52ch;margin:2ch auto}a{color:#ff00ff}</style>
-<pre><i><b>tai.nvim + tai-server</b></i>
+<pre><i><b>tai.nvim + tai</b></i>
 
-a minimal Neovim plugin paired with a unix socket server,
-built to bring AI-powered text and code insights directly
+a minimal Neovim plugin and a CLI tool built
+to bring AI-powered text and code insights directly
 to your editor.
 
-the plugin connects to <i>/tmp/tai.sock</i> and sends
-selections, prompts, or full files for processing by
-a backend server using the groq API.
+the plugin sends selections, prompts, or full files
+for processing using the groq API.
 
 
 <b>features</b>
 
 - send motions or visual selections from Neovim
 - prompt for input and combine it with text or files
-- server caches summaries for faster, smarter replies
-- responses show up in a bottom split buffer in Neovim
+- responses show up in a split buffer in Neovim
 - requires environment variable <i>GROQ_API_KEY</i>
 - simple lua and go code for easy customization
 
@@ -28,14 +26,14 @@ a backend server using the groq API.
 <b>keybindings</b>
 
 gT + motion      - send motion selection
-gP + motion      - send motion selection with prompted input
+gP + motion      - send motion selection with input
 &lt;leader&gt;ti (normal) - prompt input and send
-&lt;leader&gt;tf (normal) - prompt input and send with full file
+&lt;leader&gt;tf (normal) - prompt input with file
 
 
 <b>installation</b>
 
-clone or place <i>lua/tai.lua</i> into your Neovim config directory
+clone or place <i>lua/tai/</i> into your Neovim config dir
 <code>~/.config/nvim/lua/</code> and add keymaps to <i>init.lua</i>:
 
   vim.g.mapleader = " "
@@ -66,20 +64,16 @@ clone or place <i>lua/tai.lua</i> into your Neovim config directory
 
 build and run the go server:
 
-  go build -o tai-server ./path/to/server
-  ./tai-server
+  go build -o tai .
+  ./tai
 
-make sure <i>/tmp/tai.sock</i> exists and
-the <i>GROQ_API_KEY</i> environment variable is set.
+make sure the <i>GROQ_API_KEY</i> env var is set.
 
 
 <b>usage</b>
 
 send text or prompts from Neovim using the
-keybindings above. the server will cache file
-summaries and respond with enhanced context-aware
-answers.
-
+keybindings above.
 
 <b>license</b>
 
