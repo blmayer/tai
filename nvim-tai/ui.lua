@@ -1,11 +1,7 @@
 local M = {}
 
 function M.show_response(fields)
-	local content = ""
 	local bufname = "tai-output"
-	if fields.text then
-		content = fields.text
-	end
 
 	local bufnr = vim.fn.bufnr(bufname)
 	if bufnr == -1 then
@@ -21,6 +17,18 @@ function M.show_response(fields)
 		vim.bo[bufnr].modifiable = true
 		vim.bo[bufnr].filetype = "tai-output"
 		vim.api.nvim_buf_set_name(bufnr, bufname)
+	end
+
+	local content = ""
+	if fields.plan then
+		content = "Plan:\n\n" .. fields.plan .. "\n\n-----------------------------\n\n"
+	end
+
+	if fields.text then
+		content = content .. fields.text
+	end
+	if fields.commands then
+		content = content .. "\n\nCommands requested:\n\n" .. fields.commands
 	end
 
 	if fields.patch then

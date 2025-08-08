@@ -17,10 +17,17 @@ end
 
 function M.prompt_full_file()
 	local path = vim.fn.expand("%")
+	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+	local line = vim.api.nvim_get_current_line()
+
+	local location = string.format("line %d, column %d", row, col)
 
 	ui.input(function(input)
 		if not input or input == "" then return end
-		local result = project.request_file_prompt(path, input)
+
+		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location, input)
+
+		local result = project.request_file_prompt(path, prompt)
 		ui.show_response(result)
 	end)
 end
