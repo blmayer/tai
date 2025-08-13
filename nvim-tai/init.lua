@@ -7,6 +7,10 @@ function M.setup(opts)
 	require("tai.project").init_project_prompt()
 end
 
+function M.toggle_chat_window()
+    ui.toggle_output_window()
+end
+
 function M.prompt_input()
 	ui.input(function(input)
 		if not input or input == "" then return end

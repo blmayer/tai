@@ -1,5 +1,25 @@
 local M = {}
 
+function M.toggle_output_window()
+	local bufname = "tai-output"
+	local bufnr = vim.fn.bufnr(bufname)
+	if bufnr == -1 then
+		vim.cmd("vnew")
+		local new_win = vim.api.nvim_get_current_win()
+		bufnr = vim.api.nvim_get_current_buf()
+		vim.api.nvim_win_set_width(new_win,80)
+
+		vim.bo[bufnr].buftype = "nofile"
+		vim.bo[bufnr].bufhidden = "wipe"
+		vim.bo[bufnr].swapfile = false
+		vim.bo[bufnr].modifiable = true
+		vim.bo[bufnr].filetype = "tai-output"
+		vim.api.nvim_buf_set_name(bufnr, bufname)
+	else
+		vim.api.nvim_buf_delete(bufnr, { force = true })
+	end
+end
+
 function M.show_response(fields)
 	local bufname = "tai-output"
 

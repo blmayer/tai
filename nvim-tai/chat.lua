@@ -11,7 +11,8 @@ if not api_key then
 end
 
 local groq_url = "https://api.groq.com/openai/v1/chat/completions"
-local model = "moonshotai/kimi-k2-instruct"
+--local model = "moonshotai/kimi-k2-instruct"
+local model = "compound-beta"
 --local model = "llama3-70b-8192"
 
 function M.send_chat(messages)

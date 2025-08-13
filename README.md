@@ -72,6 +72,9 @@ and load it in your `init.lua`:
       vim.schedule(tai.prompt_full_file)
     end, { noremap = true })
 
+    vim.keymap.set("n", "<C-w><C-t>", function()
+    	require("tai").toggle_chat_window()
+    end, { noremap = true })
 
 ### Usage
 
@@ -79,6 +82,7 @@ and load it in your `init.lua`:
 - Use `gP` plus a motion to send a text selection **with** a prompted input.
 - Use insert mode `<leader>ti` to prompt input and send.
 - Use insert mode `<leader>tf` to prompt input and send along with the full file context.
+- To toggle the chat window use `Ctrl+w Ctrl+t`
 
 
 ### Requirements

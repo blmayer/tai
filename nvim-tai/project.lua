@@ -36,7 +36,9 @@ Return **EXACTLY** one valid multipart MIME message with no extra text before or
    - This is a high level overview of the process of fullfiling the user's request.
    - We use this part to keep track of the progress of more complex tasks.
 7. **Empty parts**: Never emit a part with zero bytes.
-8. **Text**: Supply concise user-facing text in a part named `text`.
+8. **Text**: Supply concise user-facing text in a part named `text`. 
+  - Use maximum of 80 characters per line
+  - You can include ASCII tables, diagrams, art etc if needed
 
 ### Example Response
 All examples must match this format verbatim except boundary strings and content.
