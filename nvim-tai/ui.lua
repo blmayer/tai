@@ -1,4 +1,6 @@
 local M = {}
+local command = require("tai.command")
+local project = require("tai.project")
 
 function M.toggle_output_window()
 	local bufname = "tai-output"
@@ -7,7 +9,7 @@ function M.toggle_output_window()
 		vim.cmd("vnew")
 		local new_win = vim.api.nvim_get_current_win()
 		bufnr = vim.api.nvim_get_current_buf()
-		vim.api.nvim_win_set_width(new_win,80)
+		vim.api.nvim_win_set_width(new_win, 80)
 
 		vim.bo[bufnr].buftype = "nofile"
 		vim.bo[bufnr].bufhidden = "wipe"
@@ -47,8 +49,15 @@ function M.show_response(fields)
 	if fields.text then
 		content = content .. fields.text
 	end
+
 	if fields.commands then
-		content = content .. "\n\nCommands requested:\n\n" .. fields.commands
+		content = content .. "\n\nCommand requested (use:RunTaiCommand to run):\n\n" .. fields.commands
+
+		vim.api.nvim_buf_create_user_command(
+			bufnr, 'RunTaiCommand',
+			function() M.run_command(fields.commands) end,
+			{}
+		)
 	end
 
 	if fields.patch then
@@ -140,6 +149,21 @@ function M.apply_patch(patch)
 	f:write(patch)
 	f:close()
 	vim.api.nvim_command("checktime")
+end
+
+function M.run_command(cmd)
+	local output
+	if command.validate(cmd) then
+		output = command.run(cmd)
+	else
+		output = "[tai] Command " .. cmd .. " is not allowed"
+	end
+
+	vim.schedule(function()
+		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+	end)
+	local reply = project.process_request(output)
+	return M.show_response(reply)
 end
 
 return M
