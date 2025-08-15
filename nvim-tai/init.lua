@@ -32,7 +32,7 @@ function M.prompt_full_file()
 		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location,
 			input)
 
-		local result = project.request_file_prompt(path, prompt)
+		local result = project.request_append_file(path, prompt)
 		ui.show_response(result)
 	end)
 end

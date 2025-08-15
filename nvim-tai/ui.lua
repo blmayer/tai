@@ -2,64 +2,55 @@ local M = {}
 local command = require("tai.command")
 local project = require("tai.project")
 
-function M.toggle_output_window()
-	local bufname = "tai-output"
+local bufname = "tai-output"
+
+local function ensure_buf()
 	local bufnr = vim.fn.bufnr(bufname)
 	if bufnr == -1 then
-		vim.cmd("vnew")
-		local new_win = vim.api.nvim_get_current_win()
-		bufnr = vim.api.nvim_get_current_buf()
-		vim.api.nvim_win_set_width(new_win, 80)
-
+		bufnr = vim.api.nvim_create_buf(false, true)
+		vim.api.nvim_buf_set_name(bufnr, bufname)
 		vim.bo[bufnr].buftype = "nofile"
-		vim.bo[bufnr].bufhidden = "wipe"
+		vim.bo[bufnr].bufhidden = "hide" -- keep content when hidden
 		vim.bo[bufnr].swapfile = false
 		vim.bo[bufnr].modifiable = true
 		vim.bo[bufnr].filetype = "tai-output"
-		vim.api.nvim_buf_set_name(bufnr, bufname)
+	end
+	return bufnr
+end
+
+function M.toggle_output_window()
+	local bufnr = ensure_buf()
+	local winid = vim.fn.bufwinnr(bufnr)
+	if winid ~= -1 then
+		-- Close the window
+		vim.cmd(winid .. "close")
 	else
-		vim.api.nvim_buf_delete(bufnr, { force = true })
+		-- Open in vertical split
+		vim.cmd("vsplit")
+		local win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, bufnr)
+		vim.api.nvim_win_set_width(win, 80)
 	end
 end
 
 function M.show_response(fields)
-	local bufname = "tai-output"
-
-	local bufnr = vim.fn.bufnr(bufname)
-	if bufnr == -1 then
-		vim.cmd("vnew")
-		local new_win = vim.api.nvim_get_current_win()
-		bufnr = vim.api.nvim_get_current_buf()
-		vim.api.nvim_win_set_width(new_win, 80) -- this is THE number
-
-		-- Set buffer options to make it a scratch window
-		vim.bo[bufnr].buftype = "nofile"
-		vim.bo[bufnr].bufhidden = "wipe"
-		vim.bo[bufnr].swapfile = false
-		vim.bo[bufnr].modifiable = true
-		vim.bo[bufnr].filetype = "tai-output"
-		vim.api.nvim_buf_set_name(bufnr, bufname)
-	end
+	local bufnr = ensure_buf()
 
 	local content = ""
 	if fields.plan then
 		content = "Plan:\n\n" .. fields.plan .. "\n\n-----------------------------\n\n"
 	end
-
 	if fields.text then
 		content = content .. fields.text
 	end
-
 	if fields.commands then
-		content = content .. "\n\nCommand requested (use:RunTaiCommand to run):\n\n" .. fields.commands
-
+		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n" .. fields.commands
 		vim.api.nvim_buf_create_user_command(
 			bufnr, 'RunTaiCommand',
 			function() M.run_command(fields.commands) end,
 			{}
 		)
 	end
-
 	if fields.patch then
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
 		vim.schedule(function()
@@ -70,9 +61,15 @@ function M.show_response(fields)
 	end
 
 	local lines = vim.split(content, "\n", { trimempty = true })
-
-	-- Insert content
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+
+	-- Auto-open if hidden
+	if vim.fn.bufwinnr(bufnr) == -1 then
+		vim.cmd("vsplit")
+		local win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, bufnr)
+		vim.api.nvim_win_set_width(win, 80)
+	end
 end
 
 -- Insert the content at the cursor (insert mode)
@@ -145,9 +142,17 @@ function M.input(callback)
 end
 
 function M.apply_patch(patch)
-	local f = io.popen("patch -p0", "w")
+	local f = io.popen("patch --dry-run -p0 > /dev/null 2>&1", "w")
 	f:write(patch)
-	f:close()
+	local ok = f:close()
+
+	if not ok then
+		vim.notify("[tai] Invalid patch – not applied", vim.log.levels.ERROR)
+	end
+
+	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet", "w")
+	real:write(patch)
+	real:close()
 	vim.api.nvim_command("checktime")
 end
 

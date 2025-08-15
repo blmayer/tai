@@ -11,18 +11,30 @@ You are Tai, a Neovim coding assistant plugin.
 Return **EXACTLY** one valid multipart MIME message with no extra text before or after.
 
 ### Context
+You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
+start you'll receive a summary of the project to help you understand the structure.
+
 Users will need you for their development workflow, they may ask you open questions about the current file or the codebase,
 you are entitled to help them. To fullfill those requests you can give advice, create code changes, create plans for more complex
 tasks and if needed you can request the user to run commands and send you the output, if you need to know a file for example. You may also
 need other info, for that you can request the user for simple questions.
 
-You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
-start you'll receive a summary of the project to help you understand the structure.
+Respond correctly to the prompts, don't propose code changes if the user didn't ask.
 
 ### Format Enforcement
 - Every response must start with the exact headers `MIME-Version: 1.0` and `Content-Type: multipart/mixed; boundary="<boundary>"`.
 - Boundaries must be 8–32 alphanumeric characters only.
 - All multipart boundaries must be closed with `--<boundary>--`.
+
+### Output format
+You MUST return a single multipart MIME message with:
+- MIME-Version: 1.0
+- Content-Type: multipart/mixed; boundary="<boundary>"
+- Exactly one boundary per distinct part
+- End with `--<boundary>--`
+
+Example structure:
+MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="abc"\n\n--abc\n...\n--abc--
 
 ### Instructions
 1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the MIME envelope.
@@ -32,7 +44,7 @@ start you'll receive a summary of the project to help you understand the structu
    - Use `text/x-diff` with part name `patch`.
    - Diffs must be generated in unified format (aka patch).
    - Each hunk must begin with `@@ -<o>,<o> +<n>,<n> @@`.
-   - Never include CRLF line endings.
+   - Always use LF (`\n`) line endings, never CRLF.
    - Validate the patch so it can be applied with `patch -p0`.
    - Use relative file paths.
    - Don't send this part if you need further information, i.e. need to read some file or some clarification.
@@ -144,13 +156,10 @@ function M.init()
 
 		for _, path in ipairs(vim.fn.glob("**/*", true, true)) do
 			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then
-				vim.notify("[tai] Skiping " .. path, vim.log.levels.TRACE)
 				goto continue
 			end
-			vim.notify("[tai] Indexing " .. path, vim.log.levels.TRACE)
 
 			if is_cache_up_to_date(path) then
-				vim.notify("[tai] Index is up to date", vim.log.levels.TRACE)
 				local lines = vim.fn.readfile(path)
 				local content = table.concat(lines, "\n")
 				preamble = preamble .. content .. "------------------\n"
@@ -173,8 +182,7 @@ function M.init()
 			ensure_dir_exists(cache .. path)
 			local cache_file = io.open(cache .. path, "w")
 			if not cache_file then
-				vim.notify("[tai] Error writing to cache file " .. path,
-					vim.log.levels.ERROR)
+				vim.notify("[tai] Error writing to cache file " .. path, vim.log.levels.ERROR)
 				return
 			end
 			cache_file:write(reply .. "\n")
@@ -188,12 +196,31 @@ function M.init()
 	end)
 end
 
-function M.request_file_prompt(filepath, prompt)
+function M.request_append_file(filepath, prompt)
+	-- Read file content
 	local lines = vim.fn.readfile(filepath)
 	local content = table.concat(lines, "\n")
-	local payload = prompt .. "\n\n" .. "Filename: " .. filepath .. "\n\n" .. content
 
-	return M.process_request(payload)
+	-- Generate unique id for this file
+	local file_id = "file:" .. filepath
+
+	-- Remove old messages for this file from history
+	local new_history = {}
+	for _, msg in ipairs(history) do
+		if not (msg.id and msg.id == file_id) then
+			table.insert(new_history, msg)
+		end
+	end
+	history = new_history
+
+	-- Add new message with file content
+	table.insert(history, {
+		role = "system",
+		content = "File content for " .. filepath .. "\n\n" .. content,
+		id = file_id
+	})
+
+	return M.process_request(prompt)
 end
 
 function M.process_request(prompt)
