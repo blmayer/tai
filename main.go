@@ -4,8 +4,8 @@ import (
 	"golang.org/x/term"
 
 	"fmt"
-	"log"
 	"io"
+	"log"
 	"os"
 	"strings"
 )
@@ -111,21 +111,22 @@ func interactiveMode() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			break
 		}
+		fmt.Println(resp)
 		messages = append(messages, ChatMessage{Role: "assistant", Content: resp})
 	}
 }
 
 // tai This is a go package that ... continue this comment
 func main() {
+	prompt := ""
+	if len(os.Args) > 1 {
+		prompt = strings.Join(os.Args[1:], " ")
+	}
+
 	fi, _ := os.Stdin.Stat()
-	if (fi.Mode() & os.ModeCharDevice) == 0 {
-		prompt := ""
-		if len(os.Args) > 1 {
-			prompt = strings.Join(os.Args[1:], " ")
-		}
+	if (fi.Mode() & os.ModeCharDevice) == 0 || prompt != "" {
 		pipelineMode(prompt)
 	} else {
 		interactiveMode()
 	}
 }
-

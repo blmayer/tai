@@ -4,11 +4,11 @@ local ui = require("tai.ui")
 local project = require("tai.project")
 
 function M.setup(opts)
-	require("tai.project").init_project_prompt()
+	project.init()
 end
 
 function M.toggle_chat_window()
-    ui.toggle_output_window()
+	ui.toggle_output_window()
 end
 
 function M.prompt_input()
@@ -29,7 +29,8 @@ function M.prompt_full_file()
 	ui.input(function(input)
 		if not input or input == "" then return end
 
-		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location, input)
+		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location,
+			input)
 
 		local result = project.request_file_prompt(path, prompt)
 		ui.show_response(result)
