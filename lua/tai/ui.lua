@@ -38,16 +38,23 @@ function M.show_response(fields)
 
 	local content = ""
 	if fields.plan then
-		content = "Plan:\n\n" .. fields.plan .. "\n\n-----------------------------\n\n"
+		content = "Plan:\n\n"
+		for i, p in ipairs(fields.plan) do
+			content = content .. i .. ". " .. p .. "\n"
+		end
+		content = content .. "\n-----------------------------\n\n"
 	end
 	if fields.text then
 		content = content .. fields.text
 	end
 	if fields.commands then
-		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n" .. fields.commands
+		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n"
+		for _, cmd in ipairs(fields.commands) do
+			content = content .. cmd .. "\n\n"
+		end
 		vim.api.nvim_buf_create_user_command(
 			bufnr, 'RunTaiCommand',
-			function() M.run_command(fields.commands) end,
+			function() M.run_commands(fields.commands) end,
 			{}
 		)
 	end
@@ -134,9 +141,6 @@ function M.input(callback)
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local text = table.concat(lines, '\n')
 		vim.api.nvim_win_close(winnr, false)
-		vim.schedule(function()
-			vim.notify("[tai] Got prompt", vim.log.levels.TRACE)
-		end)
 		callback(text)
 	end, { buffer = bufnr })
 end
@@ -156,17 +160,22 @@ function M.apply_patch(patch)
 	vim.api.nvim_command("checktime")
 end
 
-function M.run_command(cmd)
+function M.run_commands(cmds)
 	local output
-	if command.validate(cmd) then
-		output = command.run(cmd)
-	else
-		output = "[tai] Command " .. cmd .. " is not allowed"
+
+	for _, cmd in ipairs(cmds) do
+		if command.validate(cmd) then
+			output = "\n\n" .. output .. "Output of ```" .. cmd .. "```:\n" .. command.run(cmd)
+		else
+			output = "[tai] Command " .. cmd .. " is not allowed"
+		end
+
 	end
 
 	vim.schedule(function()
 		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
 	end)
+
 	local reply = project.process_request(output)
 	return M.show_response(reply)
 end

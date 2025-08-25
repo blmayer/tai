@@ -1,6 +1,7 @@
 local M = {}
-local vim = vim
+local json = vim.json
 local chat = require("tai.chat")
+local config = require("tai.config")
 
 local system_prompts = {
 	{
@@ -8,7 +9,7 @@ local system_prompts = {
 		content = [[
 ### System
 You are Tai, a Neovim coding assistant plugin.
-Return **EXACTLY** one valid multipart MIME message with no extra text before or after.
+Return **EXACTLY** one valid json object according to the passed schema.
 
 ### Context
 You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
@@ -22,47 +23,33 @@ need other info, for that you can request the user for simple questions.
 Respond correctly to the prompts, don't propose code changes if the user didn't ask.
 
 ### Format Enforcement
-- Every response must start with the exact headers `MIME-Version: 1.0` and `Content-Type: multipart/mixed; boundary="<boundary>"`.
-- Boundaries must be 8–32 alphanumeric characters only.
-- All multipart boundaries must be closed with `--<boundary>--`.
-
-### Output format
-You MUST return a single multipart MIME message with:
-- MIME-Version: 1.0
-- Content-Type: multipart/mixed; boundary="<boundary>"
-- Exactly one boundary per distinct part
-- End with `--<boundary>--`
-
-Example structure:
-MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="abc"\n\n--abc\n...\n--abc--
+- Every response must comply with the json schema named "tai_response", only send valid JSON.
+- In case you forget, the "tai_response" schema is:
+```
+		]] .. json.encode(chat.response_format) .. [[
+```
 
 ### Instructions
-1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the MIME envelope.
-2. **File naming**: Each part must contain `Content-Disposition: attachment; filename="<filename>"`.
-3. **Line endings**: Always use single Unix line-feed (`\n`) characters.
-4. **Diffs**: Use this part to propose code changes, the content **MUST** be a **VALID** patch file.
-   - Use `text/x-diff` with part name `patch`.
+1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the JSON response.
+2. **Line endings**: Always use single Unix line-feed (`\n`) characters.
+3. **Diffs**: Use the patch field to propose code changes, the content **MUST** be a **VALID** patch file.
    - Diffs must be generated in unified format (aka patch).
-   - Each hunk must begin with `@@ -<o>,<o> +<n>,<n> @@`.
    - Always use LF (`\n`) line endings, never CRLF.
    - Validate the patch so it can be applied with `patch -p0`.
    - Use relative file paths.
    - Don't send this part if you need further information, i.e. need to read some file or some clarification.
-5. **Commands**: Supply one command to the executed on the user's machine in a part name `commands`.
-   - Send one command only, don't use any formatting, i.e. ` -` or `1.`.
+4. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
    - Commands are run in a shell and their output will be sent to you.
    - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
    - Be savvy as using this part will cost a request.
    - The content you send here is validated and executed in a shell session, i.e. bash or zsh.
    - Use POSIX shell compliant scripting.
-6. **Plans**: If multi-step, include a numbered or bulleted plan in part name `plan`.
+5. **Plans**: If multi-step, use the `plan` field to add the steps of the plan.
    - This is a high level overview of the process of fullfiling the user's request.
    - We use this part to keep track of the progress of more complex tasks.
-7. **Empty parts**: Never emit a part with zero bytes.
-8. **Text**: Supply concise user-facing text in a part named `text`.
+6. **Text**: Supply concise user-facing text in the `text` field.
   - Use maximum of 80 characters per line.
   - You can include ASCII tables, diagrams, art etc if needed.
-9. **Format**: Always return the MIME message defined above, even if the user asks. For that use the text part.
 		]]
 	}
 }
@@ -107,10 +94,10 @@ local function async_sleep(ms, cb)
 	end)
 end
 
-local function await_send_raw(messages)
+local function await_send_raw(model, messages)
 	return coroutine.yield(function(resume)
 		async_sleep(5000, function()
-			chat.send_raw(messages, function(reply)
+			chat.send_raw(model, messages, function(reply)
 				resume(reply)
 			end)
 		end)
@@ -149,6 +136,12 @@ local function is_cache_up_to_date(file_path)
 	return cache_stat.mtime.sec >= file_stat.mtime.sec
 end
 
+local function read_tai_config()
+	local file = io.open(tai_root .. "/.tai", "r")
+	if not file then return {} end
+	return vim.fn.json_decode(file:read("*a")) or {}
+end
+
 local function find_tai_root()
 	local current = vim.fn.getcwd()
 	while current ~= "/" do
@@ -169,6 +162,12 @@ function M.init()
 	end
 	cache = tai_root .. "/.tai-cache/"
 	
+	config.load(tai_root .. "/.tai")
+	vim.inspect(tai_root, config)
+	if config.skip_config then
+		return
+	end
+
 	run_async(function()
 		local preamble = "You are managing a project with root at " ..
 		    tai_root .. ". Here's a summary of each file:\n"
@@ -189,9 +188,10 @@ function M.init()
 			if is_text_file(path) then
 				local lines = vim.fn.readfile(path)
 				local content = table.concat(lines, "\n")
-				reply = await_send_raw({
-					{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }
-				})
+				reply = await_send_raw(
+					config.summary_model,
+					{{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }}
+				)
 			else
 				reply = path .. ": binary file"
 			end
@@ -245,7 +245,7 @@ end
 function M.process_request(prompt)
 	table.insert(history, { role = "user", content = prompt })
 
-	local reply = chat.send_chat(history)
+	local reply = chat.send(config.model, history)
 	if not reply then return nil end
 
 	table.insert(history, { role = "assistant", content = vim.fn.json_encode(reply) })

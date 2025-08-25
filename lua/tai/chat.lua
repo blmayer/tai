@@ -11,12 +11,46 @@ if not api_key then
 end
 
 local groq_url = "https://api.groq.com/openai/v1/chat/completions"
-local model = "moonshotai/kimi-k2-instruct"
---local model = "compound-beta"
---local model = "llama3-70b-8192"
 
+M.response_format = {
+	type = "json_schema", 
+	json_schema = {
+		name = "tai_response", 
+		description = "The only response format for Tai.",
+		schema = {
+			type = "object",
+			additionalProperties = false,
+			required = {"text"},
+			properties = {
+				text = {
+					type = "string",
+					description = "Textual part of answer, intended for the user",
+				},
+				patch = {
+					type = "string",
+					description = "Patch part of answer, a valid diff text containing the changes requested.",
+				},
+				commands = {
+					type = "array",
+					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
+					items = {
+						type = "string"
+					}
+				},
+				plan = {
+					type = "array",
+					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
+					items = {
+						type = "string"
+					}
+				},
 
-function M.send_raw(messages, callback)
+			}
+		}
+	}
+}
+
+function M.send_raw(model, messages, callback)
 	local req_body = {
 		model = model,
 		messages = messages,
@@ -75,13 +109,14 @@ function M.send_raw(messages, callback)
 	end)
 end
 
-function M.send_chat(messages)
+function M.send(model, messages)
 	local req_body = {
 		model = model,
 		messages = vim.tbl_map(
 			function(m) return { role = m.role, content = m.content } end,
 			messages
 		),
+		response_format = M.response_format
 	}
 
 	local json_data = json.encode(req_body)
@@ -111,7 +146,6 @@ function M.send_chat(messages)
 		end
 	end)
 
-	vim.notify("[tai] Waiting for response", vim.log.levels.TRACE)
 	uv.read_start(stdout, function(_, chunk)
 		if chunk then
 			table.insert(result, chunk)
@@ -140,9 +174,10 @@ function M.send_chat(messages)
 		return nil
 	end
 
-	local fields, err = mime.parse(parsed.choices[1].message.content)
-	if err then
-		vim.notify("[tai] Failed to decode MIME message: " .. response, vim.log.levels.ERROR)
+	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
+	-- local fields, err = mime.parse(parsed.choices[1].message.content)
+	if not ok then
+		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
 		return nil
 	end
 
