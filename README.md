@@ -87,6 +87,7 @@ and load it in your `init.lua`:
 
 ### Requirements
 
+- A `.tai` file in your project root, if not found tai will not work.
 - Neovim 0.5 or newer
 - Unix-like OS
 - curl

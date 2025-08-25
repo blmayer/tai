@@ -79,6 +79,7 @@ For classes that have members/fields do the same in a nested fashion
 
 local history = vim.deepcopy(system_prompts)
 local cache = ".tai-cache/"
+local tai_root = nil
 
 local function run_async(fn)
 	local co = coroutine.create(fn)
@@ -148,11 +149,29 @@ local function is_cache_up_to_date(file_path)
 	return cache_stat.mtime.sec >= file_stat.mtime.sec
 end
 
+local function find_tai_root()
+	local current = vim.fn.getcwd()
+	while current ~= "/" do
+		local tai_file = current .. "/.tai"
+		if vim.fn.filereadable(tai_file) == 1 then
+			return current
+		end
+		current = vim.fn.fnamemodify(current, ":h")
+	end
+	return nil
+end
+
 function M.init()
+	tai_root = find_tai_root()
+	if not tai_root then
+		vim.notify("[tai] .tai file not found, quitting.", vim.log.levels.WARN)
+		return
+	end
+	cache = tai_root .. "/.tai-cache/"
+	
 	run_async(function()
-		local dir = vim.fn.getcwd()
-		local preamble = "You are managing a project at " ..
-		    dir .. ". Here's a summary of each file:\n"
+		local preamble = "You are managing a project with root at " ..
+		    tai_root .. ". Here's a summary of each file:\n"
 
 		for _, path in ipairs(vim.fn.glob("**/*", true, true)) do
 			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then

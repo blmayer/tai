@@ -19,22 +19,29 @@ for processing using the groq API.
 - send motions or visual selections from Neovim
 - prompt for input and combine it with text or files
 - responses show up in a split buffer in Neovim
-- requires environment variable <i>GROQ_API_KEY</i>
-- simple lua and go code for easy customization
+- apply patches or run commands
+- agents create plans for big code changes
 
 
 <b>keybindings</b>
 
-gT + motion      - send motion selection
-gP + motion      - send motion selection with input
-&lt;leader&gt;ti (normal) - prompt input and send
-&lt;leader&gt;tf (normal) - prompt input with file
+<i>normal mode:</i>
+
+gT + motion	- send motion selection
+gP + motion	- send motion selection with input
+&lt;leader&gt;ti 	- prompt input and send
+&lt;leader&gt;tf 	- prompt input with file
+
+
+<i>insert mode:</i>
+
+&lt;C-x&gt;&lt;C-t&gt;	- trigger complete function
 
 
 <b>installation</b>
 
 clone or place <i>lua/tai/</i> into your Neovim config dir
-<code>~/.config/nvim/lua/</code> and add keymaps to <i>init.lua</i>:
+<i>~/.config/nvim/lua/</i> and add keymaps to <i>init.lua</i>:
 
   vim.g.mapleader = " "
 
@@ -62,18 +69,35 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
     vim.schedule(tai.prompt_full_file)
   end, { noremap = true })
 
-build and run the go server:
+
+<i>CLI</i>
+
+build the go code:
 
   go build -o tai .
-  ./tai
 
-make sure the <i>GROQ_API_KEY</i> env var is set.
+move tai to a folder in your path.
 
 
 <b>usage</b>
 
-send text or prompts from Neovim using the
-keybindings above.
+make sure the <i>GROQ_API_KEY</i> env var is set.
+create a .tai file at the root or your project.
+editting any file in that project should start tai.
+then just use the keybindings above.
+
+note: the first time tai is open it will index all
+your project's files, so it may take some time to
+fully load.
+
+to use the CLI you just run tai in your shell, this
+will start the interactive mode that you can use to
+chat.
+
+tai is aware if is being used in a pipeline, so you
+can run it to improve your terminal workflow, e.g.
+
+  ls . | tai "rename to snake_case" | ... 
 
 
 <i>screenshots</i>
