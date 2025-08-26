@@ -76,6 +76,7 @@ and load it in your `init.lua`:
     	require("tai").toggle_chat_window()
     end, { noremap = true })
 
+
 ### Usage
 
 - Use `gT` plus a motion to send a text selection to the server.
@@ -87,13 +88,15 @@ and load it in your `init.lua`:
 
 ### Requirements
 
-- A `.tai` file in your project root, if not found tai will not work.
+- A `.tai` JSON file in your project root, if not found tai will not work.
 - Neovim 0.5 or newer
 - Unix-like OS
 - curl
 
-
-## tai
+The .tai file supports the following fields:
+- model: The model used for chat completions.
+- summary_model: The model used for summaries.
+- skip_cache: A flag to skip caching.
 
 
 ### Building

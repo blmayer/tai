@@ -37,7 +37,7 @@ function M.show_response(fields)
 	local bufnr = ensure_buf()
 
 	local content = ""
-	if fields.plan then
+	if fields.plan and #fields.plan > 0 then
 		content = "Plan:\n\n"
 		for i, p in ipairs(fields.plan) do
 			content = content .. i .. ". " .. p .. "\n"
@@ -47,7 +47,7 @@ function M.show_response(fields)
 	if fields.text then
 		content = content .. fields.text
 	end
-	if fields.commands then
+	if fields.commands and #fields.commands > 0 then
 		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n"
 		for _, cmd in ipairs(fields.commands) do
 			content = content .. cmd .. "\n\n"

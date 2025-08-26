@@ -3,7 +3,7 @@ local json = vim.json
 local chat = require("tai.chat")
 local config = require("tai.config")
 
-local system_prompts = {
+local history = {
 	{
 		role = "system",
 		content = [[
@@ -41,7 +41,6 @@ Respond correctly to the prompts, don't propose code changes if the user didn't 
 4. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
    - Commands are run in a shell and their output will be sent to you.
    - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
-   - Be savvy as using this part will cost a request.
    - The content you send here is validated and executed in a shell session, i.e. bash or zsh.
    - Use POSIX shell compliant scripting.
 5. **Plans**: If multi-step, use the `plan` field to add the steps of the plan.
@@ -50,6 +49,12 @@ Respond correctly to the prompts, don't propose code changes if the user didn't 
 6. **Text**: Supply concise user-facing text in the `text` field.
   - Use maximum of 80 characters per line.
   - You can include ASCII tables, diagrams, art etc if needed.
+
+### Tasks
+You will receive coding tasks from the user, your goal is to complete them with success. For that use what you know to propose changes, suggestions or run commands on the user's machine if you have all info you need to complete the task.
+If you need more information in order to fullfill a task use a plan to outline the steps, you may need to ask the user to input the lacking info or use the available commands to request what you need.
+You also have a summary of the project in the system prompt, use it to guide you.
+ONLY propose changes that you sure about, don't suppose anything.
 		]]
 	}
 }
@@ -64,7 +69,6 @@ For each function, method, class, interface, variable, enum etc, group them in a
 For classes that have members/fields do the same in a nested fashion
 ]]
 
-local history = vim.deepcopy(system_prompts)
 local cache = ".tai-cache/"
 local tai_root = nil
 
@@ -163,7 +167,6 @@ function M.init()
 	cache = tai_root .. "/.tai-cache/"
 	
 	config.load(tai_root .. "/.tai")
-	vim.inspect(tai_root, config)
 	if config.skip_config then
 		return
 	end
@@ -178,7 +181,7 @@ function M.init()
 			end
 
 			if is_cache_up_to_date(path) then
-				local lines = vim.fn.readfile(path)
+				local lines = vim.fn.readfile(cache .. path)
 				local content = table.concat(lines, "\n")
 				preamble = preamble .. content .. "------------------\n"
 				goto continue
@@ -210,7 +213,7 @@ function M.init()
 			::continue::
 		end
 
-		table.insert(system_prompts, { role = "system", content = preamble })
+		table.insert(history, { role = "system", content = preamble })
 		vim.notify("[tai] Project indexing complete!", vim.log.levels.TRACE)
 	end)
 end
@@ -244,7 +247,9 @@ end
 
 function M.process_request(prompt)
 	table.insert(history, { role = "user", content = prompt })
-
+	vim.schedule(function()
+	vim.print(history)
+end)
 	local reply = chat.send(config.model, history)
 	if not reply then return nil end
 
