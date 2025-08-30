@@ -29,7 +29,7 @@ function M.prompt_full_file()
 	ui.input(function(input)
 		if not input or input == "" then return end
 
-		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location,
+		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location,
 			input)
 
 		local result = project.request_append_file(path, prompt)
@@ -77,7 +77,7 @@ end
 
 function M.replace_visual()
 	ui.input(function(input)
-		local payload = string.format("I'm replacing text, your response will the pasted as is. Prompt:\n", input)
+		local payload = string.format("I'm replacing text, your text response will the pasted as is. Q:\n", input)
 		local result = project.process_request(payload)
 		ui.replace_visual_selection(result)
 	end)

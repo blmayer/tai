@@ -152,6 +152,7 @@ function M.apply_patch(patch)
 
 	if not ok then
 		vim.notify("[tai] Invalid patch – not applied", vim.log.levels.ERROR)
+		return
 	end
 
 	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet", "w")
