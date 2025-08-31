@@ -18,14 +18,17 @@ Users will send coding tasks/questions, your goal is to fullfill them with succe
 Use the summary of the project in the system prompt to guide you.
 ONLY propose changes that solves the issue, don't suppose anything.
 
-1. **Diffs**: Use the patch field to propose code changes, the content **MUST** be a **VALID** patch file.
-  - Diffs must be generated in unified format (aka patch).
-  - Always use LF (`\n`) line endings, never CRLF.
-  - Validate the patch so it can be applied with `patch -p0`.
-  - Use relative file paths.
-  - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+1. **Patches**: Use the patch field to propose code changes, the content **MUST** be a **VALID** diff file.
   - Add a small description of the changes in the text field.
-  - Generate the simplest possible patch.
+  - Validate the patch so it can be applied with `patch -p0`.
+  - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+Diff format (unified diff) is line-oriented:
+  - Starts with --- old_file +++ new_file
+  - @@ -old_start,old_count +new_start,new_count @@ for each hunk
+  - Lines prefixed with - (removed), + (added), or space (unchanged)
+  - Context lines (unchanged) provide anchor points
+  - Each change is a contiguous block (hunk) with 3 lines of context by default
+  - Use relative paths, LF line endings
 2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
   - Commands are run in a shell and their output will be sent to you.
   - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
@@ -158,7 +161,7 @@ function M.init()
 	cache = tai_root .. "/.tai-cache/"
 	
 	config.load(tai_root .. "/.tai")
-	if config.skip_config then
+	if config.skip_cache then
 		return
 	end
 
@@ -239,7 +242,6 @@ end
 function M.process_request(prompt)
 	table.insert(history, { role = "user", content = prompt })
 	vim.schedule(function()
-	vim.print(history)
 end)
 	local reply = chat.send(config.model, history)
 	if not reply then return nil end

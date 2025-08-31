@@ -175,7 +175,6 @@ function M.send(model, messages)
 	end
 
 	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
-	-- local fields, err = mime.parse(parsed.choices[1].message.content)
 	if not ok then
 		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
 		return nil

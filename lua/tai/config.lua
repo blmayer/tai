@@ -9,7 +9,7 @@ function M.load(path)
 	if not file then return end
 	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
 	file:close()
-	if not ok then return end
+	if not data then return end
 	
 	M.model = data.model or M.model
 	M.summary_model = data.summary_model or M.summary_model
