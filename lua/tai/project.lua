@@ -1,5 +1,4 @@
 local M = {}
-local json = vim.json
 local chat = require("tai.chat")
 local config = require("tai.config")
 
@@ -31,8 +30,7 @@ Diff format (unified diff) is line-oriented:
   - Use relative paths, LF line endings
 2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
   - Commands are run in a shell and their output will be sent to you.
-  - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
-  - The content you send here is validated and executed in a shell session, i.e. bash or zsh.
+  - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
   - Use POSIX shell compliant scripting.
   - Use this to request the info needed to complete the current task.
   - Don't use commands for code changes, use the patch field.
@@ -47,7 +45,7 @@ Diff format (unified diff) is line-oriented:
 6. **Complex tasks**: Use a plan to analyse and execute chages, make smaller tasks.
   - If you need more information in order to fullfill a task request the user with by text or using available commands.
   - Make sure you stick to the plan, let it clear to the user what step you are and what are the changes.
-  - Propose valid patches one file at a time. 
+  - Propose valid patches one file at a time.
 		]]
 	}
 }
@@ -63,7 +61,8 @@ For each function, method, class, interface, variable, enum etc, group them in a
 For classes that have members/fields do the same in a nested fashion
 ]]
 
-local completion_prompt =  "You are an autocomplete assistant. You will receive the current line, you job is to return the continuation of it, don't add any formatting. Line:\n"
+local completion_prompt =
+"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining, don't add any formatting. Line:\n"
 
 local cache = ".tai-cache/"
 local tai_root = nil
@@ -136,12 +135,6 @@ local function is_cache_up_to_date(file_path)
 	return cache_stat.mtime.sec >= file_stat.mtime.sec
 end
 
-local function read_tai_config()
-	local file = io.open(tai_root .. "/.tai", "r")
-	if not file then return {} end
-	return vim.fn.json_decode(file:read("*a")) or {}
-end
-
 local function find_tai_root()
 	local current = vim.fn.getcwd()
 	while current ~= "/" do
@@ -161,7 +154,7 @@ function M.init()
 		return
 	end
 	cache = tai_root .. "/.tai-cache/"
-	
+
 	config.load(tai_root .. "/.tai")
 	if config.skip_cache then
 		return
@@ -189,7 +182,7 @@ function M.init()
 				local content = table.concat(lines, "\n")
 				reply = await_send_raw(
 					config.summary_model,
-					{{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }}
+					{ { role = "user", content = summary_prompt .. path .. ":\n\n" .. content } }
 				)
 			else
 				reply = path .. ": binary file"
@@ -214,10 +207,25 @@ function M.init()
 	end)
 end
 
-local function add_file_to_history(filepath)
-	-- Read file content
-	local lines = vim.fn.readfile(filepath)
-	local content = table.concat(lines, "\n")
+function M.request_append_file(filepath, prompt)
+	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
+
+	local lines
+	if buffer_path:match("/" .. filepath .. "$") then
+		-- Use current buffer
+		local bufnr = vim.api.nvim_get_current_buf()
+		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	else
+		-- Use file on disk
+		lines = vim.fn.readfile(filepath)
+	end
+
+	-- add line numbers
+	local numbered = {}
+	for i, line in ipairs(lines) do
+		table.insert(numbered, string.format("%4d: %s", i-1, line))
+	end
+	local content = table.concat(numbered, "\n")
 
 	-- Generate unique id for this file
 	local file_id = "file:" .. filepath
@@ -237,48 +245,6 @@ local function add_file_to_history(filepath)
 		id = file_id
 	})
 
-	return file_id
-end
-
-local function add_current_buffer_to_history()
-	-- Get current buffer content
-	local bufnr = vim.api.nvim_get_current_buf()
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	local content = table.concat(lines, "\n")
-
-	-- Get buffer name/path
-	local filepath = vim.api.nvim_buf_get_name(bufnr)
-	--
-	-- Generate unique id for this buffer
-	local file_id = "file:" .. filepath
-
-	-- Remove old messages for this buffer from history
-	local new_history = {}
-	for _, msg in ipairs(history) do
-		if not (msg.id and msg.id == file_id) then
-			table.insert(new_history, msg)
-		end
-	end
-	history = new_history
-
-	table.insert(history, {
-		role = "system",
-		content = "Buffer content for " .. filepath .. "\n\n" .. content,
-		id = file_id
-	})
-
-	return file_id
-end
-
-function M.request_append_file(filepath, prompt)
-	local bufnr = vim.api.nvim_get_current_buf()
-	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
-
-	if buffer_path:match("/" .. filepath .. "$") then
-		add_current_buffer_to_history()
-    	else
-		add_file_to_history(filepath)
-	end
 	return M.process_request(prompt)
 end
 
@@ -299,8 +265,8 @@ function M.complete(start)
 	local content = table.concat(lines, "\n")
 
 	local msgs = {
-		{ role = "system", content = content },
-		{ role = "user", content = completion_prompt .. start },
+		{ role = "system",    content = content },
+		{ role = "user",      content = completion_prompt .. start },
 		{ role = "assistant", content = start }
 	}
 
@@ -309,4 +275,5 @@ function M.complete(start)
 
 	return reply
 end
+
 return M

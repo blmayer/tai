@@ -50,6 +50,7 @@ A proper plugin is install method is underway.
 and load it in your `init.lua`:
 
     local tai = require("tai")
+    tai.setup({})
 
     _G.tai_operator_send = tai.operator_send
     _G.tai_operator_send_with_prompt = tai.operator_send_with_prompt
@@ -74,6 +75,10 @@ and load it in your `init.lua`:
 
     vim.keymap.set("n", "<C-w><C-t>", function()
     	require("tai").toggle_chat_window()
+    end, { noremap = true })
+
+    vim.keymap.set("i", "<C-X><C-t>", function()
+      vim.schedule(tai.complete)
     end, { noremap = true })
 
 

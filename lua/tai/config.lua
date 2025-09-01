@@ -1,5 +1,19 @@
 local M = {}
 
+M.allowed_commands = {
+	["cat"] = true,
+	["echo"] = true,
+	["date"] = true,
+	["tail"] = true,
+	["head"] = true,
+	["grep"] = true,
+	["cut"] = true,
+	["ls"] = true,
+	["wc"] = true,
+	["make"] = true,
+	["sort"] = true
+}
+
 M.model = "moonshotai/kimi-k2-instruct"
 M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
 M.complete_model = "llama-3.3-70b-versatile"
@@ -11,10 +25,18 @@ function M.load(path)
 	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
 	file:close()
 	if not data then return end
-	
+
 	M.model = data.model or M.model
 	M.summary_model = data.summary_model or M.summary_model
 	M.complete_model = data.complete_model or M.complete_model
+	if data.allowed_commands then
+		M.allowed_commands = {}
+
+		-- Convert the list to a map for quick lookup
+		for _, cmd in ipairs(data.allowed_commands) do
+			M.allowed_commands[cmd] = true
+		end
+	end
 	M.skip_cache = data.skip_cache or M.skip_cache
 	vim.notify("[tai] Config loaded.", vim.log.levels.INFO)
 end

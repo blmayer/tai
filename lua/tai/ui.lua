@@ -76,6 +76,9 @@ function M.show_response(fields)
 		local win = vim.api.nvim_get_current_win()
 		vim.api.nvim_win_set_buf(win, bufnr)
 		vim.api.nvim_win_set_width(win, 80)
+	else
+		-- Ensure focus on existing window
+		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
 	end
 end
 
@@ -174,7 +177,6 @@ function M.run_commands(cmds)
 		else
 			output = output .. "\n\n```" .. cmd .. "``` returned null"
 		end
-
 	end
 
 	vim.schedule(function()

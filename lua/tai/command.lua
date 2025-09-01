@@ -1,22 +1,12 @@
 local M = {}
-
-local allowed_commands = {
-	["cat"] = true,
-	["tail"] = true,
-	["head"] = true,
-	["grep"] = true,
-	["cut"] = true,
-	["ls"] = true,
-	["wc"] = true,
-	["sort"] = true
-}
+local config = require("tai.config")
 
 function M.validate(cmd)
 	local parts = vim.split(cmd, "%s+")
 	if #parts == 0 then return false end
 
 	local base = parts[1]:match("^([^/]+)$")
-	if not base or not allowed_commands[base] then
+	if not base or not config.allowed_commands[base] then
 		return false
 	end
 
