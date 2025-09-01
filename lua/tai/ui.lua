@@ -81,12 +81,9 @@ end
 
 -- Insert the content at the cursor (insert mode)
 function M.insert_response(content)
-	if not content.text then
-		return
-	end
-
+	print(content)
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-	local lines = vim.split(content.text, "\n", { plain = true })
+	local lines = vim.split(content, "\n", { plain = true })
 	local bufnr = vim.api.nvim_get_current_buf()
 
 	local current_line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
@@ -96,7 +93,9 @@ function M.insert_response(content)
 	lines[1] = before .. lines[1]
 	lines[#lines] = lines[#lines] .. after
 
+	local new_col = #lines[#lines] - #after
 	vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, lines)
+	vim.api.nvim_win_set_cursor(0, { row + #lines - 1, new_col })
 end
 
 -- Replace selected text (visual mode)
@@ -165,10 +164,15 @@ function M.run_commands(cmds)
 	local output
 
 	for _, cmd in ipairs(cmds) do
-		if command.validate(cmd) then
-			output = "\n\n" .. output .. "Output of ```" .. cmd .. "```:\n" .. command.run(cmd)
-		else
+		if not command.validate(cmd) then
 			output = "[tai] Command " .. cmd .. " is not allowed"
+		end
+
+		local out = command.run(cmd)
+		if out then
+			output = output .. "\n\nOutput of ```" .. cmd .. "```:\n" .. out
+		else
+			output = output .. "\n\n```" .. cmd .. "``` returned null"
 		end
 
 	end

@@ -22,19 +22,29 @@ end
 function M.prompt_full_file()
 	local path = vim.fn.expand("%")
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-	local line = vim.api.nvim_get_current_line()
 
 	local location = string.format("line %d, column %d", row, col)
 
 	ui.input(function(input)
 		if not input or input == "" then return end
 
-		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location,
-			input)
+		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
 
 		local result = project.request_append_file(path, prompt)
 		ui.show_response(result)
 	end)
+end
+
+function M.insert_with_full_file()
+	local path = vim.fn.expand("%")
+	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+
+	local location = string.format("line %d, column %d", row, col)
+
+	local prompt = string.format("Cursor is at %s. Return the correct continuation.", location)
+
+	local result = project.request_append_file(path, prompt)
+	ui.insert_response(result)
 end
 
 function M.operator_send(type)
@@ -60,18 +70,10 @@ function M.operator_send_with_prompt(type)
 	end)
 end
 
-function M.insert_response()
+function M.complete()
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
 	local line = vim.api.nvim_get_current_line()
-
-	local filename = vim.fn.expand("%")
-
-	local location = string.format("line %d, column %d", row, col)
-	local payload = string.format(
-		"I'm edditing %s with cursor at %s, the current line content is (inside backticks): ```%s```. Please continue that line, send **ONLY** the new text, don't send commentary or instructions. Your response is appended to the end of the cursor.",
-		filename, location, line)
-
-	local result = project.process_request(payload)
+	local result = project.complete(line)
 	ui.insert_response(result)
 end
 

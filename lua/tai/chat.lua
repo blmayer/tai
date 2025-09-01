@@ -50,7 +50,7 @@ M.response_format = {
 	}
 }
 
-function M.send_raw(model, messages, callback)
+function M.send_raw_async(model, messages, callback)
 	local req_body = {
 		model = model,
 		messages = messages,
@@ -107,6 +107,73 @@ function M.send_raw(model, messages, callback)
 	uv.read_start(stderr, function(_, chunk)
 		if chunk then table.insert(err_data, chunk) end
 	end)
+end
+
+function M.send_raw(model, messages)
+	local req_body = {
+		model = model,
+		messages = vim.tbl_map(
+			function(m) return { role = m.role, content = m.content } end,
+			messages
+		)
+	}
+
+	local json_data = json.encode(req_body)
+	local stdout = uv.new_pipe(false)
+	local stderr = uv.new_pipe(false)
+	local result = {}
+	local err_data = {}
+	local handle
+
+	handle = uv.spawn("curl", {
+		args = {
+			"-s", "-X", "POST",
+			groq_url,
+			"-H", "Authorization: Bearer " .. api_key,
+			"-H", "Content-Type: application/json",
+			"-d", json_data
+		},
+		stdio = { nil, stdout, stderr },
+	}, function(code, _)
+		stdout:close()
+		stderr:close()
+		handle:close()
+		if code ~= 0 then
+			vim.schedule(function()
+				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+			end)
+		end
+	end)
+
+	uv.read_start(stdout, function(_, chunk)
+		if chunk then
+			table.insert(result, chunk)
+		end
+	end)
+	vim.wait(60000, function()
+		return not uv.is_active(handle)
+	end, 10)
+
+	local response = table.concat(result)
+	if #err_data > 0 then
+		vim.schedule(function()
+			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+		end)
+		return nil
+	end
+
+	local ok, parsed = pcall(json.decode, response)
+	if not ok then
+		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+		return nil
+	end
+
+	if not parsed.choices or #parsed.choices == 0 then
+		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
+		return nil
+	end
+
+	return parsed.choices[1].message.content
 end
 
 function M.send(model, messages)

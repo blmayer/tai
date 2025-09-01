@@ -63,6 +63,8 @@ For each function, method, class, interface, variable, enum etc, group them in a
 For classes that have members/fields do the same in a nested fashion
 ]]
 
+local completion_prompt =  "You are an autocomplete assistant. You will receive the current line, you job is to return the continuation of it, don't add any formatting. Line:\n"
+
 local cache = ".tai-cache/"
 local tai_root = nil
 
@@ -94,7 +96,7 @@ end
 
 local function await_send_raw(model, messages)
 	return coroutine.yield(function(resume)
-		async_sleep(5000, function()
+		async_sleep(2000, function()
 			chat.send_raw(model, messages, function(reply)
 				resume(reply)
 			end)
@@ -212,7 +214,7 @@ function M.init()
 	end)
 end
 
-function M.request_append_file(filepath, prompt)
+local function add_file_to_history(filepath)
 	-- Read file content
 	local lines = vim.fn.readfile(filepath)
 	local content = table.concat(lines, "\n")
@@ -229,20 +231,60 @@ function M.request_append_file(filepath, prompt)
 	end
 	history = new_history
 
-	-- Add new message with file content
 	table.insert(history, {
 		role = "system",
 		content = "File content for " .. filepath .. "\n\n" .. content,
 		id = file_id
 	})
 
+	return file_id
+end
+
+local function add_current_buffer_to_history()
+	-- Get current buffer content
+	local bufnr = vim.api.nvim_get_current_buf()
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local content = table.concat(lines, "\n")
+
+	-- Get buffer name/path
+	local filepath = vim.api.nvim_buf_get_name(bufnr)
+	--
+	-- Generate unique id for this buffer
+	local file_id = "file:" .. filepath
+
+	-- Remove old messages for this buffer from history
+	local new_history = {}
+	for _, msg in ipairs(history) do
+		if not (msg.id and msg.id == file_id) then
+			table.insert(new_history, msg)
+		end
+	end
+	history = new_history
+
+	table.insert(history, {
+		role = "system",
+		content = "Buffer content for " .. filepath .. "\n\n" .. content,
+		id = file_id
+	})
+
+	return file_id
+end
+
+function M.request_append_file(filepath, prompt)
+	local bufnr = vim.api.nvim_get_current_buf()
+	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
+
+	if buffer_path:match("/" .. filepath .. "$") then
+		add_current_buffer_to_history()
+    	else
+		add_file_to_history(filepath)
+	end
 	return M.process_request(prompt)
 end
 
 function M.process_request(prompt)
 	table.insert(history, { role = "user", content = prompt })
-	vim.schedule(function()
-end)
+
 	local reply = chat.send(config.model, history)
 	if not reply then return nil end
 
@@ -250,4 +292,21 @@ end)
 	return reply
 end
 
+function M.complete(start)
+	-- Get current buffer content
+	local bufnr = vim.api.nvim_get_current_buf()
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+	local content = table.concat(lines, "\n")
+
+	local msgs = {
+		{ role = "system", content = content },
+		{ role = "user", content = completion_prompt .. start },
+		{ role = "assistant", content = start }
+	}
+
+	local reply = chat.send_raw(config.complete_model, msgs)
+	if not reply then return nil end
+
+	return reply
+end
 return M
