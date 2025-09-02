@@ -33,7 +33,7 @@ function M.toggle_output_window()
 	end
 end
 
-function M.show_response(fields)
+function M.show_response(fields, filename)
 	local bufnr = ensure_buf()
 
 	local content = ""
@@ -62,7 +62,7 @@ function M.show_response(fields)
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
 		vim.schedule(function()
 			local patch = fields.patch
-			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch) end,
+			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch, filename) end,
 				{})
 		end)
 	end
@@ -147,8 +147,8 @@ function M.input(callback)
 	end, { buffer = bufnr })
 end
 
-function M.apply_patch(patch)
-	local f = io.popen("patch --dry-run -p0 > /dev/null 2>&1", "w")
+function M.apply_patch(patch, filename)
+	local f = io.popen("patch --dry-run -p0 -e " .. filename .. " > /dev/null 2>&1", "w")
 	f:write(patch)
 	local ok = f:close()
 
@@ -157,14 +157,14 @@ function M.apply_patch(patch)
 		return
 	end
 
-	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet", "w")
+	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
 	real:write(patch)
 	real:close()
 	vim.api.nvim_command("checktime")
 end
 
 function M.run_commands(cmds)
-	local output
+	local output = ""
 
 	for _, cmd in ipairs(cmds) do
 		if not command.validate(cmd) then

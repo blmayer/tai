@@ -1,7 +1,6 @@
 local M = {}
 local json = vim.json
 local uv = vim.uv -- or vim.loop for Neovim < 0.10
-local mime = require("tai.mime")
 
 local api_key = os.getenv("GROQ_API_KEY")
 if not api_key then

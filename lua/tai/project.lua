@@ -17,35 +17,53 @@ Users will send coding tasks/questions, your goal is to fullfill them with succe
 Use the summary of the project in the system prompt to guide you.
 ONLY propose changes that solves the issue, don't suppose anything.
 
-1. **Patches**: Use the patch field to propose code changes, the content **MUST** be a **VALID** diff file.
+#### Proposing Code Changes
+Use the patch field to propose code changes, the content **MUST** be **VALID** patch in ed script format (patch -e).
+  - To generate a patch you **NEED** to know the full content of the file.
   - Add a small description of the changes in the text field.
-  - Validate the patch so it can be applied with `patch -p0`.
   - Don't send this part if you need further information, i.e. need to read some file or some clarification.
-Diff format (unified diff) is line-oriented:
-  - Starts with --- old_file +++ new_file
-  - @@ -old_start,old_count +new_start,new_count @@ for each hunk
-  - Lines prefixed with - (removed), + (added), or space (unchanged)
-  - Context lines (unchanged) provide anchor points
-  - Each change is a contiguous block (hunk) with 3 lines of context by default
-  - Use relative paths, LF line endings
-2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
+  - Don't forget to add the `.` for each ed command and `w` at end.
+
+#### Commands
+Supply the list of commands to the executed on the user's machine in the `commands` field.
   - Commands are run in a shell and their output will be sent to you.
   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
   - Use POSIX shell compliant scripting.
   - Use this to request the info needed to complete the current task.
   - Don't use commands for code changes, use the patch field.
-3. **Plans**: If multi-step, use the `plan` field to add the steps of the plan.
+
+#### Planning
+If the task needs multi-steps, use the `plan` field to add the steps of the plan.
   - This is a high level overview of the process of fullfiling the user's request.
   - Use this part to keep track of the progress of more complex tasks.
-4. **Text**: Supply concise user-facing text in the `text` field.
+  - Don't number steps or itemize
+
+#### User Facing Text
+Supply concise user-facing text in the `text` field.
   - Use maximum of 80 characters per line.
   - You can include ASCII tables, diagrams, art etc if needed.
-5. **Single file changes**: Only propose changes if you have all info you need to complete the task.
+
+#### Single file changes
+Only propose changes if you have all info you need to complete the task.
   - Propose a valid patch if you think the user wants, else you can walk the user throught it using text.
-6. **Complex tasks**: Use a plan to analyse and execute chages, make smaller tasks.
+
+#### Complex tasks
+Use a plan to analyse and execute chages, make smaller tasks.
   - If you need more information in order to fullfill a task request the user with by text or using available commands.
   - Make sure you stick to the plan, let it clear to the user what step you are and what are the changes.
   - Propose valid patches one file at a time.
+
+### Response format
+**ALWAYS** return a JSON object with the following format:
+{
+	"text": ...,
+	"plan": [...],
+	"patch": ...,
+	"commands": [{...}]
+}
+The only required field is text.
+
+**IMPORTANT**: Do not add anything outside of the JSON object such as formatting or code blocks.
 		]]
 	}
 }
@@ -62,7 +80,7 @@ For classes that have members/fields do the same in a nested fashion
 ]]
 
 local completion_prompt =
-"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining, don't add any formatting. Line:\n"
+"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
 
 local cache = ".tai-cache/"
 local tai_root = nil
@@ -71,36 +89,31 @@ local function run_async(fn)
 	local co = coroutine.create(fn)
 
 	local function step(...)
-		local ok, wait_fn = coroutine.resume(co, ...)
+		local ok, result = coroutine.resume(co, ...)
 		if not ok then
-			vim.notify("[tai] Coroutine error: " .. tostring(wait_fn), vim.log.levels.ERROR)
+			vim.notify("[tai] Coroutine error: " .. tostring(result), vim.log.levels.ERROR)
 			return
 		end
-		if type(wait_fn) == "function" then
-			wait_fn(step)
+		if type(result) == "function" then
+			result(step)
 		end
 	end
 
 	step()
 end
 
-local function async_sleep(ms, cb)
-	local t = vim.uv.new_timer()
-	t:start(ms, 0, function()
-		t:stop()
-		t:close()
-		vim.schedule(cb) -- ensures callback runs on main thread
-	end)
-end
-
 local function await_send_raw(model, messages)
-	return coroutine.yield(function(resume)
-		async_sleep(2000, function()
-			chat.send_raw(model, messages, function(reply)
-				resume(reply)
-			end)
+	local thread = coroutine.running()
+	if not thread then
+		vim.notify("[tai] Not in coroutine context", vim.log.levels.ERROR)
+		return nil
+	end
+	chat.send_raw_async(model, messages, function(reply)
+		vim.schedule(function()
+			coroutine.resume(thread, reply)
 		end)
 	end)
+	return coroutine.yield()
 end
 
 local function mkdir_p(dir)
@@ -241,7 +254,7 @@ function M.request_append_file(filepath, prompt)
 
 	table.insert(history, {
 		role = "system",
-		content = "File content for " .. filepath .. "\n\n" .. content,
+		content = "File content for " .. filepath .. " (numbered for your convenience)\n\n" .. content,
 		id = file_id
 	})
 
