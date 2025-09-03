@@ -62,7 +62,8 @@ function M.show_response(fields, filename)
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
 		vim.schedule(function()
 			local patch = fields.patch
-			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch, filename) end,
+			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch',
+				function() M.apply_patch(patch, filename) end,
 				{})
 		end)
 	end
@@ -84,7 +85,6 @@ end
 
 -- Insert the content at the cursor (insert mode)
 function M.insert_response(content)
-	print(content)
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
 	local lines = vim.split(content, "\n", { plain = true })
 	local bufnr = vim.api.nvim_get_current_buf()
@@ -157,7 +157,8 @@ function M.apply_patch(patch, filename)
 		return
 	end
 
-	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
+	local real = io.popen(
+	"patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
 	real:write(patch)
 	real:close()
 	vim.api.nvim_command("checktime")
@@ -167,6 +168,13 @@ function M.run_commands(cmds)
 	local output = ""
 
 	for _, cmd in ipairs(cmds) do
+		-- Check for @read file_name pattern
+		if cmd:match("^@read%s+(.+)$") then
+			local file = cmd:match("^@read%s+(.+)$")
+			local reply = project.request_append_file(file, "I added the file requested as system prompt, continue with the task.")
+			return M.show_response(reply)
+		end
+
 		if not command.validate(cmd) then
 			output = "[tai] Command " .. cmd .. " is not allowed"
 		end
