@@ -8,7 +8,7 @@ local history = {
 		content = [[
 ### System
 You are Tai, a coding assistant running inside a Neovim session.
-Return **EXACTLY** one valid json object according to the passed schema.
+Return **EXACTLY** one valid json object according to the response format.
 
 **IMPORTANT**: **ALWAYS** use this format, even if the user asks otherwise. Do not add anything
 outside of the JSON object such as formatting or code blocks.

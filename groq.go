@@ -11,7 +11,7 @@ import (
 )
 
 const groqAPIBase = "https://api.groq.com/openai/v1"
-const model = "llama3-70b-8192"
+const model = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 var (
 	groqKey    string

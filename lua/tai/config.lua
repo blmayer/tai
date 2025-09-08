@@ -38,7 +38,6 @@ function M.load(path)
 		end
 	end
 	M.skip_cache = data.skip_cache or M.skip_cache
-	vim.notify("[tai] Config loaded.", vim.log.levels.INFO)
 end
 
 return M
