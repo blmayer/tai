@@ -1,5 +1,6 @@
 local M = {}
 
+local log = require("tai.log")
 local ui = require("tai.ui")
 local project = require("tai.project")
 
@@ -12,11 +13,10 @@ function M.toggle_chat_window()
 end
 
 function M.prompt_input()
-	local path = vim.fn.expand("%")
 	ui.input(function(input)
 		if not input or input == "" then return end
 		local result = project.process_request(input)
-		ui.show_response(result, path)
+		ui.show_response(result)
 	end)
 end
 
@@ -32,7 +32,7 @@ function M.prompt_full_file()
 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
 
 		local result = project.request_append_file(path, prompt)
-		ui.show_response(result, path)
+		ui.show_response(result)
 	end)
 end
 
@@ -45,22 +45,20 @@ function M.continue()
 	local prompt = string.format("Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.", location)
 
 	local result = project.request_append_file(path, prompt)
-	ui.insert_response(result.text, path)
+	ui.insert_response(result.text)
 end
 
 function M.operator_send(type)
-	local path = vim.fn.expand("%")
 	local old_reg = vim.fn.getreg('"')
 	vim.cmd('normal! gv"zy')
 	local text = vim.fn.getreg("z")
 	vim.fn.setreg('"', old_reg)
 
 	local result = project.process_request(text)
-	ui.show_response(result, path)
+	ui.show_response(result)
 end
 
 function M.operator_send_with_prompt(type)
-	local path = vim.fn.expand("%")
 	local old_reg = vim.fn.getreg('"')
 	vim.cmd('normal! gv"zy')
 	local text = vim.fn.getreg("z")
@@ -69,7 +67,7 @@ function M.operator_send_with_prompt(type)
 	ui.input(function(input)
 		local full = input .. "\n\nSelected code:\n" .. text
 		local result = project.process_request(full)
-		ui.show_response(result, path)
+		ui.show_response(result)
 	end)
 end
 

@@ -1,12 +1,12 @@
 local M = {}
-local config = require("tai.config")
+local log = require("tai.log")
 
-function M.validate(cmd)
+function M.validate(cmd, commands)
 	local parts = vim.split(cmd, "%s+")
 	if #parts == 0 then return false end
 
 	local base = parts[1]:match("^([^/]+)$")
-	if not base or not config.allowed_commands[base] then
+	if not base or not commands[base] then
 		return false
 	end
 

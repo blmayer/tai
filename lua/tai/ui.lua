@@ -1,4 +1,5 @@
 local M = {}
+local log = require("tai.log")
 local command = require("tai.command")
 local project = require("tai.project")
 
@@ -147,18 +148,8 @@ function M.input(callback)
 	end, { buffer = bufnr })
 end
 
-function M.apply_patch(patch, filename)
-	local f = io.popen("patch --dry-run -p0 -e " .. filename .. " > /dev/null 2>&1", "w")
-	f:write(patch)
-	local ok = f:close()
-
-	if not ok then
-		vim.notify("[tai] Invalid patch – not applied", vim.log.levels.ERROR)
-		return
-	end
-
-	local real = io.popen(
-	"patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
+function M.apply_patch(patch)
+	local real = io.popen("ed -s", "w")
 	real:write(patch)
 	real:close()
 	vim.api.nvim_command("checktime")

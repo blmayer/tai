@@ -1,6 +1,7 @@
 local M = {}
-local chat = require("tai.chat")
+local log = require('tai.log')
 local config = require("tai.config")
+local chat = require("tai.chat")
 
 local history = {
 	{
@@ -19,23 +20,33 @@ Use the summary of the project in the system prompt to guide you.
 ONLY propose changes that solves the issue, don't suppose anything.
 
 #### Proposing Code Changes
-Use the patch field to propose code changes, the content **MUST** be **VALID** patch in ed script format (patch -e).
-  - To generate a patch you **NEED** to know the full content of the file.
+Use the patch field to propose code changes, the content **MUST** be **VALID** ed script.
+  - **ONLY** send a code change if you know the full content of the file.
   - Add a small description of the changes and the file name in the text field.
-  - Don't send this part if you need further information, i.e. need to read some file or some clarification.
-  - Don't forget to add the `.` for each ed command and `w` at end.
-  - Propose valid patches one file at a time. **ALWAYS** use patch in ed script format.
+  - To input a dot only it must be escaped like `..`.
+  - Specify the file affected at start of the patch with `e file_name`.
+  - **ALWAYS** finish with `w`.
+  - Make sure you get the line numbers correct.
+Example of a valid patch:
+```
+e test.py
+1i
+print("Hello, world!")
+.
+w
+```
 
 #### Commands
-Supply the list of commands to the executed on the user's machine in the `commands` field.
+Supply the list of commands to be executed on the user's machine in the `commands` field.
   - Commands are run in a shell and their output will be sent to you.
   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
   - Use POSIX shell compliant scripting.
   - Don't use commands for code changes, use the patch field.
-  - Reading files is **ONLY** possible with the command `@read file_name`, the file's contents is sent as system prompt.
+  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
 
 #### Planning
 If the task needs multi-steps, use the `plan` field to add the steps of the plan, don't number steps or itemize.
+For big refactors, always provide a plan before sending patches.
 
 #### User Facing Text
 Supply concise user-facing text in the `text` field.
@@ -57,20 +68,17 @@ The only required field is text.
 
 local summary_prompt = [[
 Create a summary of the file below using the format (without <>):
-<file name>: <one line description of the file>
+<file_name>: <one line description of the file>
 
 Only include this for source code files:
 List of imported modules/packages.
 For each function, method, class, interface, variable, enum etc, group them in a section and write:
-  <name or signature>: <one line descrition>
+  <name_or_signature>: <one line descrition>
 For classes that have members/fields do the same in a nested fashion
 ]]
 
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
-
-local cache = ".tai-cache/"
-local tai_root = nil
 
 local function run_async(fn)
 	local co = coroutine.create(fn)
@@ -103,6 +111,12 @@ local function await_send_raw(model, messages)
 	return coroutine.yield()
 end
 
+local function sleep(n)
+  local co = coroutine.running()
+  vim.defer_fn(function() coroutine.resume(co) end, n * 1000)
+  coroutine.yield()
+end
+
 local function mkdir_p(dir)
 	if vim.uv.fs_stat(dir) then return end
 	local parent = dir:match("(.+)/[^/]+$")
@@ -122,7 +136,7 @@ local function is_text_file(file_path)
 end
 
 local function is_cache_up_to_date(file_path)
-	local cache_path = cache .. file_path
+	local cache_path = config.cache_dir .. file_path
 	local file_stat = vim.uv.fs_stat(file_path)
 	local cache_stat = vim.uv.fs_stat(cache_path)
 
@@ -135,42 +149,26 @@ local function is_cache_up_to_date(file_path)
 	return cache_stat.mtime.sec >= file_stat.mtime.sec
 end
 
-local function find_tai_root()
-	local current = vim.fn.getcwd()
-	while current ~= "/" do
-		local tai_file = current .. "/.tai"
-		if vim.fn.filereadable(tai_file) == 1 then
-			return current
-		end
-		current = vim.fn.fnamemodify(current, ":h")
-	end
-	return nil
-end
 
 function M.init()
-	tai_root = find_tai_root()
-	if not tai_root then
-		vim.notify("[tai] .tai file not found, quitting.", vim.log.levels.WARN)
+	if not config then
 		return
 	end
-	cache = tai_root .. "/.tai-cache/"
-
-	config.load(tai_root .. "/.tai")
 	if config.skip_cache then
 		return
 	end
 
 	run_async(function()
 		local preamble = "You are managing a project with root at " ..
-		    tai_root .. ". Here's a summary of each file:\n"
+		    config.root .. ". Here's a summary of each file:\n"
 
-		for _, path in ipairs(vim.fn.glob("**/*", true, true)) do
+		for i, path in ipairs(vim.fn.glob("**/*", true, true)) do
 			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then
 				goto continue
 			end
 
 			if is_cache_up_to_date(path) then
-				local lines = vim.fn.readfile(cache .. path)
+				local lines = vim.fn.readfile(config.cache_dir .. path)
 				local content = table.concat(lines, "\n")
 				preamble = preamble .. content .. "------------------\n"
 				goto continue
@@ -180,6 +178,9 @@ function M.init()
 			if is_text_file(path) then
 				local lines = vim.fn.readfile(path)
 				local content = table.concat(lines, "\n")
+				if i > 1 then
+					sleep(5)
+				end
 				reply = await_send_raw(
 					config.summary_model,
 					{ { role = "user", content = summary_prompt .. path .. ":\n\n" .. content } }
@@ -190,8 +191,8 @@ function M.init()
 
 			preamble = preamble .. reply .. "\n------------------\n"
 
-			ensure_dir_exists(cache .. path)
-			local cache_file = io.open(cache .. path, "w")
+			ensure_dir_exists(config.cache_dir .. path)
+			local cache_file = io.open(config.cache_dir .. path, "w")
 			if not cache_file then
 				vim.notify("[tai] Error writing to cache file " .. path, vim.log.levels.ERROR)
 				return
@@ -223,7 +224,7 @@ function M.request_append_file(filepath, prompt)
 	-- add line numbers
 	local numbered = {}
 	for i, line in ipairs(lines) do
-		table.insert(numbered, string.format("%4d: %s", i-1, line))
+		table.insert(numbered, string.format("%4d: %s", i, line))
 	end
 	local content = table.concat(numbered, "\n")
 
@@ -239,7 +240,7 @@ function M.request_append_file(filepath, prompt)
 	end
 	history = new_history
 
-	table.insert(history, {
+	table.insert(history, 3, {
 		role = "system",
 		content = "File content for " .. filepath .. " (numbered for your convenience)\n\n" .. content,
 		id = file_id
