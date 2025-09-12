@@ -5,6 +5,7 @@ local ui = require("tai.ui")
 local project = require("tai.project")
 
 function M.setup(opts)
+	log.set_level(log.DEBUG)
 	project.init()
 end
 
@@ -15,8 +16,13 @@ end
 function M.prompt_input()
 	ui.input(function(input)
 		if not input or input == "" then return end
-		local result = project.process_request(input)
-		ui.show_response(result)
+		project.process_request(input, function(res, err)
+			if err then
+				vim.notify("[tai] recieved error: " .. err)
+				return
+			end
+			ui.show_response(res)
+		end)
 	end)
 end
 

@@ -1,0 +1,18 @@
+--- lua/tai/project.lua
++++ lua/tai/project.lua
+@@ -1,5 +1,6 @@
+ local M = {}
+ local chat = require("tai.chat")
++local config = require("tai.config")
+ 
+ local history = {
+ 	{
+@@ -35,7 +36,7 @@
+   - Commands: Supply the list of commands to the executed on the user's machine in the `commands` field.
+   - Commands are run in a shell and their output will be sent to you.
+-  - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
++  - Use programs that are common in a Linux environment, i.e. `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Use POSIX shell compliant scripting.
+   - Use this to request the info needed to complete the current task.
+ 
+ 

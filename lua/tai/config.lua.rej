@@ -1,0 +1,26 @@
+--- lua/tai/config.lua
++++ lua/tai/config.lua
+@@ -1,13 +1,13 @@
+ local M = {}
+ 
+-M.allowed_commands_list = {
+-	"cat",
+-	"tail",
+-	"head",
+-	"grep",
+-	"cut",
+-	"ls",
+-	"wc",
+-	"make",
+-	"sort"
++M.allowed_commands = {
++	"cat",
++	"tail",
++	"head",
++	"grep",
++	"cut",
++	"ls",
++	"wc",
++	"make",
++	"sort"
+ }

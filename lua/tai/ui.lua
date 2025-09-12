@@ -1,5 +1,6 @@
 local M = {}
 local log = require("tai.log")
+local config = require("tai.config")
 local command = require("tai.command")
 local project = require("tai.project")
 
@@ -138,8 +139,6 @@ function M.input(callback)
 	vim.bo[bufnr].swapfile = false
 	vim.bo[bufnr].filetype = 'tai-input'
 
-	--vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {prompt or "Enter your message:"})
-
 	vim.keymap.set('n', '<CR>', function()
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 		local text = table.concat(lines, '\n')
@@ -149,7 +148,7 @@ function M.input(callback)
 end
 
 function M.apply_patch(patch)
-	local real = io.popen("ed -s", "w")
+	local real = io.popen("ed -s > /dev/null 2>&1", "w")
 	real:write(patch)
 	real:close()
 	vim.api.nvim_command("checktime")
@@ -166,7 +165,7 @@ function M.run_commands(cmds)
 			return M.show_response(reply)
 		end
 
-		if not command.validate(cmd) then
+		if not command.validate(cmd. config.allowed_commands) then
 			output = "[tai] Command " .. cmd .. " is not allowed"
 		end
 

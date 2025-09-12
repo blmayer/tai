@@ -14,11 +14,11 @@ M.allowed_commands = {
 	["sort"] = true
 }
 
-M.model = "moonshotai/kimi-k2-instruct"
-M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
+M.model = "devstral-medium-latest"
+M.summary_model = "ministral-8b-latest"
 M.complete_model = "llama-3.3-70b-versatile"
 M.skip_cache = false
-M.provider = "groq"
+M.provider = "mistral"
 M.cache_dir = "~/.tai-cache/"
 M.root = "~"
 
