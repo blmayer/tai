@@ -36,20 +36,42 @@ Use the plan created to guide you and the agents towards the goal.
 -- Function to receive a prompt and request implementation
 function M.receive_prompt(prompt, callback)
     log.info("Planner received prompt: " .. prompt)
-    -- Request implementation from the coder agent using the conversations API
-    client.request("POST", 'conversations', {
-        agent_id = M.id,
-        messages = {
-            { role = "user", content = prompt }
-        }
-    }, function(response, err)
-        if err then
-            log.error("Planner request failed: " .. err)
-            callback(nil, err)
-        else
-            callback(response)
-        end
-    end)
+    if M.conversation_id then
+	    client.request("POST", 'conversations/' .. M.conversation_id, {
+		agent_id = M.id,
+		inputs = prompt,
+	    }, function(response, err)
+		if err then
+		    log.error("Planner request failed: " .. err)
+		    callback(nil, err)
+		else
+		    callback(response)
+		end
+	    end)
+    else
+	    client.request("GET", 'conversations', nil, function(response, err)
+		if err then
+		    log.error("Planner request failed: " .. err)
+		    callback(nil, err)
+		else
+			if #response > 0 then
+				M.conversation_id = response[1]["id"]
+			else
+		    callback(response)
+		end
+	    end)
+	    client.request("POST", 'conversations', {
+		agent_id = M.id,
+		inputs = prompt,
+	    }, function(response, err)
+		if err then
+		    log.error("Planner request failed: " .. err)
+		    callback(nil, err)
+		else
+		    callback(response)
+		end
+	    end)
+    end
 end
 
 return M

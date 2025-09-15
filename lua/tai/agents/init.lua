@@ -121,22 +121,18 @@ local function set_agent_id(name, id)
 	elseif name == "writer" then
 		writer.id = id
 	end
-
-	log.info("Initialized agent: " .. name .. " with ID: " .. id)
 end
 
 -- Initialize library and agents
-function M.init(callback)
-	log.info("Initializing agents")
+function M.init()
 	if not library.id then
-		callback("Failed to initialize agents: library id is empty")
+		log.error("Failed to initialize agents: library id is empty")
 		return
 	end
 
 	list_agents(function(agents, err)
 		if err then
 			log.error("Failed to initialize agents: " .. err)
-			callback()
 			return
 		end
 
@@ -165,8 +161,6 @@ function M.init(callback)
 				end
 			end
 		end)()
-
-		callback()
 	end)
 end
 

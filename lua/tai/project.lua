@@ -25,17 +25,19 @@ function M.init()
 		end
 		log.info("Library initialized with ID: " .. library_id)
 
-		agents.init(function()
-			log.info("Agents init complete")
-		end)
+		agents.init()
+		log.info("Agents init complete")
 
+		log.info("Uploading project files")
 		for _, filepath in ipairs(files) do
-			if not vim.fn.isdirectory(filepath) then
-				M.is_file_in_library(filepath, function(exists, err)
+			log.debug("Checking file " .. filepath)
+			if vim.fn.isdirectory(filepath) == 0 then
+				library.is_file_in_library(filepath, function(exists, err)
 					if err then
 						log.error("Failed to check file in library: " .. filepath .. " - " .. err)
 					elseif not exists then
-						M.upload_file(filepath, function(file_id, err)
+						log.info("Uploading file " .. filepath)
+						library.upload_file(filepath, function(file_id, err)
 							if err then
 								log.error("Failed to upload file: " ..
 									filepath .. " - " .. err)
@@ -44,6 +46,7 @@ function M.init()
 					end
 				end)
 			end
+			os.execute("sleep 5")
 		end
 	end)
 end

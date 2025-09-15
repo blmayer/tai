@@ -34,4 +34,26 @@ function M.request(method, endpoint, data, callback)
 	end)
 end
 
+-- Function to make an asynchronous request to the Mistral API
+function M.upload(method, endpoint, filepath, callback)
+	local url = API_URL .. endpoint
+	local request_body = vim.json.encode(data)
+
+	log.debug("Uploading " .. method .. " " .. url .. " with " .. request_body)
+	vim.system({
+		'curl', '-s', '-X', method, url,
+		'-H', 'Authorization: Bearer ' .. API_KEY,
+		"-F", "file=@" .. filepath ..";filename=" .. filepath
+	}, { text = true }, function(obj)
+		if obj.code ~= 0 then
+			log.error("Mistral API request failed: " .. obj.stderr)
+			callback(nil, "Request failed: " .. obj.stderr)
+			return
+		end
+
+		log.debug("Request response: " .. obj.stdout)
+		local response = vim.json.decode(obj.stdout)
+		callback(response)
+	end)
+end
 return M

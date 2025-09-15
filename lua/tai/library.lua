@@ -64,27 +64,28 @@ end
 
 -- Function to upload a file to the library
 function M.upload_file(filepath, callback)
-	local file_content = table.concat(vim.fn.readfile(filepath), '\n')
 	local file_stat = vim.uv.fs_stat(filepath)
 
-	client.request("POST", 'libraries/' .. config.library_id .. '/files', {
-		name = filepath,
-		content = file_content
-	}, function(response, err)
-		if err then
-			log.error("Failed to upload file: " .. filepath .. " - " .. err)
-			callback(nil, err)
-		else
-			log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
-			M.files[filepath] = {
-				id = response.id,
-				hash = response.hash,
-				creation_time = file_stat.mtime
-				    .sec
-			}
-			callback(response.id)
+	client.upload(
+		"POST",
+		'libraries/' .. M.id .. '/documents',
+		filepath,
+		function(response, err)
+			if err then
+				log.error("Failed to upload file: " .. filepath .. " - " .. err)
+				callback(nil, err)
+			else
+				log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
+				M.files[filepath] = {
+					id = response.id,
+					hash = response.hash,
+					creation_time = file_stat.mtime
+					    .sec
+				}
+				callback(response.id)
+			end
 		end
-	end)
+	)
 end
 
 -- Function to check if a file is in the library
@@ -95,6 +96,7 @@ function M.is_file_in_library(filepath, callback)
 		if err then
 			log.error("Failed to list files in library: " .. err)
 			callback(nil, err)
+			return
 		else
 			for _, file in ipairs(response.data) do
 				if file.name == filepath then
