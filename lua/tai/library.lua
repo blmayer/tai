@@ -1,6 +1,8 @@
 -- library.lua: Library management for Tai
 
-local M = {}
+local M = {
+	cache = {},
+}
 
 -- Import necessary modules
 local log = require('tai.log')
@@ -31,6 +33,19 @@ function M.list(callback)
 	end)
 end
 
+-- Function to list existing file in library
+function M.files(callback)
+	log.debug("getting files")
+	client.request("GET", 'libraries/' .. M.id .. "/documents", {}, function(response, err)
+		if err then
+			log.error("Failed to list files: " .. err)
+			callback(nil, err)
+		else
+			callback(response.data)
+		end
+	end)
+end
+
 -- Function to setup a library using the Mistral library API
 function M.setup(callback)
 	log.info("Checking for library " .. config.root)
@@ -44,7 +59,7 @@ function M.setup(callback)
 		local library_name = config.root
 		if existing_libraries[library_name] then
 			log.info("Library " ..
-				library_name .. " already exists with ID: " .. existing_libraries[library_name])
+			library_name .. " already exists with ID: " .. existing_libraries[library_name])
 			M.id = existing_libraries[library_name]
 			callback(M.id)
 		else
@@ -75,8 +90,13 @@ function M.upload_file(filepath, callback)
 				log.error("Failed to upload file: " .. filepath .. " - " .. err)
 				callback(nil, err)
 			else
+				if not response or not response.id then
+					callback(nil, "Failed to upload file: empty response")
+					return
+				end
+
 				log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
-				M.files[filepath] = {
+				M.cache[filepath] = {
 					id = response.id,
 					hash = response.hash,
 					creation_time = file_stat.mtime
@@ -88,27 +108,52 @@ function M.upload_file(filepath, callback)
 	)
 end
 
--- Function to check if a file is in the library
-function M.is_file_in_library(filepath, callback)
-	local file_stat = vim.uv.fs_stat(filepath)
-
-	client.request("GET", 'libraries/' .. M.id .. '/documents?search=' .. filepath, {}, function(response, err)
+function M.sync(files)
+	M.files(function(libs, err)
 		if err then
-			log.error("Failed to list files in library: " .. err)
-			callback(nil, err)
+			log.error("Failed to sync files: " .. err)
 			return
-		else
-			for _, file in ipairs(response.data) do
-				if file.name == filepath then
-					local updated_at = parse_iso_date(response.updated_at)
+		end
+		log.debug("Got list of files in library: " ..
+			table.concat(vim.tbl_map(function(item) return item.name end, libs), ", "))
+
+		for i, filepath in ipairs(files) do
+			if vim.fn.isdirectory(filepath) == 1 then
+				goto next
+			end
+
+			local file_stat = vim.uv.fs_stat(filepath)
+			for _, lib in ipairs(libs) do
+				if lib.name == filepath then
+					local updated_at = parse_iso_date(lib.updated_at or lib.created_at)
 					if file_stat.mtime.sec <= updated_at then
-						callback(true)
-						return
+						log.debug(filepath .. " is up to date, skipping.")
+						M.cache[filepath] = {
+							id = lib.id,
+							hash = lib.hash,
+							creation_time = lib.created_at
+							    .sec
+						}
+						goto next
 					end
+					break
 				end
 			end
-			callback(false)
+
+			log.debug("Scheduling upload of " .. filepath .. " with delay of " .. i * 8)
+			vim.defer_fn(function()
+				log.info("Uploading " .. filepath)
+				M.upload_file(filepath, function(_, err)
+					if err then
+						log.error("Failed to upload: " .. filepath .. " - " .. err)
+					end
+				end)
+			end, i * 8000)
+
+			::next::
 		end
+
+		--TODO: delete files
 	end)
 end
 

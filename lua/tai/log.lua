@@ -37,11 +37,6 @@ function M.log(level, message)
 		local timestamp = os.date("%Y-%m-%d %H:%M:%S")
 		local log_message = string.format("[%s] [%s] %s", timestamp, level_str, message)
 
-		-- Print to stderr for ERROR and WARNING levels
-		if level == M.ERROR or level == M.WARNING then
-			io.stderr:write(log_message .. "\n")
-		end
-
 		local file = io.open(M.log_file, "a")
 		if file then
 			file:write(log_message .. "\n")

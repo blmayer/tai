@@ -1,6 +1,5 @@
 local M = {}
 local log = require("tai.log")
-local config = require("tai.config")
 local command = require("tai.command")
 local project = require("tai.project")
 
@@ -35,7 +34,9 @@ function M.toggle_output_window()
 	end
 end
 
-function M.show_response(fields, filename)
+function M.show_response(fields)
+	log.debug("Showing response text: " .. fields.text)
+
 	local bufnr = ensure_buf()
 
 	local content = ""
@@ -62,12 +63,10 @@ function M.show_response(fields, filename)
 	end
 	if fields.patch then
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
-		vim.schedule(function()
-			local patch = fields.patch
-			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch',
-				function() M.apply_patch(patch, filename) end,
-				{})
-		end)
+		local patch = fields.patch
+		vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch',
+			function() M.apply_patch(patch) end,
+			{})
 	end
 
 	local lines = vim.split(content, "\n", { trimempty = true })
@@ -161,11 +160,12 @@ function M.run_commands(cmds)
 		-- Check for @read file_name pattern
 		if cmd:match("^@read%s+(.+)$") then
 			local file = cmd:match("^@read%s+(.+)$")
-			local reply = project.request_append_file(file, "I added the file requested as system prompt, continue with the task.")
+			local reply = project.request_append_file(file,
+				"I added the file requested as system prompt, continue with the task.")
 			return M.show_response(reply)
 		end
 
-		if not command.validate(cmd. config.allowed_commands) then
+		if not command.validate(cmd.config.allowed_commands) then
 			output = "[tai] Command " .. cmd .. " is not allowed"
 		end
 

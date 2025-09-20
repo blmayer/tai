@@ -18,7 +18,6 @@ ONLY propose steps that solves the issue, don't suppose anything.
 You have access to other agents that will assist you to reach the user's goals:
 - coder: knows how to code, it will take your instructions and implement them.
 - patcher: takes code changes and formats them in ed script format.
-- writer: will inform the user about the changes in a professional and efficient way.
 
 UNDERSTANDING NEEDED CODE CHANGES
 Understand the problem and the path to the solution and generate a detailed set of
@@ -31,47 +30,93 @@ USING PLANS
 For solutions that will need many steps that includes interaction from the user generate
 a step by step plan and pass it to the writer agent, so it will forward it to the user.
 Use the plan created to guide you and the agents towards the goal.
+
+RESPONSE FORMAT
+Never respond to the user! Forward it to the writer agent. Use unambiguous language to
+delegate to other agents. For example, to handoff to other agents write:
+[HANDOFF TO writer]
+---
+Text intended to writer agent
+...
+end with dashes:
+---
+[HANDOFF TO coder]
+---
+Text intended to coder agent
+- refactor function f to accept x parameter
+- implement feature z
+- move variable y to file abc
+...
+end with dashes too:
+---
 ]]
 
 -- Function to receive a prompt and request implementation
 function M.receive_prompt(prompt, callback)
-    log.info("Planner received prompt: " .. prompt)
-    if M.conversation_id then
-	    client.request("POST", 'conversations/' .. M.conversation_id, {
-		agent_id = M.id,
-		inputs = prompt,
-	    }, function(response, err)
+	log.info("Planner received prompt: " .. prompt)
+	if M.conversation_id then
+		log.debug("Using existing conversation id: " .. M.conversation_id)
+		client.request("POST", 'conversations/' .. M.conversation_id, {
+			inputs = prompt,
+			handoff_execution = "server",
+		}, function(response, err)
+			if err then
+				log.error("Planner request failed: " .. err)
+				callback(nil, err)
+				return
+			end
+
+			local outputs = response["outputs"]
+			local content = outputs[#outputs]["content"]
+			if not content then
+				callback(nil)
+				return
+			end
+			local res = content:sub(8, -4)
+			callback(vim.json.decode(res))
+		end)
+		return
+	end
+
+	log.debug("conversarion id not set")
+	client.request("GET", 'conversations', nil, function(response, err)
 		if err then
-		    log.error("Planner request failed: " .. err)
-		    callback(nil, err)
-		else
-		    callback(response)
+			log.error("Planner request failed: " .. err)
+			callback(nil, err)
+			return
 		end
-	    end)
-    else
-	    client.request("GET", 'conversations', nil, function(response, err)
-		if err then
-		    log.error("Planner request failed: " .. err)
-		    callback(nil, err)
-		else
-			if #response > 0 then
-				M.conversation_id = response[1]["id"]
-			else
-		    callback(response)
+
+		if #response > 0 then
+			M.conversation_id = response[1]["id"]
+			log.debug("Found conversarion id: " .. M.conversation_id)
+			return M.receive_prompt(prompt, callback)
 		end
-	    end)
-	    client.request("POST", 'conversations', {
-		agent_id = M.id,
-		inputs = prompt,
-	    }, function(response, err)
-		if err then
-		    log.error("Planner request failed: " .. err)
-		    callback(nil, err)
-		else
-		    callback(response)
-		end
-	    end)
-    end
+
+		log.debug("Creating new conversarion id")
+		client.request("POST", 'conversations', {
+			agent_id = M.id,
+			inputs = prompt,
+			handoff_execution = "server",
+		}, function(response, err)
+			if err then
+				log.error("Planner request failed: " .. err)
+				callback(nil, err)
+				return
+			end
+
+			M.conversation_id = response["conversation_id"]
+			log.debug("Created new conversarion id: " .. M.conversation_id)
+
+			local outputs = response["outputs"]
+			local content = outputs[#outputs]["content"]
+			if not content then
+				callback(nil)
+				return
+			end
+			local res = content:sub(8, -4)
+			callback(vim.json.decode(res))
+		end)
+	end)
 end
 
 return M

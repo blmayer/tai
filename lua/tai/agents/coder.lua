@@ -38,6 +38,24 @@ apply the changes in the original files. The patcher agent needs detailed instru
 changed so remember to pass file name, line number and the new code.
 
 To the writer agent you can pass intructions about what the user needs to do, eg. executing commands.
+Use unambiguous language to delegate to other agents. For example, to handoff to other agents write:
+[HANDOFF TO writer]
+---
+Text intended to writer agent
+...
+end with dashes:
+---
+[HANDOFF TO patcher]
+---
+Text intended to patcher agent
+Changes in file f.txt:
+change line 10 to:
+```
+variable y abc
+```
+remove line 20
+end with dashes too:
+---
 ]]
 
 -- Function to execute coding tasks

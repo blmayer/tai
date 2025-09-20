@@ -21,7 +21,9 @@ function M.prompt_input()
 				vim.notify("[tai] recieved error: " .. err)
 				return
 			end
-			ui.show_response(res)
+			vim.schedule(function()
+				ui.show_response(res)
+			end)
 		end)
 	end)
 end
@@ -48,7 +50,9 @@ function M.continue()
 
 	local location = string.format("line %d, column %d", row, col)
 
-	local prompt = string.format("Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.", location)
+	local prompt = string.format(
+	"Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.",
+		location)
 
 	local result = project.request_append_file(path, prompt)
 	ui.insert_response(result.text)

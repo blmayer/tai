@@ -1,5 +1,7 @@
 local M = {}
 
+local uv = vim.loop
+
 local log = require('tai.log')
 local config = require("tai.config")
 local agents = require("tai.agents")
@@ -9,11 +11,9 @@ local planner = require("tai.agents.planner")
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
 
+
 function M.init()
-	if not config then
-		return
-	end
-	if config.skip_cache then
+	if not config or config.skip_cache then
 		return
 	end
 
@@ -28,26 +28,8 @@ function M.init()
 		agents.init()
 		log.info("Agents init complete")
 
-		log.info("Uploading project files")
-		for _, filepath in ipairs(files) do
-			log.debug("Checking file " .. filepath)
-			if vim.fn.isdirectory(filepath) == 0 then
-				library.is_file_in_library(filepath, function(exists, err)
-					if err then
-						log.error("Failed to check file in library: " .. filepath .. " - " .. err)
-					elseif not exists then
-						log.info("Uploading file " .. filepath)
-						library.upload_file(filepath, function(file_id, err)
-							if err then
-								log.error("Failed to upload file: " ..
-									filepath .. " - " .. err)
-							end
-						end)
-					end
-				end)
-			end
-			os.execute("sleep 5")
-		end
+		-- initial sync
+		library.sync(files)
 	end)
 end
 
