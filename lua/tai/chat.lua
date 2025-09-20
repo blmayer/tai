@@ -1,7 +1,5 @@
 local M = {}
 local log = require("tai.log")
-
--- Load config and determine provider
 local config = require('tai.config')
 
 -- Load the appropriate provider
@@ -15,6 +13,7 @@ else
 end
 
 local history = {
+	{ role = "system", content = "You are edditing a project with root at " .. config.root .. "." },
 	{ role = "system", content = provider.system_prompt }
 }
 
@@ -23,8 +22,9 @@ function M.send(model, prompt)
 	local msg = { role = "user", content = prompt }
 	table.insert(history, msg)
 	local reply = provider.send(config.model, history)
-	log.debug("received reply: " .. vim.json.encode(reply))
-	table.insert(history, { role = "assistant", content = reply })
+	local response = vim.json.encode(reply)
+	log.debug("received reply: " .. response)
+	table.insert(history, { role = "assistant", content = response })
 	return reply
 end
 

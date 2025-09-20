@@ -123,7 +123,7 @@ NOTES
 You must know the original content of the files affected.
 
 RESPONSE FORMAT
-**ALWAYS** return a JSON object with the following format:
+**ALWAYS** return a JSON object, no prose, no markdown, with the following format:
 {
        "text": string,
        "plan": []string,
@@ -235,7 +235,7 @@ function M.send_raw(model, messages)
 		messages = vim.tbl_map(
 			function(m) return { role = m.role, content = m.content } end,
 			messages
-		)
+		),
 	}
 
 	local json_data = json.encode(req_body)
