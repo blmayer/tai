@@ -4,11 +4,20 @@
 # Features
 
 
-## Groq Integration
+## Providers
 
-This project uses the Groq API for processing requests. Make sure to set the environment variable:
+This project is compatible with the Groq, and Gemini APIs for processing requests. Make sure to set the correct
+environment variable:
 
       GROQ_API_KEY=your_api_key_here
+
+for Groq, or:
+
+      GEMINI_API_KEY=your_api_key_here
+
+for Gemini.
+
+Mistral support is in progress (their API is flaky ATM).
 
 
 ## Integrated workflow

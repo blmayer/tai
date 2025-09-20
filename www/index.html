@@ -23,6 +23,13 @@ for processing using the groq API.
 - agents create plans for big code changes
 
 
+<i>providers</i>
+
+- groq
+- gemini
+- mistral (wip, their handoff is not working)
+
+
 <b>keybindings</b>
 
 <i>normal mode:</i>
@@ -81,7 +88,8 @@ move tai to a folder in your path.
 
 <b>usage</b>
 
-make sure the <i>GROQ_API_KEY</i> env var is set.
+make sure the correct env var is set: <i>GROQ_API_KEY</i>,
+for Groq or <i>GEMINI_API_KEY</i> for Gemini.
 create a .tai file at the root or your project.
 editting any file in that project should start tai.
 then just use the keybindings above.
