@@ -1,5 +1,6 @@
 local M = {}
 local log = require("tai.log")
+local config = require("tai.config")
 local command = require("tai.command")
 local project = require("tai.project")
 
@@ -157,23 +158,29 @@ function M.run_commands(cmds)
 	local output = ""
 
 	for _, cmd in ipairs(cmds) do
+		log.debug("Running command `" .. cmd .. "`")
 		-- Check for @read file_name pattern
 		if cmd:match("^@read%s+(.+)$") then
-			local file = cmd:match("^@read%s+(.+)$")
-			local reply = project.request_append_file(file,
-				"I added the file requested as system prompt, continue with the task.")
-			return M.show_response(reply)
-		end
-
-		if not command.validate(cmd.config.allowed_commands) then
-			output = "[tai] Command " .. cmd .. " is not allowed"
-		end
-
-		local out = command.run(cmd)
-		if out then
-			output = output .. "\n\nOutput of ```" .. cmd .. "```:\n" .. out
+			local filepath = cmd:match("^@read%s+(.+)$")
+			local file = io.open(filepath, "r")
+			if file then
+				local content = file:read("*all")
+				file:close()
+				output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
+			else
+				output = output .. "\n\n[tai] File " .. filepath .. "not found"
+			end
 		else
-			output = output .. "\n\n```" .. cmd .. "``` returned null"
+			if not command.validate(cmd, config.allowed_commands) then
+				output = "[tai] Command " .. cmd .. " is not allowed"
+			end
+
+			local out = command.run(cmd)
+			if out then
+				output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
+			else
+				output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
+			end
 		end
 	end
 
@@ -181,8 +188,9 @@ function M.run_commands(cmds)
 		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
 	end)
 
-	local reply = project.process_request(output)
-	return M.show_response(reply)
+	project.process_request(output, function(reply, err)
+		M.show_response(reply)
+	end)
 end
 
 return M

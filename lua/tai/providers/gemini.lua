@@ -122,6 +122,13 @@ q
 NOTES
 You must know the original content of the files affected.
 
+USER FACING TEXT
+Supply concise user-facing text in the `text` field.
+- Use maximum of 80 characters per line.
+- You can include ASCII tables, diagrams, art etc if needed.
+- Be concise, use a professional tone to convey the info while beign
+direct. You may use funny language or jokes, something like TARS would do.
+
 RESPONSE FORMAT
 **ALWAYS** return a JSON object, no prose, no markdown, with the following format:
 {
@@ -303,7 +310,9 @@ function M.send(model, messages)
 			function(m) return { role = m.role, content = m.content } end,
 			messages
 		),
-		response_format = response_format
+		response_format = {
+			type = "json_object"
+		}
 	}
 
 	local json_data = json.encode(req_body)
