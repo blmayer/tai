@@ -7,6 +7,10 @@ local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
 
+if not config.root then
+	return M
+end
+
 -- System prompt for the coder agent
 M.system_prompt = [[
 You are a Coder Tai, an excelent coding agent. Your task is to execute coding tasks."

@@ -1,7 +1,5 @@
 local M = {}
 
-local uv = vim.loop
-
 local log = require('tai.log')
 local config = require("tai.config")
 local agents = require("tai.agents")
@@ -14,10 +12,10 @@ local completion_prompt =
 
 
 function M.init()
-	log.info("Starting Tai, provider " .. config.provider)
-	if not config or config.skip_cache then
+	if not config.root or config.skip_cache then
 		return
 	end
+	log.info("Starting Tai, provider " .. config.provider)
 
 	if config.provider == "mistral" then
 		local files = vim.fn.glob('**/*', true, true)
