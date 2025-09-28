@@ -6,6 +6,8 @@ local agents = require("tai.agents")
 local library = require("tai.library")
 local planner = require("tai.agents.planner")
 local chat = require("tai.chat")
+local command = require("tai.command")
+local ui = require("tai.ui")
 
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
@@ -42,9 +44,90 @@ function M.process_request(prompt, callback)
 		planner.receive_prompt(prompt, callback)
 	else
 		local reply = chat.send(config.model, prompt)
-		callback(reply)
-		return
+		ui.show_response(prompt, reply)
+
+		::continue::
+
+		if reply.tool_calls then
+			ui.show_tool_call(reply.tool_calls)
+			local out = run_tool_calls(reply.tool_calls)
+			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
+			goto continue
+		end
+		if reply.patch then
+			vim.api.nvim_buf_create_user_command(
+				bufnr,
+				'ApplyTaiPatch',
+				function() apply_patch(reply.patch) end,
+				{}
+			)
+		end
+		if reply.commands then
+			vim.api.nvim_buf_create_user_command(
+				bufnr,
+				'RunTaiCommand',
+				function()
+					local out = run_commands(fields.commands)
+					reply = chat.send(config.model, out)
+					ui.show_response(reply)
+				end,
+				{}
+			)
+		end
 	end
+end
+
+local function run_tool_calls(cmds)
+	local output = ""
+
+	for _, cmd in ipairs(cmds) do
+		log.debug("Running command `" .. cmd.name .. "`")
+		local file = io.open(cmd.args.file_path, "r")
+		if file then
+			local content = file:read("*all")
+			file:close()
+			output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
+		else
+			output = output .. "\n\n[tai] File " .. filepath .. " not found"
+		end
+	end
+
+	vim.schedule(function()
+		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+	end)
+
+	return output
+end
+
+local function run_commands(cmds)
+	local output = ""
+
+	for _, cmd in ipairs(cmds) do
+		log.debug("Running command `" .. cmd .. "`")
+		if not command.validate(cmd, config.allowed_commands) then
+			output = "[tai] Command " .. cmd .. " is not allowed"
+		end
+
+		local out = command.run(cmd)
+		if out then
+			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
+		else
+			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
+		end
+	end
+
+	vim.schedule(function()
+		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+	end)
+
+	return output
+end
+
+function apply_patch(patch)
+	local real = io.popen("ed -s > /dev/null 2>&1", "w")
+	real:write(patch)
+	real:close()
+	vim.api.nvim_command("checktime")
 end
 
 --function M.complete(start)
@@ -64,5 +147,6 @@ end
 --
 --	return reply
 --end
+
 
 return M

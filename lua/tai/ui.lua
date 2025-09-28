@@ -2,9 +2,19 @@ local M = {}
 local log = require("tai.log")
 local config = require("tai.config")
 local command = require("tai.command")
-local project = require("tai.project")
 
 local bufname = "tai-output"
+
+local function append_to_buf(bufnr, lines_to_add)
+    local current_lines_count = vim.api.nvim_buf_line_count(bufnr)
+    if current_lines_count == 1 and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == "" then
+        -- If buffer is essentially empty (one empty line), replace it
+        vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines_to_add)
+    else
+        -- Append to existing content
+        vim.api.nvim_buf_set_lines(bufnr, current_lines_count, current_lines_count, false, lines_to_add)
+    end
+end
 
 local function ensure_buf()
 	local bufnr = vim.fn.bufnr(bufname)
@@ -15,7 +25,7 @@ local function ensure_buf()
 		vim.bo[bufnr].bufhidden = "hide" -- keep content when hidden
 		vim.bo[bufnr].swapfile = false
 		vim.bo[bufnr].modifiable = true
-		vim.bo[bufnr].filetype = "tai-output"
+		vim.bo[bufnr].filetype = "text"
 	end
 	return bufnr
 end
@@ -35,18 +45,30 @@ function M.toggle_output_window()
 	end
 end
 
-function M.show_response(fields)
+function M.show_response(prompt, fields)
 	log.debug("Showing response text: " .. fields.text)
 
 	local bufnr = ensure_buf()
+	local winid = vim.fn.bufwinnr(bufnr)
+	local is_visible = (winid ~= -1)
 
 	local content = ""
+	-- Add divider if not the very first entry (or if the buffer is truly empty)
+	if vim.api.nvim_buf_line_count(bufnr) > 0 and (vim.api.nvim_buf_line_count(bufnr) > 1 or vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] ~= "") then
+		content = content .. "\n\n========================================\n"
+	end
+
+	for _, line in ipairs(vim.split(prompt, "\n")) do
+		content = content .. "> " .. line .. "\n"
+	end
+	content = content .. "\n"
+
 	if fields.plan and #fields.plan > 0 then
 		content = "Plan:\n\n"
 		for i, p in ipairs(fields.plan) do
 			content = content .. i .. ". " .. p .. "\n"
 		end
-		content = content .. "\n-----------------------------\n\n"
+		content = content .. "\n----------------\n\n"
 	end
 	if fields.text then
 		content = content .. fields.text
@@ -56,21 +78,40 @@ function M.show_response(fields)
 		for _, cmd in ipairs(fields.commands) do
 			content = content .. cmd .. "\n\n"
 		end
-		vim.api.nvim_buf_create_user_command(
-			bufnr, 'RunTaiCommand',
-			function() M.run_commands(fields.commands) end,
-			{}
-		)
 	end
 	if fields.patch then
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
-		local patch = fields.patch
-		vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch',
-			function() M.apply_patch(patch) end,
-			{})
 	end
 
 	local lines = vim.split(content, "\n", { trimempty = true })
+	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+
+	-- Auto-open if hidden
+	if vim.fn.bufwinnr(bufnr) == -1 then
+		vim.cmd("vsplit")
+		local win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, bufnr)
+		vim.api.nvim_win_set_width(win, 80)
+	else
+		-- Ensure focus on existing window
+		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
+	end
+end
+
+function M.show_tool_calls(calls)
+	log.debug("Showing tool calls: " .. calls)
+
+	local bufnr = ensure_buf()
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+	table.insert(lines, "\n------------------------------\n\n")
+	for _, call in ipairs(calls) do
+		table.insert(
+			lines,
+			"> Sending output of: " .. call.name .. " " ..call.args.file_name
+		)
+	end
+
 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
 
 	-- Auto-open if hidden
@@ -147,50 +188,6 @@ function M.input(callback)
 	end, { buffer = bufnr })
 end
 
-function M.apply_patch(patch)
-	local real = io.popen("ed -s > /dev/null 2>&1", "w")
-	real:write(patch)
-	real:close()
-	vim.api.nvim_command("checktime")
-end
 
-function M.run_commands(cmds)
-	local output = ""
-
-	for _, cmd in ipairs(cmds) do
-		log.debug("Running command `" .. cmd .. "`")
-		-- Check for @read file_name pattern
-		if cmd:match("^@read%s+(.+)$") then
-			local filepath = cmd:match("^@read%s+(.+)$")
-			local file = io.open(filepath, "r")
-			if file then
-				local content = file:read("*all")
-				file:close()
-				output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
-			else
-				output = output .. "\n\n[tai] File " .. filepath .. "not found"
-			end
-		else
-			if not command.validate(cmd, config.allowed_commands) then
-				output = "[tai] Command " .. cmd .. " is not allowed"
-			end
-
-			local out = command.run(cmd)
-			if out then
-				output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
-			else
-				output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
-			end
-		end
-	end
-
-	vim.schedule(function()
-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
-	end)
-
-	project.process_request(output, function(reply, err)
-		M.show_response(reply)
-	end)
-end
 
 return M

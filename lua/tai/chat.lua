@@ -23,8 +23,6 @@ local history = {
 	{ role = "system", content = provider.system_prompt }
 }
 
--- Expose provider functions
-
 function M.send(model, prompt)
 	local msg = { role = "user", content = prompt }
 	table.insert(history, msg)

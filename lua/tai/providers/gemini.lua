@@ -14,6 +14,24 @@ end
 
 local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
+local read_tool = {
+    type = "function",
+    ["function"] = {
+      name = "read_file",
+      description = "Reads the content of a file from the file system.",
+      parameters = {
+        type = "object",
+        properties = {
+          file_path = {
+            type = "string",
+            description = "The path to the file to read."
+          }
+        },
+        required = {"file_path"}
+      }
+    }
+}
+
 M.system_prompt = [[
 You are Tai, a coding assistant running inside a Neovim session.
 
@@ -41,7 +59,9 @@ Supply the list of commands to be executed on the user's machine for the writer 
   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
   - Use POSIX shell compliant scripting.
   - Don't use commands for code changes, use the patch field.
-  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
+
+TOOLS
+You have access to tools that can read files. When you need to read a file, use the `read_file` tool.
 
 ED FORMAT
 
@@ -52,6 +72,7 @@ General Rules
 - Ranges can apply to a single line, multiple lines, or the whole file.
 - When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
 - To return to command mode, you enter a line containing only a single `.`.
+- If you need to edit a different file use `w` to finish the current and `e file_name` to start the new one.
 
 Addressing and Ranges
 1 	first line
@@ -124,6 +145,7 @@ You must know the original content of the files affected.
 
 USER FACING TEXT
 Supply concise user-facing text in the `text` field.
+- No markdown, use plain text.
 - Use maximum of 80 characters per line.
 - You can include ASCII tables, diagrams, art etc if needed.
 - Be concise, use a professional tone to convey the info while beign
@@ -218,7 +240,7 @@ function M.send_raw_async(model, messages, callback)
 
 			local ok, parsed = pcall(json.decode, table.concat(result))
 			if not ok or not parsed.choices or #parsed.choices == 0 then
-				vim.notify("[tai] No valid response from Mistral: " .. table.concat(result), vim.log.levels.ERROR)
+				vim.notify("[tai] No valid response from Gemini: " .. table.concat(result), vim.log.levels.ERROR)
 				callback(nil)
 				return
 			end
@@ -310,9 +332,8 @@ function M.send(model, messages)
 			function(m) return { role = m.role, content = m.content } end,
 			messages
 		),
-		response_format = {
-			type = "json_object"
-		}
+		tools = { read_tool },
+		tool_choice = "auto",
 	}
 
 	local json_data = json.encode(req_body)
@@ -367,17 +388,27 @@ function M.send(model, messages)
 	end
 
 	if not parsed.choices or #parsed.choices == 0 then
-		vim.notify("[tai] No response from Mistral, received " .. response, vim.log.levels.ERROR)
+		vim.notify("[tai] No response from Gemini, received " .. response, vim.log.levels.ERROR)
 		return nil
 	end
 
-	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
+	local message = parsed.choices[1].message
+	local ok, fields = pcall(json.decode, message.content)
 	if not ok then
 		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
 		return nil
 	end
+	if not message or not fields then
+		return nil
+	end
 
-	return fields
+	return {
+		text = fields.text,
+		patch = fields.patch,
+		plan = fields.plan,
+		commands = fields.commands,
+		tools = message.tool_calls,
+	}
 end
 
 return M

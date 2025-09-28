@@ -27,9 +27,6 @@ function M.prompt_input()
 				vim.notify("[tai] recieved error: " .. err)
 				return
 			end
-			vim.schedule(function()
-				ui.show_response(res)
-			end)
 		end)
 	end)
 end
