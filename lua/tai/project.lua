@@ -37,6 +37,29 @@ function M.init()
 	end
 end
 
+local function run_tool_calls(cmds)
+	local output = ""
+
+	for _, cmd in ipairs(cmds) do
+		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
+		local args = vim.json.decode(cmd["function"].arguments)
+		local file = io.open(args.file_path, "r")
+		if file then
+			local content = file:read("*all")
+			file:close()
+			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. content .. "\n"
+		else
+			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
+		end
+	end
+
+	vim.schedule(function()
+		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+	end)
+
+	return output
+end
+
 function M.process_request(prompt, callback)
 	log.debug("Processing request " .. prompt)
 
@@ -48,9 +71,9 @@ function M.process_request(prompt, callback)
 
 		::continue::
 
-		if reply.tool_calls then
-			ui.show_tool_call(reply.tool_calls)
-			local out = run_tool_calls(reply.tool_calls)
+		if reply.tools then
+			ui.show_tool_calls(reply.tools)
+			local out = run_tool_calls(reply.tools)
 			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
 			goto continue
 		end
@@ -75,28 +98,6 @@ function M.process_request(prompt, callback)
 			)
 		end
 	end
-end
-
-local function run_tool_calls(cmds)
-	local output = ""
-
-	for _, cmd in ipairs(cmds) do
-		log.debug("Running command `" .. cmd.name .. "`")
-		local file = io.open(cmd.args.file_path, "r")
-		if file then
-			local content = file:read("*all")
-			file:close()
-			output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
-		else
-			output = output .. "\n\n[tai] File " .. filepath .. " not found"
-		end
-	end
-
-	vim.schedule(function()
-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
-	end)
-
-	return output
 end
 
 local function run_commands(cmds)

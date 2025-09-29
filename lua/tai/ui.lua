@@ -46,7 +46,7 @@ function M.toggle_output_window()
 end
 
 function M.show_response(prompt, fields)
-	log.debug("Showing response text: " .. fields.text)
+	log.debug("Showing response")
 
 	local bufnr = ensure_buf()
 	local winid = vim.fn.bufwinnr(bufnr)
@@ -99,16 +99,18 @@ function M.show_response(prompt, fields)
 end
 
 function M.show_tool_calls(calls)
-	log.debug("Showing tool calls: " .. calls)
+	log.debug("Showing tool calls")
 
 	local bufnr = ensure_buf()
 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
 
-	table.insert(lines, "\n------------------------------\n\n")
+	table.insert(lines, "")
+	table.insert(lines, "------------------------------")
+	table.insert(lines, "")
 	for _, call in ipairs(calls) do
 		table.insert(
 			lines,
-			"> Sending output of: " .. call.name .. " " ..call.args.file_name
+			"> Sending output of " .. call["function"].name
 		)
 	end
 
