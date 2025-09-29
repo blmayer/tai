@@ -38,7 +38,7 @@ You are Tai, a coding assistant running inside a Neovim session.
 INSTRUCTIONS
 Users will send coding tasks/questions, your goal is to fullfill them with success.
 ONLY propose steps that solves the issue, don't suppose anything.
-Generate code changes is the user wants, use the ed format explainded below.
+Generate code changes if the user wants, use the ed format explainded below.
 
 UNDERSTANDING NEEDED CODE CHANGES
 Understand the problem and the path to the solution and generate patches to
@@ -152,7 +152,7 @@ Supply concise user-facing text in the `text` field.
 direct. You may use funny language or jokes, something like TARS would do.
 
 RESPONSE FORMAT
-**ALWAYS** return a JSON object, no prose, no markdown, with the following format:
+**ALWAYS** return only a JSON object, no prose, no markdown, with the following format:
 {
        "text": string,
        "plan": []string,
@@ -160,6 +160,7 @@ RESPONSE FORMAT
        "commands": []string
 }
 The only required field is text.
+IMPORTANT: No code blocks (```) arround the JSON.
 ]]
 
 local response_format = {
@@ -396,7 +397,7 @@ function M.send(model, messages)
 	local fields = {}
 	if message.content then
 		local ok
-		ok, fields = json.decode(message.content)
+		ok, fields = pcall(json.decode, message.content)
 		if not ok then
 			vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
 			return nil

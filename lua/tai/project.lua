@@ -38,6 +38,7 @@ function M.init()
 end
 
 local function run_tool_calls(cmds)
+	log.debug("Running tools")
 	local output = ""
 
 	for _, cmd in ipairs(cmds) do
@@ -53,51 +54,7 @@ local function run_tool_calls(cmds)
 		end
 	end
 
-	vim.schedule(function()
-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
-	end)
-
 	return output
-end
-
-function M.process_request(prompt, callback)
-	log.debug("Processing request " .. prompt)
-
-	if config.provider == "mistral" then
-		planner.receive_prompt(prompt, callback)
-	else
-		local reply = chat.send(config.model, prompt)
-		ui.show_response(prompt, reply)
-
-		::continue::
-
-		if reply.tools then
-			ui.show_tool_calls(reply.tools)
-			local out = run_tool_calls(reply.tools)
-			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
-			goto continue
-		end
-		if reply.patch then
-			vim.api.nvim_buf_create_user_command(
-				bufnr,
-				'ApplyTaiPatch',
-				function() apply_patch(reply.patch) end,
-				{}
-			)
-		end
-		if reply.commands then
-			vim.api.nvim_buf_create_user_command(
-				bufnr,
-				'RunTaiCommand',
-				function()
-					local out = run_commands(fields.commands)
-					reply = chat.send(config.model, out)
-					ui.show_response(reply)
-				end,
-				{}
-			)
-		end
-	end
 end
 
 local function run_commands(cmds)
@@ -124,11 +81,53 @@ local function run_commands(cmds)
 	return output
 end
 
-function apply_patch(patch)
-	local real = io.popen("ed -s > /dev/null 2>&1", "w")
+local function apply_patch(patch)
+	local real = io.popen("ed -s 2>&1", "w")
 	real:write(patch)
+	local output = real:read("*all")
 	real:close()
+	log.debug("Patch application output: " .. output)
 	vim.api.nvim_command("checktime")
+end
+
+function M.process_request(prompt, callback)
+	log.debug("Processing request " .. prompt)
+
+	if config.provider == "mistral" then
+		planner.receive_prompt(prompt, callback)
+	else
+		local reply = chat.send(config.model, prompt)
+
+		::continue::
+
+		if reply.tools then
+			ui.show_tool_calls(reply.tools)
+			local out = run_tool_calls(reply.tools)
+			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
+			goto continue
+		end
+		if reply.patch then
+			vim.api.nvim_buf_create_user_command(
+				ui.buffer_nr,
+				'ApplyTaiPatch',
+				function() apply_patch(reply.patch) end,
+				{}
+			)
+		end
+		if reply.commands then
+			vim.api.nvim_buf_create_user_command(
+				ui.buffer_nr,
+				'RunTaiCommand',
+				function()
+					local out = run_commands(reply.commands)
+					reply = chat.send(config.model, out)
+					ui.show_response(reply)
+				end,
+				{}
+			)
+		end
+		ui.show_response(reply)
+	end
 end
 
 --function M.complete(start)

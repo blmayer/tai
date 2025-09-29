@@ -1,19 +1,18 @@
 local M = {}
 local log = require("tai.log")
-local config = require("tai.config")
-local command = require("tai.command")
 
-local bufname = "tai-output"
+local bufname = "tai-chat"
 
-local function append_to_buf(bufnr, lines_to_add)
-    local current_lines_count = vim.api.nvim_buf_line_count(bufnr)
-    if current_lines_count == 1 and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == "" then
-        -- If buffer is essentially empty (one empty line), replace it
-        vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines_to_add)
-    else
-        -- Append to existing content
-        vim.api.nvim_buf_set_lines(bufnr, current_lines_count, current_lines_count, false, lines_to_add)
-    end
+function M.append_to_buffer(content)
+	local new_lines = vim.split(content, "\n")
+	local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
+	if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
+		-- If buffer is essentially empty (one empty line), replace it
+		vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+	else
+		-- Append to existing content
+		vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false, new_lines)
+	end
 end
 
 local function ensure_buf()
@@ -30,8 +29,10 @@ local function ensure_buf()
 	return bufnr
 end
 
+M.buffer_nr = ensure_buf()
+
 function M.toggle_output_window()
-	local bufnr = ensure_buf()
+	local bufnr = M.buffer_nr
 	local winid = vim.fn.bufwinnr(bufnr)
 	if winid ~= -1 then
 		-- Close the window
@@ -45,23 +46,19 @@ function M.toggle_output_window()
 	end
 end
 
-function M.show_response(prompt, fields)
+function M.open()
+	if vim.fn.bufwinnr(M.buffer_nr) == -1 then
+		vim.cmd("vsplit")
+		local win = vim.api.nvim_get_current_win()
+		vim.api.nvim_win_set_buf(win, M.buffer_nr)
+		vim.api.nvim_win_set_width(win, 80)
+	end
+end
+
+function M.show_response(fields)
 	log.debug("Showing response")
 
-	local bufnr = ensure_buf()
-	local winid = vim.fn.bufwinnr(bufnr)
-	local is_visible = (winid ~= -1)
-
 	local content = ""
-	-- Add divider if not the very first entry (or if the buffer is truly empty)
-	if vim.api.nvim_buf_line_count(bufnr) > 0 and (vim.api.nvim_buf_line_count(bufnr) > 1 or vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] ~= "") then
-		content = content .. "\n\n========================================\n"
-	end
-
-	for _, line in ipairs(vim.split(prompt, "\n")) do
-		content = content .. "> " .. line .. "\n"
-	end
-	content = content .. "\n"
 
 	if fields.plan and #fields.plan > 0 then
 		content = "Plan:\n\n"
@@ -82,50 +79,22 @@ function M.show_response(prompt, fields)
 	if fields.patch then
 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
 	end
+	content = content .. "\n\n"
 
-	local lines = vim.split(content, "\n", { trimempty = true })
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-
-	-- Auto-open if hidden
-	if vim.fn.bufwinnr(bufnr) == -1 then
-		vim.cmd("vsplit")
-		local win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, bufnr)
-		vim.api.nvim_win_set_width(win, 80)
-	else
-		-- Ensure focus on existing window
-		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
-	end
+	M.append_to_buffer(content)
+	M.open()
 end
 
 function M.show_tool_calls(calls)
 	log.debug("Showing tool calls")
 
-	local bufnr = ensure_buf()
-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-
-	table.insert(lines, "")
-	table.insert(lines, "------------------------------")
-	table.insert(lines, "")
+	local content = "\n-----------------------------\n"
 	for _, call in ipairs(calls) do
-		table.insert(
-			lines,
-			"> Sending output of " .. call["function"].name
-		)
+		content = content .. "> Sending output of " .. call["function"].name .. "\n"
 	end
 
-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-
-	-- Auto-open if hidden
-	if vim.fn.bufwinnr(bufnr) == -1 then
-		vim.cmd("vsplit")
-		local win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, bufnr)
-		vim.api.nvim_win_set_width(win, 80)
-	else
-		-- Ensure focus on existing window
-		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
-	end
+	M.append_to_buffer(content)
+	M.open()
 end
 
 -- Insert the content at the cursor (insert mode)
@@ -189,7 +158,5 @@ function M.input(callback)
 		callback(text)
 	end, { buffer = bufnr })
 end
-
-
 
 return M

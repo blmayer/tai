@@ -16,11 +16,15 @@ end
 function M.prompt_input()
 	ui.input(function(input)
 		if not input or input == "" then return end
+		log.debug("Received user input: " .. input)
 
 		local path = vim.fn.expand("%")
 		local row, col = unpack(vim.api.nvim_win_get_cursor(0))
 		local location = string.format("line %d, column %d", row, col)
 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+
+		ui.append_to_buffer("=====================================\n\n> " .. input)
+		ui.open()
 
 		project.process_request(prompt, function(res, err)
 			if err then
