@@ -375,22 +375,25 @@ function M.send(model, messages)
 
 	local response = table.concat(result)
 	if #err_data > 0 then
-		vim.schedule(function()
-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
-		end)
-		return nil
+		return { text = "[tai] API error: " .. table.concat(err_data) }
 	end
 
 	log.debug("response: " .. response)
-	local ok, parsed = pcall(json.decode, response)
-	if not ok then
-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
-		return nil
+	if not response or response == "" then
+		return { text = "[tai] Received empty response from Gemini" }
 	end
 
+	local ok, parsed = pcall(json.decode, response)
+	if not ok then
+		return { text = "[tai] Failed to decode JSON: " .. response }
+	end
+
+	if #parsed > 0 and parsed[1].error then
+		return { text = "[tai] Received error: " .. parsed[1].error.message }
+		end
+
 	if not parsed.choices or #parsed.choices == 0 then
-		vim.notify("[tai] No response from Gemini, received " .. response, vim.log.levels.ERROR)
-		return nil
+		return { text = "[tai] No response from Gemini, received " .. response }
 	end
 
 	local message = parsed.choices[1].message
@@ -400,7 +403,7 @@ function M.send(model, messages)
 		ok, fields = pcall(json.decode, message.content)
 		if not ok then
 			vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
-			return nil
+			return { text = "[tai] Failed to decode message: " .. response }
 		end
 	end
 

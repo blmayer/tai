@@ -48,7 +48,13 @@ local function run_tool_calls(cmds)
 		if file then
 			local content = file:read("*all")
 			file:close()
-			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. content .. "\n"
+
+			local numbered_lines = {}
+			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
+				table.insert(numbered_lines, string.format("%d: %s", i, line))
+			end
+			local numbered_content = table.concat(numbered_lines, "\n")
+			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
 		else
 			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
 		end
@@ -74,59 +80,73 @@ local function run_commands(cmds)
 		end
 	end
 
-	vim.schedule(function()
-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
-	end)
-
 	return output
 end
 
 local function apply_patch(patch)
 	local real = io.popen("ed -s 2>&1", "w")
+	if not real then
+		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
+		return
+	end
+
 	real:write(patch)
 	local output = real:read("*all")
 	real:close()
-	log.debug("Patch application output: " .. output)
+
+	if output then
+		log.debug("Patch application output: " .. output)
+	end
 	vim.api.nvim_command("checktime")
 end
 
-function M.process_request(prompt, callback)
+local function handle_reply(reply)
+	::continue::
+
+	if reply.tools then
+		ui.show_tool_calls(reply.tools)
+		local out = run_tool_calls(reply.tools)
+		reply = chat.send("Result of tool calls:\n" .. out)
+		goto continue
+	end
+	if reply.patch then
+		vim.api.nvim_buf_create_user_command(
+			ui.buffer_nr,
+			'ApplyTaiPatch',
+			function() apply_patch(reply.patch) end,
+			{}
+		)
+	end
+	if reply.commands then
+		vim.api.nvim_buf_create_user_command(
+			ui.buffer_nr,
+			'RunTaiCommand',
+			function()
+				local out = run_commands(reply.commands)
+				reply = chat.send(out)
+				ui.show_response(reply)
+			end,
+			{}
+		)
+	end
+	ui.show_response(reply)
+end
+
+function M.process_request(prompt)
 	log.debug("Processing request " .. prompt)
 
 	if config.provider == "mistral" then
-		planner.receive_prompt(prompt, callback)
+		planner.receive_prompt(
+			prompt,
+			function(reply, err)
+				vim.schedule(function()
+					handle_reply(reply)
+				end)
+			end
+		)
 	else
-		local reply = chat.send(config.model, prompt)
-
-		::continue::
-
-		if reply.tools then
-			ui.show_tool_calls(reply.tools)
-			local out = run_tool_calls(reply.tools)
-			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
-			goto continue
-		end
-		if reply.patch then
-			vim.api.nvim_buf_create_user_command(
-				ui.buffer_nr,
-				'ApplyTaiPatch',
-				function() apply_patch(reply.patch) end,
-				{}
-			)
-		end
-		if reply.commands then
-			vim.api.nvim_buf_create_user_command(
-				ui.buffer_nr,
-				'RunTaiCommand',
-				function()
-					local out = run_commands(reply.commands)
-					reply = chat.send(config.model, out)
-					ui.show_response(reply)
-				end,
-				{}
-			)
-		end
-		ui.show_response(reply)
+		local reply = chat.send(prompt)
+		handle_reply(reply)
 	end
 end
 

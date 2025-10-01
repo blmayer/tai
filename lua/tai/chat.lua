@@ -12,6 +12,8 @@ if config.provider == 'groq' then
 	provider = require('tai.providers.groq')
 elseif config.provider == 'gemini' then
 	provider = require('tai.providers.gemini')
+elseif config.provider == "mistral" then
+	return M
 elseif config.provider == nil then
 	-- do nothing
 else
@@ -23,7 +25,7 @@ local history = {
 	{ role = "system", content = provider.system_prompt }
 }
 
-function M.send(model, prompt)
+function M.send(prompt)
 	local msg = { role = "user", content = prompt }
 	table.insert(history, msg)
 

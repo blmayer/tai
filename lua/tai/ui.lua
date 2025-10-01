@@ -3,18 +3,6 @@ local log = require("tai.log")
 
 local bufname = "tai-chat"
 
-function M.append_to_buffer(content)
-	local new_lines = vim.split(content, "\n")
-	local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
-	if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
-		-- If buffer is essentially empty (one empty line), replace it
-		vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
-	else
-		-- Append to existing content
-		vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false, new_lines)
-	end
-end
-
 local function ensure_buf()
 	local bufnr = vim.fn.bufnr(bufname)
 	if bufnr == -1 then
@@ -30,6 +18,21 @@ local function ensure_buf()
 end
 
 M.buffer_nr = ensure_buf()
+
+function M.append_to_buffer(content)
+	local new_lines = vim.split(content, "\n")
+	vim.schedule(function()
+		local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
+		if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
+			-- If buffer is essentially empty (one empty line), replace it
+			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+		else
+			-- Append to existing content
+			vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false,
+				new_lines)
+		end
+	end)
+end
 
 function M.toggle_output_window()
 	local bufnr = M.buffer_nr
@@ -47,25 +50,26 @@ function M.toggle_output_window()
 end
 
 function M.open()
-	if vim.fn.bufwinnr(M.buffer_nr) == -1 then
-		vim.cmd("vsplit")
-		local win = vim.api.nvim_get_current_win()
-		vim.api.nvim_win_set_buf(win, M.buffer_nr)
-		vim.api.nvim_win_set_width(win, 80)
-	end
+	vim.schedule(function()
+		if vim.fn.bufwinnr(M.buffer_nr) == -1 then
+			vim.cmd("vsplit")
+			local win = vim.api.nvim_get_current_win()
+			vim.api.nvim_win_set_buf(win, M.buffer_nr)
+			vim.api.nvim_win_set_width(win, 80)
+		end
+	end)
 end
 
 function M.show_response(fields)
 	log.debug("Showing response")
 
-	local content = ""
-
+	local content = "\n----------------------------\n"
 	if fields.plan and #fields.plan > 0 then
-		content = "Plan:\n\n"
+		content = "--- Plan ------------------------\n\n"
 		for i, p in ipairs(fields.plan) do
 			content = content .. i .. ". " .. p .. "\n"
 		end
-		content = content .. "\n----------------\n\n"
+		content = content .. "___________________________\n\n"
 	end
 	if fields.text then
 		content = content .. fields.text
@@ -88,10 +92,11 @@ end
 function M.show_tool_calls(calls)
 	log.debug("Showing tool calls")
 
-	local content = "\n-----------------------------\n"
+	local content = "\n--- tool calls ---------------------\n"
 	for _, call in ipairs(calls) do
 		content = content .. "> Sending output of " .. call["function"].name .. "\n"
 	end
+	content = content .. "____________________________________\n"
 
 	M.append_to_buffer(content)
 	M.open()
@@ -149,7 +154,7 @@ function M.input(callback)
 	vim.bo[bufnr].buftype = 'nofile'
 	vim.bo[bufnr].bufhidden = 'wipe'
 	vim.bo[bufnr].swapfile = false
-	vim.bo[bufnr].filetype = 'tai-input'
+	vim.bo[bufnr].filetype = 'text'
 
 	vim.keymap.set('n', '<CR>', function()
 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)

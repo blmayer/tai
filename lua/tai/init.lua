@@ -23,15 +23,13 @@ function M.prompt_input()
 		local location = string.format("line %d, column %d", row, col)
 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
 
-		ui.append_to_buffer("=====================================\n\n> " .. input)
-		ui.open()
+		ui.append_to_buffer("=====================================\n> " .. input)
 
-		project.process_request(prompt, function(res, err)
-			if err then
-				vim.notify("[tai] recieved error: " .. err)
-				return
-			end
+		vim.schedule(function()
+			ui.open()
 		end)
+
+		project.process_request(prompt)
 	end)
 end
 

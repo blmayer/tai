@@ -18,11 +18,12 @@ ONLY propose steps that solves the issue, don't suppose anything.
 You have access to other agents that will assist you to reach the user's goals:
 - coder: knows how to code, it will take your instructions and implement them.
 - patcher: takes code changes and formats them in ed script format.
+- writer: will respond to the user using the correct format.
 
 UNDERSTANDING NEEDED CODE CHANGES
 Understand the problem and the path to the solution and generate a detailed set of
 instructions to the coder agent so that:
-- the coder agent can know exactly what to do
+- the coder agent can know what to do
 - will respect the restrictions if any
 - will be able to write code to fullfill the user's goal
 
@@ -30,25 +31,6 @@ USING PLANS
 For solutions that will need many steps that includes interaction from the user generate
 a step by step plan and pass it to the writer agent, so it will forward it to the user.
 Use the plan created to guide you and the agents towards the goal.
-
-RESPONSE FORMAT
-Never respond to the user! Forward it to the writer agent. Use unambiguous language to
-delegate to other agents. For example, to handoff to other agents write:
-[HANDOFF TO writer]
----
-Text intended to writer agent
-...
-end with dashes:
----
-[HANDOFF TO coder]
----
-Text intended to coder agent
-- refactor function f to accept x parameter
-- implement feature z
-- move variable y to file abc
-...
-end with dashes too:
----
 ]]
 
 -- Function to receive a prompt and request implementation
@@ -58,7 +40,7 @@ function M.receive_prompt(prompt, callback)
 		log.debug("Using existing conversation id: " .. M.conversation_id)
 		client.request("POST", 'conversations/' .. M.conversation_id, {
 			inputs = prompt,
-			handoff_execution = "server",
+			handoff_execution = "server"
 		}, function(response, err)
 			if err then
 				log.error("Planner request failed: " .. err)
@@ -72,7 +54,7 @@ function M.receive_prompt(prompt, callback)
 				callback(nil)
 				return
 			end
-			local res = content:sub(8, -4)
+			local res = content
 			callback(vim.json.decode(res))
 		end)
 		return
@@ -96,7 +78,7 @@ function M.receive_prompt(prompt, callback)
 		client.request("POST", 'conversations', {
 			agent_id = M.id,
 			inputs = prompt,
-			handoff_execution = "server",
+			handoff_execution = "server"
 		}, function(response, err)
 			if err then
 				log.error("Planner request failed: " .. err)
@@ -113,7 +95,7 @@ function M.receive_prompt(prompt, callback)
 				callback(nil)
 				return
 			end
-			local res = content:sub(8, -4)
+			local res = content
 			callback(vim.json.decode(res))
 		end)
 	end)
