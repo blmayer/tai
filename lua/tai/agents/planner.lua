@@ -67,6 +67,7 @@ function M.plan(prompt, callback)
 	log.info("Planner received prompt: " .. prompt)
 	provider.request(
 		config.planner_model,
+		config.planner_thinks,
 		M.system_prompt,
 		prompt, 
 		"json",

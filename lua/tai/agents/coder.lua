@@ -64,6 +64,7 @@ function M.task(task, callback)
 	log.info("Coder executing task: " .. task)
 	provider.request(
 		config.coder_model,
+		config.coder_thinks,
 		M.system_prompt,
 		task,
 		"json",

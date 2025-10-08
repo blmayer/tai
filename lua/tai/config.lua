@@ -53,6 +53,11 @@ if file then
 			M.coder_model = data.coder_model
 			M.patcher_model = data.patcher_model
 			M.writer_model = data.writer_model
+
+			M.planner_thinks = data.planner_thinks or false
+			M.coder_thinks = data.coder_thinks or false
+			M.patcher_thinks = data.patcher_thinks or false
+			M.writer_thinks = data.writer_thinks or false
 		end
 		if data.allowed_commands then
 			M.allowed_commands = {}

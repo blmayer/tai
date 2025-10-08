@@ -125,6 +125,7 @@ function M.create_patch(changes, callback)
 
 	provider.request(
 	    config.patcher_model,
+	    config.patcher_thinks,
 	    M.system_prompt,
 	    changes,
 	    nil,

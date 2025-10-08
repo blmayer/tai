@@ -49,7 +49,7 @@ local planner_response_format = {
 
 local history = { }
 
-function M.request(model, system, prompt, format, callback)
+function M.request(model, think, system, prompt, format, callback)
 	local url = url .. "/chat"
 	local msg = { role = "user", content = prompt }
 	table.insert(history, msg)
@@ -61,11 +61,13 @@ function M.request(model, system, prompt, format, callback)
 			unpack(history),
 		},
 		stream = false,
-		think = true,
 		-- tools = agents.tools,
 	}
 	if format then
 		body.response_format = format
+	end
+	if think ~= nil then
+		body.think = think
 	end
 	local request_body = vim.json.encode(body)
 
@@ -96,8 +98,14 @@ function M.request(model, system, prompt, format, callback)
 			return { error = "[tai] Received error: " .. parsed[1].error.message }
 			end
 
+		if parsed.error then
+			table.insert(history, { role = "assistant", content = parsed.error })
+			return { error = parsed.error }
+		end
+
 		local message = parsed.message.content
 		if not format then
+			table.insert(history, { role = "assistant", content = message })
 			return message
 		end
 
@@ -109,8 +117,8 @@ function M.request(model, system, prompt, format, callback)
 				vim.notify("[tai] Failed to decode message: " .. message, vim.log.levels.ERROR)
 				return { error = "[tai] Failed to decode message: " .. message }
 			end
+			table.insert(history, { role = "assistant", content = fields[1] })
 		end
-		table.insert(history, { role = "assistant", content = message })
 		callback(fields, nil)
 	end)
 end

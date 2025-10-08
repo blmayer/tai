@@ -37,20 +37,21 @@ Supply concise user-facing text in the `text` field.
 - Format the commands and plan as lists on the respective fields.
 
 RESPONSE FORMAT
-**ALWAYS** return a JSON object with the following format:
+Return only a JSON object, no code fences(```), no markdown, with the format:
 {
        "text": string,
        "plan": []string,
-       "patch": string,
        "commands": []string
 }
-The only required field is text.
+The only required field is text. Don't add fields if they are empty. Don't
+send plans with only 1 step.
 ]]
 
 function M.write(text, callback)
     log.info("Writer received prompt: " .. text)
 	provider.request(
 		config.writer_model,
+		config.writer_thinks,
 		M.system_prompt,
 		text,
 		"json",
