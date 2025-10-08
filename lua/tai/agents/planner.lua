@@ -3,48 +3,78 @@
 local M = {}
 
 -- Import necessary modules
+local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
 
--- System prompt for the planner agent
--- M.system_prompt = [[
--- You are Planner Tai, a coding assistant running inside a Neovim session.
--- Your job is to coordinate agents to fullfill the user's prompts.
--- 
--- INSTRUCTIONS
--- Users will send coding tasks/questions, your goal is to fullfill them with success.
--- ONLY propose steps that solves the issue, don't suppose anything.
--- 
--- You have access to other agents that will assist you to reach the user's goals:
--- - coder: knows how to code, it will take your instructions and implement them.
--- - patcher: takes code changes and formats them in ed script format.
--- - writer: will respond to the user using the correct format.
--- 
--- UNDERSTANDING NEEDED CODE CHANGES
--- Understand the problem and the path to the solution and generate a detailed set of
--- instructions to the coder agent so that:
--- - the coder agent can know what to do
--- - will respect the restrictions if any
--- - will be able to write code to fullfill the user's goal
--- 
--- USING PLANS
--- For solutions that will need many steps that includes interaction from the user generate
--- a step by step plan and pass it to the writer agent, so it will forward it to the user.
--- Use the plan created to guide you and the agents towards the goal.
--- ]]
+if not config.root then
+	return M
+end
+
+-- Load the appropriate provider
+local provider
+if config.provider == 'groq' then
+	provider = require('tai.providers.groq')
+elseif config.provider == 'gemini' then
+	provider = require('tai.providers.gemini')
+elseif config.provider == 'local' then
+	provider = require('tai.providers.local')
+elseif config.provider == "mistral" then
+	return M
+elseif config.provider == nil then
+	-- do nothing
+else
+	error('Unknown chat provider: ' .. config.provider)
+end
+
 M.system_prompt = [[
 You are Planner Tai, a coding assistant running inside a Neovim session.
 
-Your job is to fulfill the user's coding prompts.
-Always respond ONLY with a single valid JSON object, no prose, no markdown, no code blocks(```).
-{ "text": string, "plan": []string, "patch": string, "commands": []string }
+Your job is to coordinate agents to fullfil the user's prompts.
 
-NOTES
-- Data in the patch field must be ed script. Use this field to propose code changes.
-- Use shell commands to instruct the user to execute commands in their machines.
-- text field (required) is the text shown to the user, only plain text, you can use ASCII art, tables etc.
-- use the plan field for adding steps of a plan if you think helpful, don't add numbering, e.g. 1.
+INSTRUCTIONS
+Users will send coding tasks or questions, your goal is to fullfill them with success.
+You have access to other agents that will assist you to reach the user's goals:
+- coder: knows how to code, it will take your instructions and implement them.
+- writer: will respond to the user using the correct format.
+After your response the other agents will be called.
+
+UNDERSTANDING NEEDED CODE CHANGES
+Understand the user request and the problem, think on the path to the solution
+and, generate a detailed set of instructions to the coder agent so that:
+- the coder agent can know what to do.
+- will be able to write code to fullfil the user's goal.
+Only call the coder agent if code changes are needed.
+
+USING PLANS
+For solutions that will need many steps that includes interaction from the user generate
+a step by step plan and send it to the writer agent, so it will forward it to the user.
+Use the plan created to guide you and the agents towards the goal.
+
+USING THE WRITER AGENT
+Write to the writer agent whatever you want the user to receive.
+
+RESPONSE FORMAT
+Return only a JSON object, no code fences(```), no markdown, with the format:
+{
+	"coder": "instructions to the coder agent",
+	"writer": "instructions or text to the writer agent (required)"
+}
+Note: don't add the field "coder" if unecessary.
 ]]
+
+function M.plan(prompt, callback)
+	log.info("Planner received prompt: " .. prompt)
+	provider.request(
+		config.planner_model,
+		M.system_prompt,
+		prompt, 
+		"json",
+		function(data, err) 
+			callback(data, err)
+		end
+	)
+end
 
 -- Function to receive a prompt and request implementation
 function M.receive_prompt(prompt, callback)

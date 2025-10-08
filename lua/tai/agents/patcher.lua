@@ -3,35 +3,55 @@
 local M = {}
 
 -- Import necessary modules
+local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
 
--- System prompt for the patcher agent
+if not config.root then
+	return M
+end
+
+-- Load the appropriate provider
+local provider
+if config.provider == 'groq' then
+	provider = require('tai.providers.groq')
+elseif config.provider == 'gemini' then
+	provider = require('tai.providers.gemini')
+elseif config.provider == 'local' then
+	provider = require('tai.providers.local')
+elseif config.provider == "mistral" then
+	return M
+elseif config.provider == nil then
+	-- do nothing
+else
+	error('Unknown chat provider: ' .. config.provider)
+end
+
 M.system_prompt = [[
-You are Patcher Tai, an agent that created patches. Your task is to create patches in ed script
-format from code changes.
+You are Patcher Tai, an agent that created patches. Your task is to create
+patches in ed script format from code changes.
 
 INSTRUCTIONS
-You will receive a list of code changes, you job is to correctly format them in a **VALID** ed
-script that the user can apply with `ed -s < patch`.
-You will generate the patch and send it to the writer agent, that will forward it to the user.
+You will receive a list of code changes, you job is to correctly format them in
+a **VALID** ed script that the user can apply with `ed -s < patch`.
 
 OUTPUT FORMAT
 **IMPORTANT**: The content **MUST** be **VALID** ed script.
 - Specify the file affected at start of the patch with `e file_name`.
-- **ALWAYS** finish with `w` and `q`.
+- **ALWAYS** finish the script with `w` and `q`. Intermediaries don't need `q`.
 - Make sure you get the line numbers correct.
 - Generally preffer using line numbers.
 
 ED FORMAT
 
 General Rules
-- A script is a sequence of ed commands followed by w and q.
+- A script is a sequence of ed commands followed by w.
 - To input a dot only it must be escaped like `..`.
 - Lines are addressed by number or by special symbols.
 - Ranges can apply to a single line, multiple lines, or the whole file.
 - When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
 - To return to command mode, you enter a line containing only a single `.`.
+- After a command the current position
 
 Addressing and Ranges
 1 	first line
@@ -98,28 +118,18 @@ some text
 .
 w
 q
-
-NOTES
-You must know the original content of the files affected, you can access them on the library.
 ]]
 
--- Function to create a patch in ed script format from code changes
 function M.create_patch(changes, callback)
-    log.info("Patcher creating patch from changes")
-    -- Create a patch using the conversations API
-    client.request("POST", 'conversations', {
-        agent_id = M.id,
-        messages = {
-            { role = "user", content = changes }
-        }
-    }, function(response, err)
-        if err then
-            log.error("Patcher task failed: " .. err)
-            callback(nil, err)
-        else
-            callback(response)
-        end
-    end)
+	log.info("Patcher creating patch from changes: " .. changes)
+
+	provider.request(
+	    config.patcher_model,
+	    M.system_prompt,
+	    changes,
+	    nil,
+	    function(data, err) callback(data, err) end
+	)
 end
 
 return M

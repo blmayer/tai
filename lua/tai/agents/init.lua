@@ -41,7 +41,7 @@ local function create_agent(name, callback)
 	local agent_configs = {
 		writer = {
 			name = "writer",
-			model = "mistral-medium-latest",
+			model = config.writer_model,
 			instructions = writer.system_prompt,
 			handoffs = handoffs[name],
 			tools = {
@@ -53,7 +53,7 @@ local function create_agent(name, callback)
 		},
 		patcher = {
 			name = "patcher",
-			model = "mistral-medium-latest",
+			model = config.patcher_model,
 			instructions = patcher.system_prompt,
 			handoffs = handoffs[name],
 			tools = {
@@ -65,7 +65,7 @@ local function create_agent(name, callback)
 		},
 		coder = {
 			name = "coder",
-			model = "mistral-large-latest",
+			model = config.coder_model,
 			instructions = coder.system_prompt,
 			handoffs = handoffs[name],
 			tools = {
@@ -77,7 +77,7 @@ local function create_agent(name, callback)
 		},
 		planner = {
 			name = "planner",
-			model = "magistral-medium-latest",
+			model = config.planner_model,
 			instructions = planner.system_prompt,
 			handoffs = handoffs[name],
 			tools = {
@@ -162,6 +162,22 @@ function M.init()
 			end
 		end)()
 	end)
+
+	if config.provider == "mistral" then
+		local files = vim.fn.glob('**/*', true, true)
+		library.setup(function(library_id, err)
+			if err then
+				log.error("Failed to setup library: " .. err)
+				return
+			end
+			log.info("Library initialized with ID: " .. library_id)
+
+			log.info("Agents init complete")
+
+			-- initial sync
+			library.sync(files)
+		end)
+	end
 end
 
 return M

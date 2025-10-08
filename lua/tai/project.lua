@@ -5,7 +5,9 @@ local config = require("tai.config")
 local agents = require("tai.agents")
 local library = require("tai.library")
 local planner = require("tai.agents.planner")
-local chat = require("tai.chat")
+local coder = require("tai.agents.coder")
+local patcher = require("tai.agents.patcher")
+local writer = require("tai.agents.writer")
 local command = require("tai.command")
 local ui = require("tai.ui")
 
@@ -19,22 +21,7 @@ function M.init()
 	end
 	log.info("Starting Tai, provider " .. config.provider)
 
-	if config.provider == "mistral" then
-		local files = vim.fn.glob('**/*', true, true)
-		library.setup(function(library_id, err)
-			if err then
-				log.error("Failed to setup library: " .. err)
-				return
-			end
-			log.info("Library initialized with ID: " .. library_id)
-
-			agents.init()
-			log.info("Agents init complete")
-
-			-- initial sync
-			library.sync(files)
-		end)
-	end
+	agents.init()
 end
 
 local function run_tool_calls(cmds)
@@ -100,54 +87,92 @@ local function apply_patch(patch)
 	vim.api.nvim_command("checktime")
 end
 
-local function handle_reply(reply)
+local function handle_coder_req(req, cb)
+	log.debug("handling coder request: " .. req)
+	coder.task(
+		req,
+		function(data, err)
+			if data.patcher then
+				log.debug("coder reply to patcher: " .. data.patcher)
+				patcher.create_patch(
+					data.patcher,
+					function(p, err) 
+						log.debug("patcher reply: " .. p)
+						cb(data.writer, p)
+					end
+				)
+			end
+		end
+	)
+end
+
+local function handle_planner_reply(reply)
+	log.info("handling reply")
 	::continue::
 
 	if reply.tools then
 		ui.show_tool_calls(reply.tools)
 		local out = run_tool_calls(reply.tools)
-		reply = chat.send("Result of tool calls:\n" .. out)
+		reply = planner.plan("Result of tool calls:\n" .. out, function(data, err) end)
 		goto continue
 	end
-	if reply.patch then
-		vim.api.nvim_buf_create_user_command(
-			ui.buffer_nr,
-			'ApplyTaiPatch',
-			function() apply_patch(reply.patch) end,
-			{}
+
+	if not reply.coder then
+		log.debug("calling writer after planner: " .. reply.writer)
+		writer.write(
+			reply.writer,
+			function(data, err) ui.show_response(data) end
 		)
+		return
 	end
-	if reply.commands then
-		vim.api.nvim_buf_create_user_command(
-			ui.buffer_nr,
-			'RunTaiCommand',
-			function()
-				local out = run_commands(reply.commands)
-				reply = chat.send(out)
-				ui.show_response(reply)
-			end,
-			{}
-		)
-	end
-	ui.show_response(reply)
+
+	handle_coder_req(
+		reply.coder,
+		function(res, err)
+			writer.write(
+				reply.writer .. res.text,
+				function(data, err)
+					ui.show_response(
+						{
+							unpack(data),
+							patch = res.patch
+						}
+					)
+				end
+			)
+		end
+
+	)
+
+
+	-- if reply.commands then
+	-- 	vim.api.nvim_buf_create_user_command(
+	-- 		ui.buffer_nr,
+	-- 		'RunTaiCommand',
+	-- 		function()
+	-- 			local out = run_commands(reply.commands)
+	-- 			reply = planner.plan(out)
+	-- 			ui.show_response(reply)
+	-- 		end,
+	-- 		{}
+	-- 	)
+	-- end
 end
 
 function M.process_request(prompt)
 	log.debug("Processing request " .. prompt)
 
-	if config.provider == "mistral" then
-		planner.receive_prompt(
-			prompt,
-			function(reply, err)
-				vim.schedule(function()
-					handle_reply(reply)
-				end)
+	planner.plan(
+		prompt,
+		function(reply, err)
+			if err then
+				log.error("received error from planner: " .. err)
+				return
 			end
-		)
-	else
-		local reply = chat.send(prompt)
-		handle_reply(reply)
-	end
+
+			vim.schedule(function() handle_planner_reply(reply) end)
+		end
+	)
 end
 
 --function M.complete(start)
@@ -167,6 +192,5 @@ end
 --
 --	return reply
 --end
-
 
 return M

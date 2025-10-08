@@ -3,10 +3,25 @@
 local M = {}
 
 -- Import necessary modules
+local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
 
--- System prompt for the planner agent
+local provider
+if config.provider == 'groq' then
+	provider = require('tai.providers.groq')
+elseif config.provider == 'gemini' then
+	provider = require('tai.providers.gemini')
+elseif config.provider == 'local' then
+	provider = require('tai.providers.local')
+elseif config.provider == "mistral" then
+	return M
+elseif config.provider == nil then
+	-- do nothing
+else
+	error('Unknown chat provider: ' .. config.provider)
+end
+
 M.system_prompt = [[
 You are Writer Tai, a writer assistant running inside a Neovim session.
 Your job is to inform the user about the code changes in a professional tone.
@@ -32,10 +47,22 @@ RESPONSE FORMAT
 The only required field is text.
 ]]
 
+function M.write(text, callback)
+    log.info("Writer received prompt: " .. text)
+	provider.request(
+		config.writer_model,
+		M.system_prompt,
+		text,
+		"json",
+		function(data, err) 
+			callback(data, err)
+		end
+	)
+end
+
 -- Function to receive a prompt and request implementation
 function M.receive_prompt(prompt, callback)
     log.info("Planner received prompt: " .. prompt)
-    -- Request implementation from the coder agent using the conversations API
     client.request("POST", 'conversations', {
         agent_id = M.id,
         messages = {

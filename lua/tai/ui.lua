@@ -64,6 +64,9 @@ function M.show_response(fields)
 	log.debug("Showing response")
 
 	local content = "\n----------------------------\n"
+	if fields.error then
+		content = content .. fields.error
+	end
 	if fields.plan and #fields.plan > 0 then
 		content = "--- Plan ------------------------\n\n"
 		for i, p in ipairs(fields.plan) do

@@ -48,6 +48,12 @@ if file then
 		M.summary_model = data.summary_model or M.summary_model
 		M.complete_model = data.complete_model or M.complete_model
 		M.provider = data.provider or M.provider
+		if M.provider == "local" then
+			M.planner_model = data.planner_model
+			M.coder_model = data.coder_model
+			M.patcher_model = data.patcher_model
+			M.writer_model = data.writer_model
+		end
 		if data.allowed_commands then
 			M.allowed_commands = {}
 			-- Convert the list to a map for quick lookup
