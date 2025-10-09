@@ -69,6 +69,10 @@ function M.request(model, think, system, prompt, format, callback)
 	if think ~= nil then
 		body.think = think
 	end
+	if config.options then
+		body.options = config.options
+	end
+
 	local request_body = vim.json.encode(body)
 
 	log.debug("Requesting " .. url .. " with " .. request_body)

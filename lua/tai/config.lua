@@ -1,5 +1,7 @@
 local M = {}
 
+local log = require("tai.log")
+
 M.allowed_commands = {
 	["cat"] = true,
 	["echo"] = true,
@@ -58,6 +60,9 @@ if file then
 			M.coder_thinks = data.coder_thinks or false
 			M.patcher_thinks = data.patcher_thinks or false
 			M.writer_thinks = data.writer_thinks or false
+		end
+		if data.options then
+			M.options = data.options
 		end
 		if data.allowed_commands then
 			M.allowed_commands = {}
