@@ -50,20 +50,26 @@ if file then
 		M.summary_model = data.summary_model or M.summary_model
 		M.complete_model = data.complete_model or M.complete_model
 		M.provider = data.provider or M.provider
-		if M.provider == "local" then
-			M.planner_model = data.planner_model
-			M.coder_model = data.coder_model
-			M.patcher_model = data.patcher_model
-			M.writer_model = data.writer_model
-
-			M.planner_thinks = data.planner_thinks or false
-			M.coder_thinks = data.coder_thinks or false
-			M.patcher_thinks = data.patcher_thinks or false
-			M.writer_thinks = data.writer_thinks or false
-		end
-		if data.options then
-			M.options = data.options
-		end
+		M.planner = {
+			model = data.planner.model,
+			options = data.planner.options,
+			think = data.planner.think or false
+		}
+		M.coder = {
+			model = data.coder.model,
+			options = data.coder.options,
+			think = data.coder.think or false
+		}
+		M.patcher = {
+			model = data.patcher.model,
+			options = data.patcher.options,
+			think = data.patcher.think or false
+		}
+		M.writer = {
+			model = data.writer.model,
+			options = data.writer.options,
+			think = data.writer.think or false
+		}
 		if data.allowed_commands then
 			M.allowed_commands = {}
 			-- Convert the list to a map for quick lookup

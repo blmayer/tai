@@ -25,52 +25,23 @@ local read_tool = {
     }
 }
 
-local planner_response_format = {
-	type = "json_object",
-	json_schema = {
-		name = "tai_response",
-		description = "Response format for the Planner agent",
-		schema = {
-			type = "object",
-			additionalProperties = false,
-			properties = {
-				writer = {
-					type = "string",
-					description = "Response for the writer agent",
-				},
-				coder = {
-					type = "string",
-					description = "Response for the coder agent",
-				},
-			}
-		}
-	}
-}
 
-local history = { }
-
-function M.request(model, think, system, prompt, format, callback)
+function M.request(model_config, messages, format, callback)
 	local url = url .. "/chat"
-	local msg = { role = "user", content = prompt }
-	table.insert(history, msg)
 
 	local body = { 
-		model = model,
-		messages = { 
-			{ role = "system", content = system },
-			unpack(history),
-		},
+		model = model_config.model,
+		messages = messages,
 		stream = false,
-		-- tools = agents.tools,
 	}
 	if format then
 		body.response_format = format
 	end
-	if think ~= nil then
-		body.think = think
+	if model_config.think ~= nil then
+		body.think = model_config.think
 	end
-	if config.options then
-		body.options = config.options
+	if model_config.options then
+		body.options = model_config.options
 	end
 
 	local request_body = vim.json.encode(body)
@@ -103,16 +74,10 @@ function M.request(model, think, system, prompt, format, callback)
 			end
 
 		if parsed.error then
-			table.insert(history, { role = "assistant", content = parsed.error })
 			return { error = parsed.error }
 		end
 
 		local message = parsed.message.content
-		if not format then
-			table.insert(history, { role = "assistant", content = message })
-			return message
-		end
-
 		local fields = {}
 		if message then
 			log.debug("response content: " .. message)
@@ -121,7 +86,6 @@ function M.request(model, think, system, prompt, format, callback)
 				vim.notify("[tai] Failed to decode message: " .. message, vim.log.levels.ERROR)
 				return { error = "[tai] Failed to decode message: " .. message }
 			end
-			table.insert(history, { role = "assistant", content = fields[1] })
 		end
 		callback(fields, nil)
 	end)

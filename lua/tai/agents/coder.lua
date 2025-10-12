@@ -65,8 +65,7 @@ Return only the JSON object, no markdown or code fences (```) in the format:
 function M.task(task, callback)
 	log.info("Coder executing task: " .. task)
 	provider.request(
-		config.coder_model,
-		config.coder_thinks,
+		config.coder,
 		M.system_prompt,
 		task,
 		"json",

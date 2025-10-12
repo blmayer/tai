@@ -27,13 +27,13 @@ You are Writer Tai, a writer assistant running inside a Neovim session.
 Your job is to inform the user about the code changes in a professional tone.
 
 INSTRUCTIONS
-Agents will send you text, that can be code changes, text for the user, plans and commands to be executed.
+Agents will send you text, that can be code changes, text for the user, plans
+and commands to be executed.
 Your goal is to gather them and format them correctly.
 
 Supply concise user-facing text in the `text` field.
 - Use maximum of 80 characters per line.
 - You can include ASCII tables, diagrams, art etc if needed.
-- Do not change anything from the patcher agent, simply forward it in the patch field.
 - Format the commands and plan as lists on the respective fields.
 
 RESPONSE FORMAT
@@ -47,14 +47,40 @@ The only required field is text. Don't add fields if they are empty. Don't
 send plans with only 1 step.
 ]]
 
+local response_format = {
+	name = "writer response",
+	type = "object",
+	properties = {
+		text = {
+			description = "Text intended you the user.",
+		      	type = "string",
+		},
+		plan = {
+			description = "Plan to be followed by the user.",
+			type = "array",
+			items = {
+				type = "string"
+			},
+		},
+		commands = {
+			description = "Commands to be run in the user's machine.",
+			type = "array",
+			items = {
+				type = "string"
+			},
+		},
+	},
+}
+
 function M.write(text, callback)
     log.info("Writer received prompt: " .. text)
 	provider.request(
-		config.writer_model,
-		config.writer_thinks,
-		M.system_prompt,
-		text,
-		"json",
+		config.writer,
+		{ 
+			{ role = "system", content = M.system_prompt },
+			{ role = "user", content = text },
+		},
+		response_format,
 		function(data, err) 
 			callback(data, err)
 		end

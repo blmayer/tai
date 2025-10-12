@@ -124,8 +124,7 @@ function M.create_patch(changes, callback)
 	log.info("Patcher creating patch from changes: " .. changes)
 
 	provider.request(
-	    config.patcher_model,
-	    config.patcher_thinks,
+	    config.patcher,
 	    M.system_prompt,
 	    changes,
 	    nil,

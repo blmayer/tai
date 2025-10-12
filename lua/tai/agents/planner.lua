@@ -29,7 +29,6 @@ end
 
 M.system_prompt = [[
 You are Planner Tai, a coding assistant running inside a Neovim session.
-
 Your job is to coordinate agents to fullfil the user's prompts.
 
 INSTRUCTIONS
@@ -37,6 +36,8 @@ Users will send coding tasks or questions, your goal is to fullfill them with su
 You have access to other agents that will assist you to reach the user's goals:
 - coder: knows how to code, it will take your instructions and implement them.
 - writer: will respond to the user using the correct format.
+For general question that don't need code changes, elaborate the explanation
+and use the writer agent.
 After your response the other agents will be called.
 
 UNDERSTANDING NEEDED CODE CHANGES
@@ -51,27 +52,39 @@ For solutions that will need many steps that includes interaction from the user 
 a step by step plan and send it to the writer agent, so it will forward it to the user.
 Use the plan created to guide you and the agents towards the goal.
 
-USING THE WRITER AGENT
-Write to the writer agent whatever you want the user to receive.
-
 RESPONSE FORMAT
 Return only a JSON object, no code fences(```), no markdown, with the format:
 {
-	"coder": "instructions to the coder agent",
+	"coder": "instructions to the coder agent (optional)",
 	"writer": "instructions or text to the writer agent (required)"
 }
 Note: don't add the field "coder" if unecessary.
 ]]
 
+local history = { }
+
 function M.plan(prompt, callback)
 	log.info("Planner received prompt: " .. prompt)
+
+	local messages = { 
+		{ role = "system", content = M.system_prompt },
+		unpack(history),
+	}
+	local msg = { role = "user", content = prompt }
+	table.insert(history, msg)
+
 	provider.request(
-		config.planner_model,
-		config.planner_thinks,
-		M.system_prompt,
-		prompt, 
+		config.planner,
+		messages,
 		"json",
 		function(data, err) 
+			table.insert(
+				history,
+				{
+					role = "assistant",
+					content = vim.json.encode(data)
+				}
+			)
 			callback(data, err)
 		end
 	)
