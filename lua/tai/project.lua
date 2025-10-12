@@ -10,6 +10,7 @@ local patcher = require("tai.agents.patcher")
 local writer = require("tai.agents.writer")
 local command = require("tai.command")
 local ui = require("tai.ui")
+local tools = require("tai.tools")
 
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
@@ -24,31 +25,6 @@ function M.init()
 	agents.init()
 end
 
-local function run_tool_calls(cmds)
-	log.debug("Running tools")
-	local output = ""
-
-	for _, cmd in ipairs(cmds) do
-		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
-		local args = vim.json.decode(cmd["function"].arguments)
-		local file = io.open(args.file_path, "r")
-		if file then
-			local content = file:read("*all")
-			file:close()
-
-			local numbered_lines = {}
-			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
-				table.insert(numbered_lines, string.format("%d: %s", i, line))
-			end
-			local numbered_content = table.concat(numbered_lines, "\n")
-			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
-		else
-			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
-		end
-	end
-
-	return output
-end
 
 local function run_commands(cmds)
 	local output = ""
@@ -112,7 +88,7 @@ local function handle_planner_reply(reply)
 
 	if reply.tools then
 		ui.show_tool_calls(reply.tools)
-		local out = run_tool_calls(reply.tools)
+		local out = tools.run(reply.tools)
 		reply = planner.plan("Result of tool calls:\n" .. out, function(data, err) end)
 		goto continue
 	end
@@ -126,6 +102,7 @@ local function handle_planner_reply(reply)
 		return
 	end
 
+	-- planner called coder
 	handle_coder_req(
 		reply.coder,
 		function(res, err)
