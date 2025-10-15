@@ -53,21 +53,25 @@ if file then
 		M.planner = {
 			model = data.planner.model,
 			options = data.planner.options,
+			tools = data.planner.tools,
 			think = data.planner.think or false
 		}
 		M.coder = {
 			model = data.coder.model,
 			options = data.coder.options,
+			tools = data.coder.tools,
 			think = data.coder.think or false
 		}
 		M.patcher = {
 			model = data.patcher.model,
 			options = data.patcher.options,
+			tools = data.patcher.tools,
 			think = data.patcher.think or false
 		}
 		M.writer = {
 			model = data.writer.model,
 			options = data.writer.options,
+			tools = data.writer.tools,
 			think = data.writer.think or false
 		}
 		if data.allowed_commands then

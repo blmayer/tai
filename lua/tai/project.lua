@@ -15,7 +15,6 @@ local tools = require("tai.tools")
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
 
-
 function M.init()
 	if not config.root or config.skip_cache then
 		return
@@ -84,13 +83,19 @@ end
 
 local function handle_planner_reply(reply)
 	log.info("handling reply")
-	::continue::
 
 	if reply.tools then
 		ui.show_tool_calls(reply.tools)
-		local out = tools.run(reply.tools)
-		reply = planner.plan("Result of tool calls:\n" .. out, function(data, err) end)
-		goto continue
+		planner.run_tools(
+			reply.tools,
+			function(data, err)
+				if err then
+					ui.show_response({ error = err })
+					return
+				end
+				return handle_planner_reply(data)
+			end
+		)
 	end
 
 	if not reply.coder then

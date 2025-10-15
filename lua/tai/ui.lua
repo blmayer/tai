@@ -97,7 +97,8 @@ function M.show_tool_calls(calls)
 
 	local content = "\n--- tool calls ---------------------\n"
 	for _, call in ipairs(calls) do
-		content = content .. "> Sending output of " .. call["function"].name .. "\n"
+		local args = table.concat(call["function"].arguments, " ")
+		content = content .. "> Calling " .. call["function"].name .. " " .. args .. "\n"
 	end
 	content = content .. "____________________________________\n"
 

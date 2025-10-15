@@ -4,35 +4,23 @@ local config = require("tai.config")
 local log = require("tai.log")
 local json = vim.json
 local uv = vim.uv
+local tools = require("tai.tools")
 
 local url = 'http://localhost:11434/api'
 
-local read_tool = {
-    type = "function",
-    ["function"] = {
-      name = "read_file",
-      description = "Reads the content of a file from the file system.",
-      parameters = {
-        type = "object",
-        properties = {
-          file_path = {
-            type = "string",
-            description = "The path to the file to read."
-          }
-        },
-        required = {"file_path"}
-      }
-    }
-}
-
-
 function M.request(model_config, messages, format, callback)
 	local url = url .. "/chat"
-
+	local tools = vim.tbl_map(
+		function(t)
+			return tools[t]
+		end,
+		model_config.tools or {}
+	)
 	local body = { 
 		model = model_config.model,
 		messages = messages,
 		stream = false,
+		tools = tools,
 	}
 	if format then
 		body.response_format = format
@@ -79,7 +67,7 @@ function M.request(model_config, messages, format, callback)
 
 		local message = parsed.message.content
 		local fields = {}
-		if message then
+		if message and message ~= "" then
 			log.debug("response content: " .. message)
 			fields = vim.json.decode(message)
 			if not fields then
@@ -87,6 +75,7 @@ function M.request(model_config, messages, format, callback)
 				return { error = "[tai] Failed to decode message: " .. message }
 			end
 		end
+		fields["tools"] = parsed.message.tool_calls
 		callback(fields, nil)
 	end)
 end

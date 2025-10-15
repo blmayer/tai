@@ -2,13 +2,31 @@ local M = {}
 
 local log = require('tai.log')
 
+M.read_file = {
+	type = "function",
+	["function"] = {
+		name = "read_file",
+		description = "Reads the content of a file from the file system.",
+		parameters = {
+			type = "object",
+			properties = {
+				file_path = {
+					type = "string",
+					description = "The path to the file to read."
+				}
+			},
+			required = {"file_path"}
+		}
+	}
+}
+
 function M.run(cmds)
 	log.debug("Running tools")
 	local output = ""
 
 	for _, cmd in ipairs(cmds) do
 		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
-		local args = vim.json.decode(cmd["function"].arguments)
+		local args = cmd["function"].arguments
 		local file = io.open(args.file_path, "r")
 		if file then
 			local content = file:read("*all")

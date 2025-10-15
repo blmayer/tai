@@ -6,6 +6,7 @@ local M = {}
 local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
+local tools = require('tai.agents.tools')
 
 if not config.root then
 	return M
@@ -32,7 +33,7 @@ You are Planner Tai, a coding assistant running inside a Neovim session.
 Your job is to coordinate agents to fullfil the user's prompts.
 
 INSTRUCTIONS
-Users will send coding tasks or questions, your goal is to fullfill them with success.
+Users will send coding tasks or questions, your goal is to fullfil them with success.
 You have access to other agents that will assist you to reach the user's goals:
 - coder: knows how to code, it will take your instructions and implement them.
 - writer: will respond to the user using the correct format.
@@ -52,6 +53,10 @@ For solutions that will need many steps that includes interaction from the user 
 a step by step plan and send it to the writer agent, so it will forward it to the user.
 Use the plan created to guide you and the agents towards the goal.
 
+USING TOOLS
+You have access to tools, they help you understand the problem and the
+environment. If you use them make sure to keep track of the goal.
+
 RESPONSE FORMAT
 Return only a JSON object, no code fences(```), no markdown, with the format:
 {
@@ -66,12 +71,42 @@ local history = { }
 function M.plan(prompt, callback)
 	log.info("Planner received prompt: " .. prompt)
 
+	local msg = { role = "user", content = prompt }
+	table.insert(history, msg)
+
 	local messages = { 
 		{ role = "system", content = M.system_prompt },
 		unpack(history),
 	}
-	local msg = { role = "user", content = prompt }
+
+	provider.request(
+		config.planner,
+		messages,
+		"json",
+		function(data, err) 
+			table.insert(
+				history,
+				{
+					role = "assistant",
+					content = vim.json.encode(data)
+				}
+			)
+			callback(data, err)
+		end
+	)
+end
+
+function M.run_tools(tools, callback)
+	log.info("Planner running tooks")
+
+	local out = tools.run(reply.tools)
+	local msg = { role = "tool", content = out }
 	table.insert(history, msg)
+
+	local messages = { 
+		{ role = "system", content = M.system_prompt },
+		unpack(history),
+	}
 
 	provider.request(
 		config.planner,
