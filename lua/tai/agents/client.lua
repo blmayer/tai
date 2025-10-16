@@ -20,7 +20,7 @@ if config.provider == 'local' then
 else
 	-- Default to mistral
 	API_URL = 'https://api.mistral.ai/v1/'
-	curl_req = { table.unpack(curl_req), '-H', 'Authorization: Bearer ' .. API_KEY }
+	curl_req = { unpack(curl_req), '-H', 'Authorization: Bearer ' .. API_KEY }
 end
 
 -- Function to make an asynchronous request to the Mistral API

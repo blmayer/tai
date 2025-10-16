@@ -3,14 +3,12 @@ local M = {}
 local log = require('tai.log')
 local config = require("tai.config")
 local agents = require("tai.agents")
-local library = require("tai.library")
 local planner = require("tai.agents.planner")
 local coder = require("tai.agents.coder")
 local patcher = require("tai.agents.patcher")
 local writer = require("tai.agents.writer")
 local command = require("tai.command")
 local ui = require("tai.ui")
-local tools = require("tai.tools")
 
 local completion_prompt =
 "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
@@ -67,13 +65,13 @@ local function handle_coder_req(req, cb)
 	coder.task(
 		req,
 		function(data, err)
-			if data.patcher then
-				log.debug("coder reply to patcher: " .. data.patcher)
+			if data.content.patcher then
+				log.debug("coder reply to patcher: " .. data.content.patcher)
 				patcher.create_patch(
-					data.patcher,
+					data.content.patcher,
 					function(p, err) 
 						log.debug("patcher reply: " .. p)
-						cb(data.writer, p)
+						cb(data.content.writer, p)
 					end
 				)
 			end
@@ -84,10 +82,10 @@ end
 local function handle_planner_reply(reply)
 	log.info("handling reply")
 
-	if reply.tools then
-		ui.show_tool_calls(reply.tools)
+	if reply.tool_calls then
+		ui.show_tool_calls(reply.tool_calls)
 		planner.run_tools(
-			reply.tools,
+			reply.tool_calls,
 			function(data, err)
 				if err then
 					ui.show_response({ error = err })
@@ -96,23 +94,36 @@ local function handle_planner_reply(reply)
 				return handle_planner_reply(data)
 			end
 		)
+		return
 	end
 
-	if not reply.coder then
-		log.debug("calling writer after planner: " .. reply.writer)
+	if not reply.content.writer then
+		log.error("planner did not sent writer field")
+		ui.show_response({ error = "[tai] Planner did not sent writer field" })
+		return
+	end
+	if not reply.content.coder then
+		log.debug("calling writer after planner: " .. reply.content.writer)
 		writer.write(
-			reply.writer,
-			function(data, err) ui.show_response(data) end
+			reply.content.writer,
+			function(data, err)
+				if err then
+					log.error("writer gave error: " .. err)
+					ui.show_response({ error = err })
+					return
+				end
+				ui.show_response(data.content)
+			end
 		)
 		return
 	end
 
 	-- planner called coder
 	handle_coder_req(
-		reply.coder,
+		reply.content.coder,
 		function(res, err)
 			writer.write(
-				reply.writer .. res.text,
+				reply.content.writer .. res.text,
 				function(data, err)
 					ui.show_response(
 						{

@@ -5,7 +5,6 @@ local M = {}
 -- Import necessary modules
 local config = require('tai.config')
 local log = require('tai.log')
-local client = require('tai.agents.client')
 
 if not config.root then
 	return M
@@ -124,11 +123,13 @@ function M.create_patch(changes, callback)
 	log.info("Patcher creating patch from changes: " .. changes)
 
 	provider.request(
-	    config.patcher,
-	    M.system_prompt,
-	    changes,
-	    nil,
-	    function(data, err) callback(data, err) end
+	    	config.patcher,
+		{
+			{ role = "system", content = M.system_prompt },
+	    		{ role = "user", content = changes },
+		},
+	    	nil,
+	    	function(data, err) callback(data, err) end
 	)
 end
 

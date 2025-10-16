@@ -3,17 +3,17 @@ local M = {}
 local log = require("tai.log")
 
 M.allowed_commands = {
-	["cat"] = true,
-	["echo"] = true,
-	["date"] = true,
-	["tail"] = true,
-	["head"] = true,
-	["grep"] = true,
-	["cut"] = true,
-	["ls"] = true,
-	["wc"] = true,
-	["make"] = true,
-	["sort"] = true
+	"cat",
+	"echo",
+	"date",
+	"tail",
+	"head",
+	"grep",
+	"cut",
+	"ls",
+	"wc",
+	"make",
+	"sort"
 }
 
 local function find_tai_root()
@@ -45,7 +45,10 @@ local file = io.open(M.root .. "/.tai", "r")
 if file then
 	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
 	file:close()
-	if ok and data and type(data) == 'table' then
+	if not ok then
+		log.error("failed to read config, using defaults")
+	end
+	if data and type(data) == 'table' then
 		M.model = data.model or M.model
 		M.summary_model = data.summary_model or M.summary_model
 		M.complete_model = data.complete_model or M.complete_model
@@ -75,11 +78,7 @@ if file then
 			think = data.writer.think or false
 		}
 		if data.allowed_commands then
-			M.allowed_commands = {}
-			-- Convert the list to a map for quick lookup
-			for _, cmd in ipairs(data.allowed_commands) do
-				M.allowed_commands[cmd] = true
-			end
+			M.allowed_commands = data.allowed_commands
 		end
 		M.skip_cache = data.skip_cache or M.skip_cache
 	end
