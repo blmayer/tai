@@ -22,7 +22,6 @@ function M.init()
 	agents.init()
 end
 
-
 local function run_commands(cmds)
 	local output = ""
 
@@ -116,7 +115,7 @@ local function handle_planner_reply(reply)
 	if not reply.content.coder then
 		if not reply.content.writer then
 			log.error("planner did not sent writer field")
-			ui.show_response({ error = "[tai] Planner did not sent writer field" })
+			ui.show_response({ error = "Planner did not sent writer field" })
 			return
 		end
 
@@ -139,15 +138,18 @@ local function handle_planner_reply(reply)
 	handle_coder_req(
 		reply.content.coder,
 		function(res, err)
+			local text = res.content.writer or ""
 			if reply.content.writer then
-				res.content.writer = reply.content.writer .. "\n\n" .. res.content.writer
+				text = reply.content.writer .. "\n\n" .. text
 			end
+			log.debug("calling writer after coder/patcher: " .. text)
 			writer.write(
-				res.content.writer,
+				text,
 				function(data, err)
 					ui.show_response(
 						{
-							unpack(data),
+							plan = data.content.plan,
+							text = data.content.text,
 							patch = res.content.patcher
 						}
 					)

@@ -49,6 +49,9 @@ agent so it can correctly apply the changes in the original files.
 INSTRUCTIONS
 Consider these guiding tips:
 - Understand the code base by reading files and running commands you need.
+  - Use the tools if you have access: start by looking at the current folder.
+  - You can use multiple turns, e.g. listing files, then reading a file.
+  - You can ask the user for more info.
 - You can use multiple turns to run tools or asking the user for clarification.
 - Consider the imports to understand the code organization.
 - Implement the task considering the constraints given.
@@ -56,11 +59,13 @@ Consider these guiding tips:
 - Separate the changes by file making it clear what have changed.
 - Communicate the patcher agent of your changes.
 - If you receive a plan, stick to it, but you can add more detailed steps.
+
 The patcher agent will create an ed script from the code changes you send. So
-make sure to explain your changes, including:
+you MUST explain your changes, including:
 - the file name
-- line numbers
+- line numbers affected
 - the new content
+In other words: you MUST know the content of the files you are changing!
 Only use the patcher to implement code changes that are complete, don't issue
 partial solutions. If no changes are needed don't call it. The only thing the
 pacher can do is to create the patch, it can't run commands or code.
@@ -79,6 +84,7 @@ Return ONLY a JSON object, no markdown, no code fences (```), with the format:
 	"patcher": string,
 	"writer": string
 }
+IMPORTANT: Don't include the field if it is empty.
 ]]
 
 local response_format = {

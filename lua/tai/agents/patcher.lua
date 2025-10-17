@@ -33,6 +33,7 @@ patches in ed script format from code changes.
 INSTRUCTIONS
 You will receive a list of code changes, you job is to correctly format them in
 a **VALID** ed script that the user can apply with `ed -s < patch`.
+If there are no changes output nothing.
 
 OUTPUT FORMAT
 **IMPORTANT**: The content **MUST** be **VALID** ed script.
@@ -40,7 +41,7 @@ OUTPUT FORMAT
 - **ALWAYS** finish the script with `w` and `q`. Intermediaries don't need `q`.
 - Make sure you get the line numbers correct.
 - Generally preffer using line numbers.
-- Output ONLY the script, don't add prose, preambles or code fences (```)
+- Output ONLY the script, don't add prose, preambles or code fences (```).
 
 ED FORMAT
 

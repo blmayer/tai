@@ -38,22 +38,23 @@ function M.request(model_config, messages, format, callback)
 			'-d', request_body
 		}, { text = true }, function(obj)
 			if obj.code ~= 0 then
-				callback(nil, "LLM request failed: " .. obj.stderr)
+				local err_msg = "curl returned code " .. obj.code
+				callback(nil, err_msg)
 				return
 			end
 
 			log.debug("Request response: " .. obj.stdout)
 			if not obj.stdout or obj.stdout == "" then
-				return callback(nil, "[tai] Received empty response from Gemini")
+				return callback(nil, "Received empty response from Gemini")
 			end
 
 			local parsed = vim.json.decode(obj.stdout)
 			if not parsed then
-				return callback(nil, "[tai] Failed to decode JSON: " .. parsed)
+				return callback(nil, "Failed to decode JSON: " .. parsed)
 			end
 
 			if #parsed > 0 and parsed[1].error then
-				return callback(nil, "[tai] Received error: " .. parsed[1].error.message)
+				return callback(nil, "Received error: " .. parsed[1].error.message)
 			end
 
 			if parsed.error then
@@ -68,7 +69,7 @@ function M.request(model_config, messages, format, callback)
 					log.debug("parsing JSON content")
 					fields.content = vim.json.decode(content)
 					if not fields.content then
-						return callback(nil, "[tai] Failed to decode message")
+						return callback(nil, "Failed to decode message")
 					end
 				else
 					fields.content = content

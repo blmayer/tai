@@ -63,30 +63,24 @@ end
 function M.show_response(fields)
 	log.debug("Showing response")
 
-	local content = "\n----------------------------\n"
+	local content = "\n---------------------------------\n"
 	if fields.error then
-		content = content .. fields.error
+		content = content .. "[tai] " .. fields.error
 	end
 	if fields.plan and #fields.plan > 0 then
-		content = "--- Plan ------------------------\n\n"
+		content = "--- Plan -----------------------------\n\n"
 		for i, p in ipairs(fields.plan) do
 			content = content .. i .. ". " .. p .. "\n"
 		end
-		content = content .. "___________________________\n\n"
+		content = content .. "__________________________________\n\n"
 	end
 	if fields.text then
 		content = content .. fields.text
 	end
-	if fields.commands and #fields.commands > 0 then
-		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n"
-		for _, cmd in ipairs(fields.commands) do
-			content = content .. cmd .. "\n\n"
-		end
-	end
 	if fields.patch then
-		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+		content = content .. "\n--- Patch (use :ApplyTaiPatch to apply) ---------\n\n" .. fields.patch
 	end
-	content = content .. "\n\n"
+	content = content .. "\n"
 
 	M.append_to_buffer(content)
 	M.open()
@@ -95,7 +89,7 @@ end
 function M.show_tool_calls(calls)
 	log.debug("Showing tool calls")
 
-	local content = "\n--- tool calls ---------------------\n"
+	local content = "\n--- Tool calls ------------------------\n"
 	for _, call in ipairs(calls) do
 		local args = ""
 		for k, v in pairs(call["function"].arguments) do
@@ -103,7 +97,7 @@ function M.show_tool_calls(calls)
 		end
 		content = content .. "> Calling " .. call["function"].name .. " " .. args .. "\n"
 	end
-	content = content .. "____________________________________\n"
+	content = content .. "_______________________________________\n"
 
 	M.append_to_buffer(content)
 	M.open()

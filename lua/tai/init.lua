@@ -27,7 +27,7 @@ function M.prompt_input()
 			ui.open()
 		end)
 
-		project.process_request(prompt)
+		project.process_request(input)
 	end)
 end
 
