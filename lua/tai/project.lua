@@ -83,9 +83,9 @@ local function handle_coder_req(req, cb)
 				log.debug("coder reply to patcher: " .. reply.content.patcher)
 				patcher.create_patch(
 					reply.content.patcher,
-					function(p, err) 
-						log.debug("patcher reply: " .. p)
-						cb({ content = { writer = reply.content.writer, patcher = p } }, nil)
+					function(out, err) 
+						log.debug("patcher reply: " .. out.content)
+						cb({ content = { writer = reply.content.writer, patcher = out.content } }, nil)
 					end
 				)
 				return

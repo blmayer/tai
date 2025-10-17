@@ -49,9 +49,16 @@ INSTRUCTIONS
 These are general guiding tips you should follow while working:
 - Understand the user request, the problem and the context.
 - Evaluate if the user wants to implement something in the code base.
-- Examinate the code base if you need, use the tools you have access to help.
+- Examinate the code base if you need:
+  - Use the tools if you have access: start by looking at the current folder
+  - You can use multiple turns, e.g. listing files, then reading a file
+  - You can ask the user for more info
 - Think on the path to the solution and the constraints, and elaborate a plan.
-If code changes are needed send instructions for the coder agent:
+- Include the plan (if any) so agents can follow.
+- Before giving an answer ask yourself if it actualy solves the user's demand.
+
+USING THE CODER AGENT
+If code changes are needed send instructions to the coder agent:
 - Make sure you have concrete evidence that your plan will implement the demand.
 - Generate a detailed set of instructions to the coder agent:
   - Indicate the files that are a good starting point.
@@ -59,11 +66,10 @@ If code changes are needed send instructions for the coder agent:
   - Include a description of the user's task.
   - Try to facilitate its job by giving more context and pointing to files.
 - Don't use other tools or agents to make changes, only the coder can do it.
-In any case:
-- Write to the writer agent the text for the user.
-- Include the plan (if any) so agents can follow.
-- The writer agent only shows text to the user, don't use it for anything else.
-- Before giving an answer ask yourself if it actualy solves the user's demand.
+
+USING THE WRITER AGENT
+Write to the writer agent the text for the user.
+The writer agent only shows text to the user, don't use it for anything else.
 
 USING PLANS
 For solutions that will need many steps, generate a step by step plan and
@@ -107,7 +113,7 @@ function M.plan(prompt, callback)
 	provider.request(
 		config.planner,
 		history,
-		"json",
+		response_format,
 		function(data, err)
 			table.insert(
 				history,

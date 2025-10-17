@@ -33,46 +33,50 @@ function M.request(model_config, messages, format, callback)
 	log.debug("Requesting " .. url .. " with " .. request_body)
 	vim.system(
 		{
-		'curl', '-s', '-X', "POST", url,
-		'-H', 'Content-Type: application/json',
-		'-d', request_body
-	}, { text = true }, function(obj)
-		if obj.code ~= 0 then
-			callback(nil, "LLM request failed: " .. obj.stderr)
-			return
-		end
-
-		log.debug("Request response: " .. obj.stdout)
-		if not obj.stdout or obj.stdout == "" then
-			return callback(nil, "[tai] Received empty response from Gemini")
-		end
-
-		local parsed = vim.json.decode(obj.stdout)
-		if not parsed then
-			return callback(nil, "[tai] Failed to decode JSON: " .. parsed)
-		end
-
-		if #parsed > 0 and parsed[1].error then
-			return callback(nil, "[tai] Received error: " .. parsed[1].error.message)
+			'curl', '-s', '-X', "POST", url,
+			'-H', 'Content-Type: application/json',
+			'-d', request_body
+		}, { text = true }, function(obj)
+			if obj.code ~= 0 then
+				callback(nil, "LLM request failed: " .. obj.stderr)
+				return
 			end
 
-		if parsed.error then
-			return callback(nil, parsed.error)
-		end
-
-		local content = parsed.message.content
-		local fields = {}
-		if content and content ~= "" then
-			log.debug("response content: " .. content)
-			fields.content = vim.json.decode(content)
-			if not fields.content then
-				return callback(nil, "[tai] Failed to decode message: " .. content)
+			log.debug("Request response: " .. obj.stdout)
+			if not obj.stdout or obj.stdout == "" then
+				return callback(nil, "[tai] Received empty response from Gemini")
 			end
-		end
-		fields.tool_calls = parsed.message.tool_calls
-		callback(fields, nil)
-	end)
+
+			local parsed = vim.json.decode(obj.stdout)
+			if not parsed then
+				return callback(nil, "[tai] Failed to decode JSON: " .. parsed)
+			end
+
+			if #parsed > 0 and parsed[1].error then
+				return callback(nil, "[tai] Received error: " .. parsed[1].error.message)
+			end
+
+			if parsed.error then
+				return callback(nil, parsed.error)
+			end
+
+			local content = parsed.message.content
+			local fields = {}
+			if content and content ~= "" then
+				log.debug("response content: " .. content)
+				if format ~= nil then
+					log.debug("parsing JSON content")
+					fields.content = vim.json.decode(content)
+					if not fields.content then
+						return callback(nil, "[tai] Failed to decode message")
+					end
+				else
+					fields.content = content
+				end
+			end
+			fields.tool_calls = parsed.message.tool_calls
+			callback(fields, nil)
+		end)
 end
 
 return M
-

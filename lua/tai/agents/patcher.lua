@@ -40,6 +40,7 @@ OUTPUT FORMAT
 - **ALWAYS** finish the script with `w` and `q`. Intermediaries don't need `q`.
 - Make sure you get the line numbers correct.
 - Generally preffer using line numbers.
+- Output ONLY the script, don't add prose, preambles or code fences (```)
 
 ED FORMAT
 
