@@ -19,7 +19,7 @@ function M.request(model_config, messages, format, callback)
 		tools = agent_tools,
 	}
 	if format then
-		body.response_format = format
+		body.format = format
 	end
 	if model_config.think ~= nil then
 		body.think = model_config.think

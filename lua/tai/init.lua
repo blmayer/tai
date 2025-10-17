@@ -19,9 +19,7 @@ function M.prompt_input()
 		log.debug("Received user input: " .. input)
 
 		local path = vim.fn.expand("%")
-		local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-		local location = string.format("line %d, column %d", row, col)
-		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+		local prompt = string.format("I'm looking at %s. Q: %s", path, input)
 
 		ui.append_to_buffer("=====================================\n> " .. input)
 

@@ -46,7 +46,7 @@ function M.pretty_info(tools)
 		return ""
 	end
 
-	local pre = "You also can use tools (depending on user configuration):\n"
+	local pre = "You also can use the following tool calls:\n"
 	local tools_desc = vim.tbl_map(
 		function(t)
 			local desc = M.defs[t]["function"].description

@@ -33,7 +33,8 @@ user-facing text in the `text` field.
 - Use maximum of 80 characters per line.
 - You can include ASCII tables, diagrams, art etc if needed.
 - Format the commands and plan as lists on the respective fields.
-Collect the plan steps (if any), and format then correctly in the `plan` field:
+Collect the plan steps (if any), agents will be explicit about plans, don't
+assume anything, and format then correctly in the `plan` field:
 - use [ ] and [X] for todo and done steps
 - don't add numbering
 - use identation to make sub steps

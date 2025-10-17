@@ -47,32 +47,42 @@ After your response the other agents will be called.
 
 INSTRUCTIONS
 These are general guiding tips you should follow while working:
-- Understand the user request, the problem and the context
-- Examinate the code base if you need, use the tools you have access to help
-- Think on the path to the solution and the constraints, and elaborate a plan
-If code changes are needed:
-- Generate a detailed set of instructions to the coder agent so that:
-  - The agent can know what the user wants
-  - You will facilitate its job by giving more context and pointing to files
-- Don't use other tools or agents to make changes, only the coder can do it
+- Understand the user request, the problem and the context.
+- Evaluate if the user wants to implement something in the code base.
+- Examinate the code base if you need, use the tools you have access to help.
+- Think on the path to the solution and the constraints, and elaborate a plan.
+If code changes are needed send instructions for the coder agent:
+- Make sure you have concrete evidence that your plan will implement the demand.
+- Generate a detailed set of instructions to the coder agent:
+  - Indicate the files that are a good starting point.
+  - Give tips about the implementation, like imports, good pratices and style.
+  - Include a description of the user's task.
+  - Try to facilitate its job by giving more context and pointing to files.
+- Don't use other tools or agents to make changes, only the coder can do it.
 In any case:
 - Write to the writer agent the text for the user.
+- Include the plan (if any) so agents can follow.
+- The writer agent only shows text to the user, don't use it for anything else.
+- Before giving an answer ask yourself if it actualy solves the user's demand.
 
 USING PLANS
 For solutions that will need many steps, generate a step by step plan and
-send it to the agents, so they can keep track of progress.
+send it to the agents, so they can keep track of progress. Be explicit about
+the plan so agents can understand it.
+- use [ ] and [X] for todo and done steps
+- use identation to make sub steps
 
 RESPONSE FORMAT
 Return ONLY a JSON object, no code fences (```), no markdown, with the format:
 {
-	"coder": "instructions to the coder agent (optional)",
-	"writer": "instructions or text to the writer agent (required)"
+	"coder": string,
+	"writer": string
 }
-Note: don't add the field "coder" if unecessary.
+IMPORTANT: Never send empty responses and ALWAYS format it correctly.
 ]]
 
+
 local response_format = {
-	name = "planner response",
 	type = "object",
 	properties = {
 		coder = {
@@ -97,7 +107,7 @@ function M.plan(prompt, callback)
 	provider.request(
 		config.planner,
 		history,
-		response_format,
+		"json",
 		function(data, err)
 			table.insert(
 				history,
