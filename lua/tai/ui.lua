@@ -91,11 +91,10 @@ function M.show_tool_calls(calls)
 
 	local content = "\n--- Tool calls ------------------------\n"
 	for _, call in ipairs(calls) do
-		local args = ""
+		content = content .. "> Calling " .. call["function"].name .. "\n"
 		for k, v in pairs(call["function"].arguments) do
-			args = args .. k .. ": " .. v .. " "
+			content = content .. "\t" .. k .. ": " .. v .. "\n"
 		end
-		content = content .. "> Calling " .. call["function"].name .. " " .. args .. "\n"
 	end
 	content = content .. "_______________________________________\n"
 

@@ -7,7 +7,7 @@ local planner = require("tai.agents.planner")
 local coder = require("tai.agents.coder")
 local patcher = require("tai.agents.patcher")
 local writer = require("tai.agents.writer")
-local command = require("tai.command")
+local all_rounder = require("tai.agents.all_rounder")
 local ui = require("tai.ui")
 
 local completion_prompt =
@@ -20,26 +20,6 @@ function M.init()
 	log.info("Starting Tai, provider " .. config.provider)
 
 	agents.init()
-end
-
-local function run_commands(cmds)
-	local output = ""
-
-	for _, cmd in ipairs(cmds) do
-		log.debug("Running command `" .. cmd .. "`")
-		if not command.validate(cmd, config.allowed_commands) then
-			output = "[tai] Command " .. cmd .. " is not allowed"
-		end
-
-		local out = command.run(cmd)
-		if out then
-			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
-		else
-			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
-		end
-	end
-
-	return output
 end
 
 local function apply_patch(patch)
@@ -187,6 +167,44 @@ function M.process_request(prompt)
 			end
 
 			vim.schedule(function() handle_planner_reply(reply) end)
+		end
+	)
+end
+
+local function handle_chat_reply(reply)
+	log.info("handling chat reply")
+
+	if reply.tool_calls then
+		ui.show_tool_calls(reply.tool_calls)
+		all_rounder.run_tools(
+			reply.tool_calls,
+			function(data, err)
+				if err then
+					ui.show_response({ error = err })
+					return
+				end
+				return handle_chat_reply(data)
+			end
+		)
+		return
+	end
+
+	ui.show_response({ text = reply.content })
+end
+
+function M.chat(prompt)
+	log.debug("Processing chat request " .. prompt)
+
+	all_rounder.task(
+		prompt,
+		function(reply, err)
+			if err then
+				log.error("received error from planner: " .. err)
+				ui.show_response({ error = err })
+				return
+			end
+
+			vim.schedule(function() handle_chat_reply(reply) end)
 		end
 	)
 end
