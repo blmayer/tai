@@ -183,6 +183,23 @@ local function run_command(cmd)
 	return output
 end
 
+local function apply_patch(patch)
+	local real = io.popen("ed -s 2>&1", "w")
+	if not real then
+		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
+		return
+	end
+
+	real:write(patch)
+	local output = real:read("*all")
+	real:close()
+
+	if output then
+		log.debug("Patch application output: " .. output)
+	end
+	vim.api.nvim_command("checktime")
+end
+
 function M.run(cmd)
 	log.debug("Running tool call")
 
@@ -199,6 +216,11 @@ function M.run(cmd)
 			return "[tai] missing command argument"
 		end
 		return run_command(args.command)
+	elseif tool == "patch" then
+		if not args.changes then
+			return "[tai] missing changes argument"
+		end
+		return apply_patch(args.changes)
 	end
 
 	return "[tai] Unknown tool `" .. tool .. "`"

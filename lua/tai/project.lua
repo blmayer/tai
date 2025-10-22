@@ -22,23 +22,6 @@ function M.init()
 	agents.init()
 end
 
-local function apply_patch(patch)
-	local real = io.popen("ed -s 2>&1", "w")
-	if not real then
-		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
-		return
-	end
-
-	real:write(patch)
-	local output = real:read("*all")
-	real:close()
-
-	if output then
-		log.debug("Patch application output: " .. output)
-	end
-	vim.api.nvim_command("checktime")
-end
-
 local function handle_coder_req(req, cb)
 	log.debug("handling coder request: " .. req)
 	coder.task(
