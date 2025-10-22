@@ -26,7 +26,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Creates a patcher from the given changes, please separate them by file, use line numbers and show the new content.",
+			"Creates a patch from the given changes, please separate them by file, use line numbers and show the new content.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -44,7 +44,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "run",
-			description = "Runs commands in a shell and returns the output.",
+			description = "Runs commands in a shell in the current folder and returns the output. Only use relative paths.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -87,7 +87,7 @@ local function read_file(file_path)
 
 	local file = io.open(file_path, "r")
 	if not file then
-		return "[tai] File " .. file_path .. " not found"
+		return "[tai] File `" .. file_path .. "` not found"
 	end
 
 	local content = file:read("*all")
@@ -100,7 +100,7 @@ local function read_file(file_path)
 	local numbered_content = table.concat(numbered_lines, "\n")
 
 	log.debug("read_file output: " .. numbered_content)
-	return "[tai] Content of " .. file_path .. ":\n" .. numbered_content .. "\n"
+	return "[tai] Content of `" .. file_path .. "`:\n" .. numbered_content .. "\n"
 end
 
 local function validate_command(cmd)
@@ -148,7 +148,7 @@ local function run_command(cmd)
 
 	if not validate_command(cmd) then
 		log.debug("command is not allowed")
-		return "[tai] Command " .. cmd .. " is not allowed"
+		return "[tai] Command `" .. cmd .. "` is not allowed"
 	end
 
        local env = {}
@@ -174,31 +174,34 @@ local function run_command(cmd)
        handle:close()
 
 	if output then
-		output = "[tai] Output of ```" .. cmd .. "```:\n" .. output
+		output = "[tai] Output of `" .. cmd .. "`:\n" .. output
 	else
-		output = "[tai] ```" .. cmd .. "``` returned null"
+		output = "[tai] `" .. cmd .. "` returned null"
 	end
 	log.debug("command output: " .. output)
 
 	return output
 end
 
-function M.run(cmds)
-	log.debug("Running tool calls")
-	local output = ""
+function M.run(cmd)
+	log.debug("Running tool call")
 
-	for _, cmd in ipairs(cmds) do
-		local tool = cmd["function"]["name"]
-		local args = cmd["function"].arguments
+	local tool = cmd["function"]["name"]
+	local args = cmd["function"].arguments
 
-		if tool == "read_file" then
-			output = output .. read_file(args.file_path)
-		elseif tool == "run" then
-			output = output .. run_command(args.command)
+	if tool == "read_file" then
+		if not args.file_path then
+			return "[tai] missing read_file argument"
 		end
+		return read_file(args.file_path)
+	elseif tool == "run" then
+		if not args.command then
+			return "[tai] missing command argument"
+		end
+		return run_command(args.command)
 	end
 
-	return output
+	return "[tai] Unknown tool `" .. tool .. "`"
 end
 
 return M

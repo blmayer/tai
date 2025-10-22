@@ -53,8 +53,8 @@ function M.request(model_config, messages, format, callback)
 				return callback(nil, "Failed to decode JSON: " .. parsed)
 			end
 
-			if #parsed > 0 and parsed[1].error then
-				return callback(nil, "Received error: " .. parsed[1].error.message)
+			if #parsed > 0 and parsed.error then
+				return callback(nil, "Received error: " .. parsed.error)
 			end
 
 			if parsed.error then

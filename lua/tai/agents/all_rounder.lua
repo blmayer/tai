@@ -32,20 +32,22 @@ You are a Tai, an excelent coding agent. You are in charge of implementing
 the tasks requested in the current project. You will receive high level
 feature requests or general questions. Your job is to address them.
 
-You have full access to the project's code base, and a terminal in your machine.
+You have full access to the code base, and a shell in the project's root.
 
-]] .. tools.pretty_info(config.coder.tools) .. [[
+]] .. tools.pretty_info(config.all_rounder.tools) .. [[
 
 INSTRUCTIONS
-Consider these guiding tips:
-- Understand the code base by reading files and running commands you need.
-  - Consider the imports to understand the code organization.
-  - Use the tools if you have access: start by looking at the current folder.
-  - You can use multiple turns, e.g. listing files, then reading a file.
-  - You can ask the user for more info.
+- Understand the user's request and gather all the knowledge/context needed.
+- Explore the code base before delivering:
+  - Consider the imports to understand the code organization and structure.
+  - Use the tools if you have access to explore the code base and options.
+  - You can ask the user for more info or details of the task.
+  - If you don't know something search for it.
 - Implement the task considering the constraints given.
-- Before finishing ask yourself if you correctly implemented the task.
-- To finish you must create the patch using the patch tool.
+  - Be consistent with the code base's style.
+  - Before finishing ask yourself if you correctly implemented the task.
+- Don't use commands to change files unless explicitly told to.
+- To actually implement the changes you must call the patch tool.
 ]]
 
 local history = { { role = "system", content = M.system_prompt } }
@@ -59,14 +61,15 @@ function M.task(task, callback)
 		history,
 		nil,
 		function(data, err)
-			table.insert(
-				history,
-				{
-					role = "assistant",
-					content = vim.json.encode(data.content),
-					tool_calls = data.tool_calls,
-				}
-			)
+			local response = { role = "assistant" }
+			if err then
+				response.content = err
+			else
+				response.content = vim.json.encode(data.content)
+				response.tool_calls = data.tool_calls
+			end
+			table.insert(history, response)
+
 			callback(data, err)
 		end
 	)
@@ -75,23 +78,27 @@ end
 function M.run_tools(tool_calls, callback)
 	log.info("Agent running tools")
 
-	local out = tools.run(tool_calls)
-	local msg = { role = "tool", content = out }
-	table.insert(history, msg)
+	for _, cmd in ipairs(tool_calls) do
+		local name = cmd["function"]["name"]
+		local out = tools.run(cmd)
+		local msg = { role = "tool", content = out, tool_name = name }
+		table.insert(history, msg)
+	end
 
 	provider.request(
 		config.all_rounder,
 		history,
 		nil,
 		function(data, err)
-			table.insert(
-				history,
-				{
-					role = "assistant",
-					content = vim.json.encode(data.content),
-					tool_calls = data.tool_calls,
-				}
-			)
+			local response = { role = "assistant" }
+			if err then
+				response.content = err
+			else
+				response.content = vim.json.encode(data.content)
+				response.tool_calls = data.tool_calls
+			end
+			table.insert(history, response)
+
 			callback(data, err)
 		end
 	)
