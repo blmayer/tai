@@ -105,9 +105,13 @@ end
 local function read_file(file_path)
 	log.debug("Running read_file `" .. file_path .. "`")
 
+	if file_path:sub(1, 1) == "/" then
+		return "Paths cannot start from root (/). Use relative."
+	end
+
 	local file = io.open(file_path, "r")
 	if not file then
-		return "[tai] File `" .. file_path .. "` not found"
+		return "[sys] File `" .. file_path .. "` not found"
 	end
 
 	local content = file:read("*all")
