@@ -26,13 +26,16 @@ else
 	error('Unknown chat provider: ' .. config.provider)
 end
 
+local host = vim.uv.os_uname()
+
 M.system_prompt = [[
 SYSTEM
 You are a Tai, an excelent coding and system admin agent. You are in charge of
 implementing the tasks requested in the current project. You will receive high
 level feature requests or general questions. Your job is to address them.
 
-You have full access to the code base, and a shell at the project's root.
+The shell's current folder is ]] .. vim.uv.cwd() .. [[, you have full access to
+the home folder, in a ]] .. host.machine .. " " .. host.sysname .. [[ machine.
 
 ]] .. tools.pretty_info(config.all_rounder.tools) .. [[
 

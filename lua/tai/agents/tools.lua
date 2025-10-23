@@ -37,7 +37,7 @@ M.defs = {
 							properties = {
 								file = {
 									type = "string",
-									description = "File name of this change."
+									description = "File name of this change, relative to the current folder (don't start with /)."
 								},
 								operation = {
 									type = "string",
@@ -64,7 +64,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "run",
-			description = "Runs commands in a shell in the current folder and returns the output. Only use relative paths.",
+			description = "Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /).",
 			parameters = {
 				type = "object",
 				properties = {
@@ -120,16 +120,16 @@ local function read_file(file_path)
 	local numbered_content = table.concat(numbered_lines, "\n")
 
 	log.debug("read_file output: " .. numbered_content)
-	return "[tai] Content of `" .. file_path .. "`:\n" .. numbered_content .. "\n"
+	return "[sys] Content of `" .. file_path .. "`:\n" .. numbered_content .. "\n"
 end
 
-local function validate_command(cmd)
+local function dangerous_command(cmd)
 	local parts = vim.split(cmd, "%s+")
 	if #parts == 0 then return false end
 
 	local base = parts[1]:match("^([^/]+)$")
 	if not base then
-		return false
+		return nil
 	end
 
 	local ok = false
@@ -141,7 +141,7 @@ local function validate_command(cmd)
 	end
 
 	if not ok then
-		return false
+		return "Command not allowed."
 	end
 
 	for _, arg in ipairs(parts) do
@@ -149,7 +149,7 @@ local function validate_command(cmd)
 			goto continue
 		end
 		if arg:sub(1, 1) == "/" then
-			return false
+			return "Paths cannot start from root (/). Use relative."
 		end
 		if arg:match("%.%.") then
 			return false
@@ -166,9 +166,10 @@ end
 local function run_command(cmd)
 	log.debug("Running run `" .. cmd .. "`")
 
-	if not validate_command(cmd) then
-		log.debug("command is not allowed")
-		return "[tai] Command `" .. cmd .. "` is not allowed"
+	local danger = dangerous_command(cmd)
+	if danger then
+		log.debug("command is not allowed: " .. danger)
+		return "[sys] Command not executed because: " .. danger
 	end
 
        local env = {}
@@ -194,9 +195,9 @@ local function run_command(cmd)
        handle:close()
 
 	if output then
-		output = "[tai] Output of `" .. cmd .. "`:\n" .. output
+		output = "[sys] Output of `" .. cmd .. "`:\n" .. output
 	else
-		output = "[tai] `" .. cmd .. "` returned null"
+		output = "[sys] `" .. cmd .. "` returned null"
 	end
 	log.debug("command output: " .. output)
 
@@ -230,17 +231,17 @@ function M.run(cmd)
 
 	if tool == "read_file" then
 		if not args.file_path then
-			return "[tai] missing read_file argument"
+			return "[sys] missing read_file argument"
 		end
 		return read_file(args.file_path)
 	elseif tool == "run" then
 		if not args.command then
-			return "[tai] missing command argument"
+			return "[sys] missing command argument"
 		end
 		return run_command(args.command)
 	elseif tool == "patch" then
 		if not args.changes then
-			return "[tai] missing changes argument"
+			return "[sys] missing changes argument"
 		end
 		return apply_patch(args.changes)
 	end
