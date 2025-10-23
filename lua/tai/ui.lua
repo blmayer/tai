@@ -63,44 +63,27 @@ end
 function M.show_response(fields)
 	log.debug("Showing response")
 
-	local content = "\n------\n"
+	local content = ""
 	if fields.error then
 		content = content .. "[tai] " .. fields.error
 	end
-	if fields.plan and #fields.plan > 0 then
-		content = "--- Plan -----------------------------\n\n"
-		for i, p in ipairs(fields.plan) do
-			content = content .. i .. ". " .. p .. "\n"
-		end
-		content = content .. "__________________________________\n\n"
+	if fields.content then
+		content = content .. fields.content .. "\n"
 	end
-	if fields.text then
-		content = content .. fields.text
-	end
-	if fields.patch then
-		content = content .. "\n--- Patch (use :ApplyTaiPatch to apply) ---------\n\n" .. fields.patch
-	end
-	content = content .. "\n"
+	if fields.tool_calls then
+		for _, call in ipairs(fields.tool_calls) do
+			local args = call["function"].arguments
 
-	M.append_to_buffer(content)
-	M.open()
-end
-
-function M.show_tool_calls(calls)
-	log.debug("Showing tool calls")
-
-	local content = "\n"
-	for _, call in ipairs(calls) do
-		local args = call["function"].arguments
-
-		if call["function"].name == "run" then
-			content = content .. "[tai] Running " .. args.command .. "\n"
-		elseif call["function"].name == "read_file" then
-			content = content .. "[tai] Reading " .. args.file_path .. "\n"
-		elseif call["function"].name == "patch" then
-			content = content .. "[tai] Patching " .. #args.changes .. " changes.\n"
+			if call["function"].name == "run" then
+				content = content .. "[tai] Running " .. args.command .. "\n"
+			elseif call["function"].name == "read_file" then
+				content = content .. "[tai] Reading " .. args.file_path .. "\n"
+			elseif call["function"].name == "patch" then
+				content = content .. "[tai] Patching " .. #args.changes .. " changes.\n"
+			end
 		end
 	end
+	content = content .. "----\n"
 
 	M.append_to_buffer(content)
 	M.open()

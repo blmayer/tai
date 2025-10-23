@@ -119,22 +119,7 @@ local function handle_planner_reply(reply)
 				end
 			)
 		end
-
 	)
-
-
-	-- if reply.commands then
-	-- 	vim.api.nvim_buf_create_user_command(
-	-- 		ui.buffer_nr,
-	-- 		'RunTaiCommand',
-	-- 		function()
-	-- 			local out = run_commands(reply.commands)
-	-- 			reply = planner.plan(out)
-	-- 			ui.show_response(reply)
-	-- 		end,
-	-- 		{}
-	-- 	)
-	-- end
 end
 
 function M.process_request(prompt)
@@ -157,8 +142,8 @@ end
 local function handle_chat_reply(reply)
 	log.info("handling chat reply")
 
+	ui.show_response(reply)
 	if reply.tool_calls then
-		ui.show_tool_calls(reply.tool_calls)
 		all_rounder.run_tools(
 			reply.tool_calls,
 			function(data, err)
@@ -171,13 +156,12 @@ local function handle_chat_reply(reply)
 		)
 		return
 	end
-
-	ui.show_response({ text = reply.content })
 end
 
 function M.chat(prompt)
 	log.debug("Processing chat request " .. prompt)
 
+	ui.append_to_buffer("> " .. prompt .. "\n----\n")
 	all_rounder.task(
 		prompt,
 		function(reply, err)

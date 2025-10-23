@@ -21,7 +21,7 @@ function M.prompt_input()
 		local path = vim.fn.expand("%")
 		local prompt = string.format("I'm looking at %s. Q: %s", path, input)
 
-		ui.append_to_buffer("=====================================\n> " .. input)
+		ui.append_to_buffer("> " .. input)
 
 		vim.schedule(function()
 			ui.open()
@@ -35,8 +35,6 @@ function M.chat()
 	ui.input(function(input)
 		if not input or input == "" then return end
 		log.debug("Received user input: " .. input)
-
-		ui.append_to_buffer("=====================================\n> " .. input)
 
 		vim.schedule(function()
 			ui.open()

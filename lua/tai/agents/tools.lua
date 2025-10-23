@@ -106,12 +106,12 @@ local function read_file(file_path)
 	log.debug("Running read_file `" .. file_path .. "`")
 
 	if file_path:sub(1, 1) == "/" then
-		return "Paths cannot start from root (/). Use relative."
+		return "[sys] Paths cannot start from root (/). Use relative."
 	end
 
 	local file = io.open(file_path, "r")
 	if not file then
-		return "[sys] File `" .. file_path .. "` not found"
+		return "[sys] File `" .. file_path .. "` not found."
 	end
 
 	local content = file:read("*all")
@@ -124,7 +124,7 @@ local function read_file(file_path)
 	local numbered_content = table.concat(numbered_lines, "\n")
 
 	log.debug("read_file output: " .. numbered_content)
-	return "[sys] Content of `" .. file_path .. "`:\n" .. numbered_content .. "\n"
+	return numbered_content
 end
 
 local function dangerous_command(cmd)
@@ -145,7 +145,7 @@ local function dangerous_command(cmd)
 	end
 
 	if not ok then
-		return "Command not allowed."
+		return "[sys] Command not allowed."
 	end
 
 	for _, arg in ipairs(parts) do
@@ -153,7 +153,7 @@ local function dangerous_command(cmd)
 			goto continue
 		end
 		if arg:sub(1, 1) == "/" then
-			return "Paths cannot start from root (/). Use relative."
+			return "[sys] Paths cannot start from root (/). Use relative."
 		end
 		if arg:match("%.%.") then
 			return false
@@ -164,7 +164,7 @@ local function dangerous_command(cmd)
 		::continue::
 	end
 
-	return true
+	return nil
 end
 
 local function run_command(cmd)
@@ -198,9 +198,7 @@ local function run_command(cmd)
        local output = handle:read("*a")
        handle:close()
 
-	if output then
-		output = "[sys] Output of `" .. cmd .. "`:\n" .. output
-	else
+	if not output then
 		output = "[sys] `" .. cmd .. "` returned null"
 	end
 	log.debug("command output: " .. output)
@@ -225,8 +223,23 @@ local function apply_patch(changes)
 	-- 	log.debug("Patch application output: " .. output)
 	-- end
 	-- vim.api.nvim_command("checktime")
+
+
+	-- if reply.commands then
+	-- 	vim.api.nvim_buf_create_user_command(
+	-- 		ui.buffer_nr,
+	-- 		'RunTaiCommand',
+	-- 		function()
+	-- 			local out = run_commands(reply.commands)
+	-- 			reply = planner.plan(out)
+	-- 			ui.show_response(reply)
+	-- 		end,
+	-- 		{}
+	-- 	)
+	-- end
 end
 
+-- TODO: there must be an enum for tool names
 function M.run(cmd)
 	log.debug("Running tool call")
 
