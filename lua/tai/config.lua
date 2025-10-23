@@ -4,16 +4,17 @@ local log = require("tai.log")
 
 M.allowed_commands = {
 	"cat",
-	"echo",
-	"date",
-	"tail",
-	"head",
-	"grep",
 	"cut",
+	"date",
+	"echo",
+	"find",
+	"grep",
+	"head",
 	"ls",
-	"wc",
 	"make",
-	"sort"
+	"sort",
+	"tail",
+	"wc"
 }
 
 local function find_tai_root()

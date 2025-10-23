@@ -8,7 +8,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "read_file",
-			description = "Reads the content of a file from the file system.",
+			description = "Reads the content of a file from the file system. And returns the content with numberred lines.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -25,15 +25,35 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "patch",
-			description =
-			"Creates a patch from the given changes, please separate them by file, use line numbers and show the new content.",
+			description = "Creates a patch from the given changes, please separate them by file and operation, use line numbers and show the new content. This will ask for user approval.",
 			parameters = {
 				type = "object",
 				properties = {
 					changes = {
-						type = "string",
-						description =
-						"Changes to be made. Please separate them by file, use line numbers and show the new content."
+						type = "array",
+						description = "List of changes to be made. Each change is applied independently on the original file, i.e. the order matters, but line numbers are not updated.",
+						items = {
+							type = "object",
+							properties = {
+								file = {
+									type = "string",
+									description = "File name of this change."
+								},
+								operation = {
+									type = "string",
+									description = "Operation of this change.",
+									enum = { "add" , "change", "delete" }
+								},
+								lines = {
+									type = "string",
+									description = "Range of lines that the operation is on. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+								},
+								content = {
+									type = "string",
+									description = "New content. Not used for delete operation.",
+								},
+							},
+						}
 					}
 				},
 				required = { "changes" }

@@ -63,7 +63,7 @@ end
 function M.show_response(fields)
 	log.debug("Showing response")
 
-	local content = "\n---------------------------------\n"
+	local content = "\n------\n"
 	if fields.error then
 		content = content .. "[tai] " .. fields.error
 	end
@@ -89,14 +89,13 @@ end
 function M.show_tool_calls(calls)
 	log.debug("Showing tool calls")
 
-	local content = "\n--- Tool calls ------------------------\n"
+	local content = "\n"
 	for _, call in ipairs(calls) do
 		content = content .. "> Calling " .. call["function"].name .. "\n"
 		for k, v in pairs(call["function"].arguments) do
 			content = content .. "\t" .. k .. ": " .. v .. "\n"
 		end
 	end
-	content = content .. "_______________________________________\n"
 
 	M.append_to_buffer(content)
 	M.open()
