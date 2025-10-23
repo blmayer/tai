@@ -91,7 +91,12 @@ function M.show_tool_calls(calls)
 
 	local content = "\n"
 	for _, call in ipairs(calls) do
-		content = content .. "> Calling " .. call["function"].name .. "\n"
+		if call["function"].name == "run" then
+			content = content .. "[tai] Running " .. call["function"].arguments.command .. "\n"
+		elseif call["function"].name == "read_file" then
+			content = content .. "[tai] Reading " .. call["function"].arguments.file_name .. "\n"
+		elseif call["function"].name == "read_file" then
+			content = content .. "[tai]  t " .. call["function"].arguments.file_name .. "\n"
 		for k, v in pairs(call["function"].arguments) do
 			content = content .. "\t" .. k .. ": " .. v .. "\n"
 		end

@@ -48,6 +48,7 @@ INSTRUCTIONS
   - Before finishing ask yourself if you correctly implemented the task.
 - Don't use commands to change files unless explicitly told to.
 - To actually implement the changes you must call the patch tool.
+- Normaly the task ends with the patch, also respond with notes or instructions.
 ]]
 
 local history = { { role = "system", content = M.system_prompt } }

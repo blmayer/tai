@@ -46,7 +46,7 @@ M.defs = {
 								},
 								lines = {
 									type = "string",
-									description = "Range of lines that the operation is on. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+									description = "Range of lines that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
 								},
 								content = {
 									type = "string",
@@ -203,21 +203,23 @@ local function run_command(cmd)
 	return output
 end
 
-local function apply_patch(patch)
-	local real = io.popen("ed -s 2>&1", "w")
-	if not real then
-		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
-		return
-	end
+local function apply_patch(changes)
+	log.debug("Running patch with " .. #changes .. " changes")
 
-	real:write(patch)
-	local output = real:read("*all")
-	real:close()
+	-- local real = io.popen("ed -s 2>&1", "w")
+	-- if not real then
+	-- 	vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
+	-- 	return
+	-- end
 
-	if output then
-		log.debug("Patch application output: " .. output)
-	end
-	vim.api.nvim_command("checktime")
+	-- real:write(changes)
+	-- local output = real:read("*all")
+	-- real:close()
+
+	-- if output then
+	-- 	log.debug("Patch application output: " .. output)
+	-- end
+	-- vim.api.nvim_command("checktime")
 end
 
 function M.run(cmd)
