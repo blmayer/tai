@@ -161,7 +161,7 @@ end
 function M.chat(prompt)
 	log.debug("Processing chat request " .. prompt)
 
-	ui.append_to_buffer("> " .. prompt .. "\n----\n")
+	ui.append_to_buffer("---------\n> " .. prompt .. "\n")
 	all_rounder.task(
 		prompt,
 		function(reply, err)

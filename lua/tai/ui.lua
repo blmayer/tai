@@ -67,7 +67,7 @@ function M.show_response(fields)
 	if fields.error then
 		content = content .. "[tai] " .. fields.error
 	end
-	if fields.content then
+	if fields.content and fields.content ~= "" then
 		content = content .. fields.content .. "\n"
 	end
 	if fields.tool_calls then
@@ -83,7 +83,6 @@ function M.show_response(fields)
 			end
 		end
 	end
-	content = content .. "----\n"
 
 	M.append_to_buffer(content)
 	M.open()

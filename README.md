@@ -110,7 +110,15 @@ and load it in your `init.lua`:
 The .tai file supports the following fields:
 - model: The model used for chat completions.
 - summary_model: The model used for summaries.
+- complete_model: The model used for complete tasks.
+- provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
 - skip_cache: A flag to skip caching.
+- planner: Configuration for the planner model (model, options, tools, think).
+- coder: Configuration for the coder model.
+- patcher: Configuration for the patcher model.
+- writer: Configuration for the writer model.
+- all_rounder: Configuration for the all-rounder model.
+- allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
 
 
 ### Building

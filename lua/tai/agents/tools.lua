@@ -25,7 +25,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "patch",
-			description = "Creates a patch from the given changes, please separate them by file and operation, use line numbers and show the new content. This will ask for user approval.",
+			description = "Creates a patch from the given changes, please double check the line numbers. This will ask for user approval and will not return.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -41,12 +41,12 @@ M.defs = {
 								},
 								operation = {
 									type = "string",
-									description = "Operation of this change.",
+									description = "Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
 									enum = { "add" , "change", "delete" }
 								},
 								lines = {
 									type = "string",
-									description = "Range of lines that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+									description = "Range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
 								},
 								content = {
 									type = "string",
@@ -64,7 +64,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "run",
-			description = "Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /).",
+			description = "Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed.",
 			parameters = {
 				type = "object",
 				properties = {
