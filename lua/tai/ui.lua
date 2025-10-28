@@ -88,6 +88,10 @@ function M.show_response(fields)
 	M.open()
 end
 
+function M.clear()
+	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
+end
+
 -- Insert the content at the cursor (insert mode)
 function M.insert_response(content)
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))

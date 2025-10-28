@@ -42,6 +42,10 @@ host.machine .. " " .. host.sysname .. [[ machine.
 
 INSTRUCTIONS
 - Understand the user's request and gather all the knowledge/context needed.
+- For general questions/chat you can use the steps bellow to help to answer them.
+- If the task needs multiple steps add a plan to guide you and the user.
+  - Use `[ ]` and `[X]` to indicate the progress, keep it updated.
+  - Send the plan right in the beginning.
 - Explore the code base before delivering the solution:
   - Don't suppose anything about the files or the system.
   - Use the imports to understand the code organization and structure.
@@ -49,14 +53,13 @@ INSTRUCTIONS
   - You can ask the user for more info or details of the task.
   - If you don't know something search for it.
 - Implement the task considering the constraints given.
-  - If the task needs multiple steps add a plan to guide you and the user.
-    - Use `[ ]` and `[X]` to indicate the progress, keep it updated.
-    - Send the plan right in the beginning.
   - Be consistent with the code base's style.
-  - Before finishing ask yourself if you correctly implemented the task.
+  - Before finishing ask yourself if you correctly addressed the input.
 - Don't use commands to change files unless explicitly told to.
 - To actually implement the changes you must call the patch tool.
 - Normally the task ends with the patch, also respond with notes or instructions.
+- Only final answers.
+- Don't return xml formated text, use plain text
 ]]
 
 local history = { { role = "system", content = M.system_prompt } }
@@ -112,4 +115,9 @@ function M.run_tools(tool_calls, callback)
 		end
 	)
 end
+
+function M.clear_history()
+	history = { { role = "system", content = M.system_prompt } }
+end
+
 return M

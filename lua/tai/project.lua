@@ -45,7 +45,7 @@ local function handle_coder_req(req, cb)
 				log.debug("coder reply to patcher: " .. reply.content.patcher)
 				patcher.create_patch(
 					reply.content.patcher,
-					function(out, err) 
+					function(out, err)
 						log.debug("patcher reply: " .. out.content)
 						cb({ content = { writer = reply.content.writer, patcher = out.content } }, nil)
 					end
@@ -161,7 +161,7 @@ end
 function M.chat(prompt)
 	log.debug("Processing chat request " .. prompt)
 
-	ui.append_to_buffer("---------\n> " .. prompt .. "\n")
+	ui.append_to_buffer("--------------------------\n> " .. prompt .. "\n")
 	all_rounder.task(
 		prompt,
 		function(reply, err)
@@ -174,6 +174,11 @@ function M.chat(prompt)
 			vim.schedule(function() handle_chat_reply(reply) end)
 		end
 	)
+end
+
+function M.clear_history()
+	all_rounder.clear_history()
+	ui.clear()
 end
 
 --function M.complete(start)

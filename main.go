@@ -10,8 +10,6 @@ import (
 	"strings"
 )
 
-const sockPath = "/tmp/tai.sock"
-
 func readLineRaw() (string, error) {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)

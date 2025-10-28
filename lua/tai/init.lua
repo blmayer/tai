@@ -44,6 +44,10 @@ function M.chat()
 	end)
 end
 
+function M.reset()
+	project.clear_history()
+end
+
 function M.prompt_full_file()
 	local path = vim.fn.expand("%")
 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
