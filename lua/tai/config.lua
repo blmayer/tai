@@ -58,31 +58,31 @@ if file then
 			model = data.planner.model,
 			options = data.planner.options,
 			tools = data.planner.tools,
-			think = data.planner.think or false
+			think = data.planner.think or nil
 		}
 		M.coder = {
 			model = data.coder.model,
 			options = data.coder.options,
 			tools = data.coder.tools,
-			think = data.coder.think or false
+			think = data.coder.think or nil
 		}
 		M.patcher = {
 			model = data.patcher.model,
 			options = data.patcher.options,
 			tools = data.patcher.tools,
-			think = data.patcher.think or false
+			think = data.patcher.think or nil
 		}
 		M.writer = {
 			model = data.writer.model,
 			options = data.writer.options,
 			tools = data.writer.tools,
-			think = data.writer.think or false
+			think = data.writer.think or nil
 		}
 		M.all_rounder = {
 			model = data.all_rounder.model,
 			options = data.all_rounder.options,
 			tools = data.all_rounder.tools,
-			think = data.all_rounder.think or false
+			think = data.all_rounder.think or nil
 		}
 		if data.allowed_commands then
 			M.allowed_commands = data.allowed_commands
