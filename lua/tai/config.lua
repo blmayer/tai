@@ -78,11 +78,11 @@ if file then
 			tools = data.writer.tools,
 			think = data.writer.think or nil
 		}
-		M.all_rounder = {
-			model = data.all_rounder.model,
-			options = data.all_rounder.options,
-			tools = data.all_rounder.tools,
-			think = data.all_rounder.think or nil
+		M.tai = {
+			model = data.tai.model,
+			options = data.tai.options,
+			tools = data.tai.tools,
+			think = data.tai.think or nil
 		}
 		if data.allowed_commands then
 			M.allowed_commands = data.allowed_commands
