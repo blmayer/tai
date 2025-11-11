@@ -13,24 +13,6 @@ function M.toggle_chat_window()
 	ui.toggle_output_window()
 end
 
-function M.prompt_input()
-	ui.input(function(input)
-		if not input or input == "" then return end
-		log.debug("Received user input: " .. input)
-
-		local path = vim.fn.expand("%")
-		local prompt = string.format("I'm looking at %s. Q: %s", path, input)
-
-		ui.append_to_buffer("> " .. input)
-
-		vim.schedule(function()
-			ui.open()
-		end)
-
-		project.process_request(input)
-	end)
-end
-
 function M.chat()
 	ui.input(function(input)
 		if not input or input == "" then return end

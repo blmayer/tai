@@ -229,6 +229,7 @@ local function run_command(cmd)
 	return output
 end
 
+-- indexes are 0 based
 local function parse_lines(lines_str)
 	-- Handle "$" (last line)
 	if lines_str == "$" then
@@ -238,16 +239,19 @@ local function parse_lines(lines_str)
 	-- Handle range (e.g., "2-5")
 	local start, end_line = lines_str:match("^(%d+)-(%d+)$")
 	if start and end_line then
-		return tonumber(start), tonumber(end_line)
+		return tonumber(start)-1, tonumber(end_line)-1
 	end
 
 	-- Handle single line (e.g., "3")
 	local line = tonumber(lines_str)
+	if line == 0 then
+		return 0,0
+	end
 	if line then
-		return line, line
+		return line-1, line-1
 	end
 
-	return 1, 1
+	return 0, 0
 end
 
 local function apply_patch(name, changes)
