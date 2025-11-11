@@ -12,7 +12,24 @@ if not api_key then
 	end)
 end
 
-function M.request(model_config, messages, format, callback)
+local history = { {} }
+
+function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
+	for _, call in ipairs(msg.tool_calls or {}) do
+		local args = call["function"].arguments
+		call["function"].arguments = vim.json.encode(args)
+	end
+	table.insert(history, msg)
+end
+
+function M.clear_history()
+	history = { {} }
+end
+
+function M.request(model_config, msg, format, callback)
+	M.add_to_history(msg)
+
 	local agent_tools = vim.tbl_map(
 		function(t)
 			return tools.defs[t]
@@ -21,7 +38,7 @@ function M.request(model_config, messages, format, callback)
 	)
 	local body = {
 		model = model_config.model,
-		messages = messages,
+		messages = history,
 		tools = agent_tools,
 	}
 	if format then
@@ -85,9 +102,12 @@ function M.request(model_config, messages, format, callback)
 			end
 
 			fields.tool_calls = message.tool_calls
+			for _, call in ipairs(fields.tool_calls) do
+				local args = call["function"].arguments
+				call["function"].arguments = vim.json.decode(args)
+			end
 			callback(fields, nil)
 		end)
 end
 
 return M
-

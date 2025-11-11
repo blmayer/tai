@@ -320,11 +320,8 @@ local function apply_patch(name, changes)
 end
 
 -- TODO: there must be an enum for tool names
-function M.run(cmd)
+function M.run(tool, args)
 	log.debug("Running tool call")
-
-	local tool = cmd["function"]["name"]
-	local args = cmd["function"].arguments
 
 	if tool == "read_file" then
 		if not args.file_path then
@@ -344,7 +341,7 @@ function M.run(cmd)
 		return "[sys] patch received and submitted for user approval"
 	end
 
-	return "[tai] Unknown tool `" .. tool .. "`"
+	return "[sys] Unknown tool `" .. tool .. "`"
 end
 
 return M
