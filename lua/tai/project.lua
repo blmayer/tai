@@ -3,10 +3,6 @@ local M = {}
 local log = require('tai.log')
 local config = require("tai.config")
 local agents = require("tai.agents")
-local planner = require("tai.agents.planner")
-local coder = require("tai.agents.coder")
-local patcher = require("tai.agents.patcher")
-local writer = require("tai.agents.writer")
 local tai = require("tai.agents.tai")
 local tools = require("tai.agents.tools")
 local ui = require("tai.ui")
@@ -59,10 +55,10 @@ end
 -- 		end
 -- 	)
 -- end
--- 
+--
 -- local function handle_planner_reply(reply)
 -- 	log.info("handling reply")
--- 
+--
 -- 	if reply.tool_calls then
 -- 		ui.show_tool_calls(reply.tool_calls)
 -- 		planner.run_tools(
@@ -77,14 +73,14 @@ end
 -- 		)
 -- 		return
 -- 	end
--- 
+--
 -- 	if not reply.content.coder then
 -- 		if not reply.content.writer then
 -- 			log.error("planner did not sent writer field")
 -- 			ui.show_response({ error = "Planner did not sent writer field" })
 -- 			return
 -- 		end
--- 
+--
 -- 		log.debug("calling writer after planner: " .. reply.content.writer)
 -- 		writer.write(
 -- 			reply.content.writer,
@@ -99,7 +95,7 @@ end
 -- 		)
 -- 		return
 -- 	end
--- 
+--
 -- 	-- planner called coder
 -- 	handle_coder_req(
 -- 		reply.content.coder,
@@ -124,10 +120,10 @@ end
 -- 		end
 -- 	)
 -- end
--- 
+--
 -- function M.process_request(prompt)
 -- 	log.debug("Processing request " .. prompt)
--- 
+--
 -- 	planner.plan(
 -- 		prompt,
 -- 		function(reply, err)
@@ -136,7 +132,7 @@ end
 -- 				ui.show_response({ error = err })
 -- 				return
 -- 			end
--- 
+--
 -- 			vim.schedule(function() handle_planner_reply(reply) end)
 -- 		end
 -- 	)
@@ -162,7 +158,7 @@ local function handle_chat_reply(reply)
 			local out
 			if name == "run" then
 				log.debug("Asking for confirmation")
-				local input = vim.fn.confirm("Proceed? [y/N]", "&y\n&N", 2)
+				local input = vim.fn.confirm("Run " .. args.command .. "?", "&y\n&N", 2)
 				if input == 1 then
 					log.debug("Confirmed")
 					out = tools.run(name, args)
@@ -183,19 +179,12 @@ local function handle_chat_reply(reply)
 			)
 		end
 
-		tai.task(
-			"I added the tool calls outputs, continue with the task.",
-			function(reply, err) vim.schedule(function()
-				handle_chat_reply(reply) end)
-			end
-		)
+		return M.chat("I added the tool calls outputs, continue with the task.")
 	end
 end
 
 function M.chat(prompt)
 	log.debug("Processing chat request " .. prompt)
-
-	ui.append_to_buffer("--------------------------\n> " .. prompt .. "\n")
 	tai.task(
 		prompt,
 		function(reply, err)

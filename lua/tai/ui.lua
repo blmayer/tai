@@ -70,6 +70,10 @@ function M.show_response(fields)
 		M.append_to_buffer(content)
 		return
 	end
+	if fields.content and fields.content ~= "" then
+		content = content .. fields.content .. "\n"
+	end
+
 	if fields.tool_calls then
 		for _, call in ipairs(fields.tool_calls) do
 			local args = call["function"].arguments
@@ -83,10 +87,6 @@ function M.show_response(fields)
 			end
 		end
 	end
-	if fields.content and fields.content ~= "" then
-		content = content .. fields.content .. "\n"
-	end
-
 	if not fields.tool_calls and not fields.content then
 		content = content .. "[tai] Received empty reply."
 	end
@@ -160,32 +160,4 @@ function M.input(callback)
 	end, { buffer = bufnr })
 end
 
--- Prompt user for simple input
-function M.ask(callback)
-	local bufnr = vim.api.nvim_create_buf(false, true)
-	local width = math.min(80, vim.o.columns - 10)
-	local height = math.min(10, vim.o.lines - 10)
-
-	local winnr = vim.api.nvim_open_win(bufnr, true, {
-		relative = 'editor',
-		width = width,
-		height = height,
-		col = (vim.o.columns - width) / 2,
-		row = (vim.o.lines - height) / 2,
-		style = 'minimal',
-		border = 'rounded'
-	})
-
-	vim.bo[bufnr].buftype = 'nofile'
-	vim.bo[bufnr].bufhidden = 'wipe'
-	vim.bo[bufnr].swapfile = false
-	vim.bo[bufnr].filetype = 'text'
-
-	vim.keymap.set('n', '<CR>', function()
-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-		local text = table.concat(lines, '\n')
-		vim.api.nvim_win_close(winnr, false)
-		callback(text)
-	end, { buffer = bufnr })
-end
 return M

@@ -20,6 +20,7 @@ function M.chat()
 
 		vim.schedule(function()
 			ui.open()
+			ui.append_to_buffer("--------------------------\n> " .. input .. "\n")
 		end)
 
 		project.chat(input)

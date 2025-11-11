@@ -102,7 +102,7 @@ function M.request(model_config, msg, format, callback)
 			end
 
 			fields.tool_calls = message.tool_calls
-			for _, call in ipairs(fields.tool_calls) do
+			for _, call in ipairs(fields.tool_calls or {}) do
 				local args = call["function"].arguments
 				call["function"].arguments = vim.json.decode(args)
 			end
