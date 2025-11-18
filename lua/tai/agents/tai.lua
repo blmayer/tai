@@ -5,25 +5,11 @@ local M = {}
 -- Import necessary modules
 local config = require('tai.config')
 local log = require('tai.log')
+local provider = require('tai.provider')
 local tools = require('tai.agents.tools')
 
 if not config.root then
 	return M
-end
-
-local provider
-if config.provider == 'groq' then
-	provider = require('tai.providers.groq')
-elseif config.provider == 'gemini' then
-	provider = require('tai.providers.gemini')
-elseif config.provider == 'local' then
-	provider = require('tai.providers.local')
-elseif config.provider == "mistral" then
-	return M
-elseif config.provider == nil then
-	-- do nothing
-else
-	error('Unknown chat provider: ' .. config.provider)
 end
 
 local host = vim.uv.os_uname()
@@ -43,12 +29,11 @@ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
 INSTRUCTIONS
 Understand the user's request and gather all the knowledge/context needed.
 - You can ask the user for more info or details of the task.
-- Don't return xml tags for plain text. Don't use markdown, only ASCII/ANSI.
 - If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
 If the demand is specific to the current project then:
 - Explore the code base before delivering the solution:
   - Use the tools available to understand the code base.
-  - A good starter is `ls -R` or `find`. Reading AGENTS.md can help too.
+  - A good starter is `ls -R` or `find`, reading AGENTS.md and README.md helps.
   - The imports help you understand the code organization and structure.
 If code changes are needed:
 - Implement the task considering the constraints given.
@@ -56,6 +41,7 @@ If code changes are needed:
 - You must know the contents before changing a file.
 - Don't use the run tool to change files unless explicitly told to.
 - Call the patch tool to implement the changes you want.
+Text must be ASCII/ANSI plain text, this is shown verbatim to the user.
 ]]
 
 provider.add_to_history({ role = "system", content = M.system_prompt })

@@ -67,7 +67,7 @@ M.defs = {
 											content = {
 												type = "string",
 												description =
-												"New content. Not used for delete operation.",
+												"New content, will be pasted verbatim. Not used for delete operation. Don't add line numbers.",
 											},
 										},
 										required = { "operation", "lines" }

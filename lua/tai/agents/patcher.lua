@@ -6,7 +6,7 @@ local M = {}
 local config = require('tai.config')
 local log = require('tai.log')
 
-if not config.root then
+if not config.root or not config.patcher then
 	return M
 end
 

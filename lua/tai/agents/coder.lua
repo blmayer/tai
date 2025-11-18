@@ -5,10 +5,9 @@ local M = {}
 -- Import necessary modules
 local config = require('tai.config')
 local log = require('tai.log')
-local ui = require('tai.ui')
 local tools = require('tai.agents.tools')
 
-if not config.root then
+if not config.root or not config.coder then
 	return M
 end
 

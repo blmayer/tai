@@ -83,7 +83,17 @@ function M.show_response(fields)
 			elseif call["function"].name == "read_file" then
 				content = content .. "[tai] Reading " .. args.file_path .. "\n"
 			elseif call["function"].name == "patch" then
-				content = content .. "[tai] Patching " .. #args.changes .. " changes.\n"
+				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
+				for _, change in ipairs(args.changes) do
+					content = content .. "\t" .. change.file .. ":\n"
+					for _, hunk in ipairs(change.hunks) do
+						if hunk.operation == "delete" then
+							content = content .. "\tdelete " .. hunk.lines .. "\n"
+						else
+							content = content .. "\t" .. hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
+						end
+					end
+				end
 			end
 		end
 	end

@@ -54,40 +54,52 @@ if file then
 		M.summary_model = data.summary_model or M.summary_model
 		M.complete_model = data.complete_model or M.complete_model
 		M.provider = data.provider or M.provider
-		M.planner = {
-			model = data.planner.model,
-			options = data.planner.options,
-			tools = data.planner.tools,
-			think = data.planner.think or nil
-		}
-		M.coder = {
-			model = data.coder.model,
-			options = data.coder.options,
-			tools = data.coder.tools,
-			think = data.coder.think or nil
-		}
-		M.patcher = {
-			model = data.patcher.model,
-			options = data.patcher.options,
-			tools = data.patcher.tools,
-			think = data.patcher.think or nil
-		}
-		M.writer = {
-			model = data.writer.model,
-			options = data.writer.options,
-			tools = data.writer.tools,
-			think = data.writer.think or nil
-		}
-		M.tai = {
-			model = data.tai.model,
-			options = data.tai.options,
-			tools = data.tai.tools,
-			think = data.tai.think or nil
-		}
+		M.skip_cache = data.skip_cache or M.skip_cache
+
 		if data.allowed_commands then
 			M.allowed_commands = data.allowed_commands
 		end
-		M.skip_cache = data.skip_cache or M.skip_cache
+
+		if data.planner then
+			M.planner = {
+				model = data.planner.model,
+				options = data.planner.options,
+				tools = data.planner.tools,
+				think = data.planner.think or nil
+			}
+		end
+		if data.coder then
+			M.coder = {
+				model = data.coder.model,
+				options = data.coder.options,
+				tools = data.coder.tools,
+				think = data.coder.think or nil
+			}
+		end
+		if data.patcher then
+			M.patcher = {
+				model = data.patcher.model,
+				options = data.patcher.options,
+				tools = data.patcher.tools,
+				think = data.patcher.think or nil
+			}
+		end
+		if data.writer then
+			M.writer = {
+				model = data.writer.model,
+				options = data.writer.options,
+				tools = data.writer.tools,
+				think = data.writer.think or nil
+			}
+		end
+		if data.tai then
+			M.tai = {
+				model = data.tai.model,
+				options = data.tai.options,
+				tools = data.tai.tools,
+				think = data.tai.think or nil
+			}
+		end
 	end
 end
 

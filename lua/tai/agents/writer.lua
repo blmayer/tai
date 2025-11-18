@@ -7,6 +7,10 @@ local config = require('tai.config')
 local log = require('tai.log')
 local client = require('tai.agents.client')
 
+if not config.root or not config.writer then
+	return M
+end
+
 local provider
 if config.provider == 'groq' then
 	provider = require('tai.providers.groq')

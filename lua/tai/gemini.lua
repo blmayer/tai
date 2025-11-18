@@ -78,7 +78,7 @@ function M.request(model_config, msg, format, callback)
 			end
 
 			if #parsed > 0 and parsed[1].error then
-				return callback(nil, "Received error: " .. parsed[1].error)
+				return callback(nil, "Received error: " .. parsed[1].error.message)
 			end
 
 			if parsed.error then

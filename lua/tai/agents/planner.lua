@@ -8,7 +8,7 @@ local log = require('tai.log')
 local client = require('tai.agents.client')
 local tools = require('tai.agents.tools')
 
-if not config.root then
+if not config.root or not config.planner then
 	return M
 end
 

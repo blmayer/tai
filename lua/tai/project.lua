@@ -158,7 +158,7 @@ local function handle_chat_reply(reply)
 			local out
 			if name == "run" then
 				log.debug("Asking for confirmation")
-				local input = vim.fn.confirm("Run " .. args.command .. "?", "&y\n&N", 2)
+				local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
 				if input == 1 then
 					log.debug("Confirmed")
 					out = tools.run(name, args)
