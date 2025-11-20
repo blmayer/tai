@@ -33,7 +33,8 @@ M.defs = {
 				properties = {
 					name = {
 						type = "string",
-						description = "Name for this patch"
+						description =
+						"Name for this patch or description, can be used for commits."
 					},
 					changes = {
 						type = "array",
@@ -239,16 +240,16 @@ local function parse_lines(lines_str)
 	-- Handle range (e.g., "2-5")
 	local start, end_line = lines_str:match("^(%d+)-(%d+)$")
 	if start and end_line then
-		return tonumber(start)-1, tonumber(end_line)-1
+		return tonumber(start) - 1, tonumber(end_line) - 1
 	end
 
 	-- Handle single line (e.g., "3")
 	local line = tonumber(lines_str)
 	if line == 0 then
-		return 0,0
+		return 0, 0
 	end
 	if line then
-		return line-1, line-1
+		return line - 1, line - 1
 	end
 
 	return 0, 0
@@ -261,7 +262,7 @@ local function apply_patch(name, changes)
 	for _, change in ipairs(changes) do
 		local file = change.file
 
-		vim.cmd("vs " .. file)
+		vim.cmd("vsplit " .. file)
 		local buf = vim.api.nvim_get_current_buf()
 		-- local new_buf = vim.api.nvim_create_buf(0, false)
 
@@ -280,14 +281,14 @@ local function apply_patch(name, changes)
 			if operation == "add" then
 				-- Insert content after the specified lines
 				local new_lines = vim.split(content, '\n')
-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, new_lines)
+				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
 			elseif operation == "change" then
 				-- Replace lines with new content
 				local new_lines = vim.split(content, '\n')
-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, new_lines)
+				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
 			elseif operation == "delete" then
 				-- Remove lines
-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, {})
+				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, {})
 			end
 		end
 
