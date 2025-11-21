@@ -262,7 +262,7 @@ local function apply_patch(name, changes)
 	for _, change in ipairs(changes) do
 		local file = change.file
 
-		vim.cmd("vsplit " .. file)
+		vim.cmd("topleft vnew " .. file)
 		local buf = vim.api.nvim_get_current_buf()
 		-- local new_buf = vim.api.nvim_create_buf(0, false)
 
@@ -281,7 +281,10 @@ local function apply_patch(name, changes)
 			if operation == "add" then
 				-- Insert content after the specified lines
 				local new_lines = vim.split(content, '\n')
-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
+				if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
+					start = start + 1
+				end
+				vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
 			elseif operation == "change" then
 				-- Replace lines with new content
 				local new_lines = vim.split(content, '\n')

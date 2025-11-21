@@ -19,8 +19,6 @@ elseif config.provider == 'gemini' then
 elseif config.provider == 'local' then
 	provider = require('tai.providers.local')
 elseif config.provider == "mistral" then
-	return M
-elseif config.provider == nil then
 	-- do nothing
 else
 	error('Unknown chat provider: ' .. config.provider)

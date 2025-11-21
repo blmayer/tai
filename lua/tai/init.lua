@@ -7,25 +7,26 @@ local project = require("tai.project")
 function M.setup(opts)
 	log.set_level(log.DEBUG)
 	project.init()
-end
+	ui.set_chat_callback(function(input)
+		if not input or input == "" then return end
 
-function input_callback(input)
-	if not input or input == "" then return end
-	log.debug("Received user input: " .. input)
+		vim.schedule(function()
+			ui.add_sep()
+			ui.append_to_buffer(input .. "\n")
+		end)
 
-	vim.schedule(function()
-		ui.append_to_buffer("--------------------------\n> " .. input .. "\n")
+		project.chat(input)
 	end)
-
-	project.chat(input)
 end
 
 function M.toggle_chat_window()
-	ui.toggle_chat_window(input_callback)
+	ui.toggle_chat_window()
 end
 
 function M.chat()
-	ui.open(input_callback)
+	ui.open()
+	ui.scroll_down()
+	ui.focus_input()
 end
 
 function M.reset()

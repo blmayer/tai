@@ -6,11 +6,12 @@ local input_bufname = "tai-chat-input"
 
 local chat_win
 local input_win
+local callback
 
 M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
 vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
 vim.bo[M.input_buffer_nr].buftype = 'nofile'
-vim.bo[M.input_buffer_nr].bufhidden = 'wipe'
+vim.bo[M.input_buffer_nr].bufhidden = 'hide'
 vim.bo[M.input_buffer_nr].swapfile = false
 vim.bo[M.input_buffer_nr].filetype = 'text'
 vim.bo[M.input_buffer_nr].modifiable = true
@@ -51,21 +52,61 @@ function M.append_to_buffer(content)
 	end)
 end
 
-function M.toggle_chat_window(callback)
+function M.scroll_down()
+	vim.schedule(function()
+		local original_win = vim.api.nvim_get_current_win()
+		vim.api.nvim_set_current_win(chat_win)
+		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
+		vim.cmd("normal! zt")
+		vim.api.nvim_set_current_win(original_win)
+	end)
+end
+
+function M.add_sep()
+	local width = vim.api.nvim_win_get_width(chat_win)
+	local result = ""
+	for i = 1, width do
+		result = result .. "_"
+	end
+	M.append_to_buffer(result .. "\n")
+end
+
+function M.set_chat_callback(cb)
+	callback = cb
+end
+
+local function send_input()
+	vim.schedule(function()
+		M.scroll_down()
+		local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
+			'\n')
+		vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
+		callback(input)
+	end)
+end
+
+function M.toggle_chat_window()
 	local winid = vim.fn.bufwinnr(M.buffer_nr)
 	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
 	if winid ~= -1 then
 		-- Close the window
-		vim.api.nvim_win_close(winid, false)
+		vim.api.nvim_win_close(chat_win, false)
 		if input_winid ~= -1 then
-			vim.api.nvim_win_close(input_winid, false)
+			vim.api.nvim_win_close(input_win, false)
 		end
 	else
-		M.open(callback)
+		M.open()
 	end
 end
 
-function M.open(callback)
+function M.focus_input()
+	vim.schedule(function()
+		vim.api.nvim_set_current_win(input_win)
+		vim.cmd("startinsert")
+	end)
+end
+
+function M.open()
 	vim.schedule(function()
 		local chat_window_nr = vim.fn.bufwinnr(M.buffer_nr)
 		if chat_window_nr == -1 then
@@ -73,23 +114,16 @@ function M.open(callback)
 			chat_win = vim.api.nvim_get_current_win()
 			vim.api.nvim_win_set_buf(chat_win, M.buffer_nr)
 			vim.api.nvim_win_set_width(chat_win, 80)
+			vim.api.nvim_win_set_config(chat_win, { fixed = true })
 
 			-- Open input buffer in horizontal split below the output
 			vim.cmd("below split") -- horizontal split below
 			input_win = vim.api.nvim_get_current_win()
 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
-			vim.api.nvim_win_set_height(input_win, 6) -- 6 lines for input
+			vim.api.nvim_win_set_height(input_win, 8) -- 8 lines for input
 
-			vim.keymap.set('n', '<CR>', function()
-				local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
-					'\n')
-				vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
-				callback(input)
-			end, { buffer = M.input_buffer_nr })
-			vim.cmd("startinsert")
-		else
-			vim.api.nvim_set_current_win(input_win)
-			vim.cmd("startinsert")
+			vim.keymap.set('n', '<CR>', send_input, { buffer = M.input_buffer_nr })
+			vim.keymap.set('i', '<S-CR>', send_input, { buffer = M.input_buffer_nr })
 		end
 	end)
 end
@@ -126,7 +160,8 @@ function M.show_response(fields)
 						else
 							content = content ..
 							    "\t" ..
-							    hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
+							    hunk.operation ..
+							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
 						end
 					end
 				end

@@ -10,6 +10,7 @@ M.allowed_commands = {
 	"find",
 	"grep",
 	"head",
+	"git",
 	"ls",
 	"make",
 	"sort",
@@ -38,7 +39,7 @@ M.model = "devstral-medium-latest"
 M.summary_model = "ministral-8b-latest"
 M.complete_model = "llama-3.3-70b-versatile"
 M.skip_cache = false
-M.provider = "mistral"
+M.provider = "z_ai"
 M.root = root_path
 M.cache_dir = M.root .. "/.tai-cache/"
 
