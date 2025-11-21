@@ -1,7 +1,6 @@
-> This project contains two utilities: A simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim and a command line program to integrate AI into your shell.
+# tai.nvim
 
-
-# Features
+> This project contains a simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim.
 
 
 ## Providers
@@ -24,31 +23,13 @@ Mistral support is in progress (their API is flaky ATM).
 
 Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
 
-
-# Project Components
-
-1. **tai.nvim** (Neovim Plugin)
-
-- Sends operator-motion or visual selections to the server
-- Optionaly prompts for freeform input
-- Sends file context along with prompts
-- Displays server responses in a split buffer
+- Opens a side panel to display input and responses
 - Minimal, dependency-free Lua code for Neovim
 - Can run commands with safety validation
 - Follows plans for complex tasks
 
 
-2. **tai** (CLI)
-
-- Receives text payloads and standard input
-- Sends responses back to the standard output
-- Designed for easy integration with shell pipelines
-
-
-## tai.nvim
-
-
-### Installation
+## Installation
 
 Place the plugin code at:
 
@@ -75,32 +56,30 @@ and load it in your `init.lua`:
     end)
 
     vim.keymap.set("n", "<leader>ti", function()
-      vim.schedule(tai.prompt_input)
+      vim.schedule(tai.chat)
     end, { noremap = true })
 
-    vim.keymap.set("n", "<leader>tf", function()
-      vim.schedule(tai.prompt_full_file)
+    vim.keymap.set("n", "<leader>tr", function()
+      vim.schedule(tai.clear)
     end, { noremap = true })
 
     vim.keymap.set("n", "<C-w><C-t>", function()
     	require("tai").toggle_chat_window()
     end, { noremap = true })
 
-    vim.keymap.set("i", "<C-X><C-t>", function()
-      vim.schedule(tai.complete)
-    end, { noremap = true })
 
+## Usage
 
-### Usage
+The default mappings will give you:
 
 - Use `gT` plus a motion to send a text selection to the server.
 - Use `gP` plus a motion to send a text selection **with** a prompted input.
-- Use insert mode `<leader>ti` to prompt input and send.
-- Use insert mode `<leader>tf` to prompt input and send along with the full file context.
+- In normal mode `<leader>ti` to prompt input and send.
 - To toggle the chat window use `Ctrl+w Ctrl+t`
+- Use `<leader>tr` to clear history.
 
 
-### Requirements
+## Requirements
 
 - A `.tai` JSON file in your project root, if not found tai will not work.
 - Neovim 0.5 or newer
@@ -117,17 +96,8 @@ The .tai file supports the following fields:
 - coder: Configuration for the coder model.
 - patcher: Configuration for the patcher model.
 - writer: Configuration for the writer model.
-- all_rounder: Configuration for the all-rounder model.
+- tai: Configuration for the all-rounder model.
 - allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
-
-
-### Building
-
-Clone this repo and run:
-
-    go build -o tai .
-
-Move the binary to a folder in your path for best results.
 
 
 ## License

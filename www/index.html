@@ -4,11 +4,10 @@
 <meta name="color-scheme" content="light dark">
 <link rel=icon href=data:,>
 <style>pre{width:52ch;margin:2ch auto}a{color:#ff00ff}</style>
-<pre><i><b>tai.nvim + tai</b></i>
+<pre><i><b>tai.nvim</b></i>
 
-a minimal Neovim plugin and a CLI tool built
-to bring AI-powered text and code insights directly
-to your editor.
+a minimal Neovim plugin built to bring AI-powered
+text and code insights directly to your editor.
 
 the plugin sends selections, prompts, or full files
 for processing using the groq API.
@@ -37,7 +36,7 @@ for processing using the groq API.
 gT + motion	- send motion selection
 gP + motion	- send motion selection with input
 &lt;leader&gt;ti 	- prompt input and send
-&lt;leader&gt;tf 	- prompt input with file
+&lt;leader&gt;tr 	- reset the chat history
 
 
 <i>insert mode:</i>
@@ -77,15 +76,6 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
   end, { noremap = true })
 
 
-<i>CLI</i>
-
-build the go code:
-
-  go build -o tai .
-
-move tai to a folder in your path.
-
-
 <b>usage</b>
 
 make sure the correct env var is set: <i>GROQ_API_KEY</i>,
@@ -93,19 +83,6 @@ for Groq or <i>GEMINI_API_KEY</i> for Gemini.
 create a .tai file at the root or your project.
 editting any file in that project should start tai.
 then just use the keybindings above.
-
-note: the first time tai is open it will index all
-your project's files, so it may take some time to
-fully load.
-
-to use the CLI you just run tai in your shell, this
-will start the interactive mode that you can use to
-chat.
-
-tai is aware if is being used in a pipeline, so you
-can run it to improve your terminal workflow, e.g.
-
-  ls . | tai "rename to snake_case" | ... 
 
 
 <i>screenshots</i>
