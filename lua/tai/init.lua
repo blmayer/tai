@@ -21,21 +21,11 @@ function input_callback(input)
 end
 
 function M.toggle_chat_window()
-	ui.toggle_output_window(input_callback)
+	ui.toggle_chat_window(input_callback)
 end
 
 function M.chat()
 	ui.open(input_callback)
-	-- ui.input(function(input)
-	-- 	if not input or input == "" then return end
-	-- 	log.debug("Received user input: " .. input)
-
-	-- 	vim.schedule(function()
-	-- 		ui.append_to_buffer("--------------------------\n> " .. input .. "\n")
-	-- 	end)
-
-	-- 	project.chat(input)
-	-- end)
 end
 
 function M.reset()

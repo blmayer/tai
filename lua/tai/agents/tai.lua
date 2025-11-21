@@ -34,8 +34,7 @@ If the demand is specific to the current project then:
   - A good starter is `ls -R` or `find`, reading AGENTS.md and README.md helps.
   - The imports help you understand the code organization and structure.
 If code changes are needed:
-- Patches need precise line numbering, make sure you know the files you change.
-- Implement the task considering the constraints given.
+- Patches need precise line numbering, you must know the files you're changing.
   - Be consistent with the code base's style.
 - Don't use the run tool to change files unless explicitly told to.
 - Call the patch tool to implement the changes you want.

@@ -5,7 +5,24 @@ local tools = require("tai.agents.tools")
 
 local url = 'http://localhost:11434/api/chat'
 
-function M.request(model_config, messages, format, callback)
+local history = nil
+
+function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
+	if not history then
+		history = { msg }
+	else
+		table.insert(history, msg)
+	end
+end
+
+function M.clear_history()
+	history = nil
+end
+
+function M.request(model_config, msg, format, callback)
+	M.add_to_history(msg)
+
 	local agent_tools = vim.tbl_map(
 		function(t)
 			return tools.defs[t]
@@ -14,7 +31,7 @@ function M.request(model_config, messages, format, callback)
 	)
 	local body = {
 		model = model_config.model,
-		messages = messages,
+		messages = history,
 		stream = false,
 		tools = agent_tools,
 	}

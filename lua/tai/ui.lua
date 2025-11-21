@@ -4,53 +4,37 @@ local log = require("tai.log")
 local bufname = "tai-chat"
 local input_bufname = "tai-chat-input"
 
-local function ensure_input_buf()
-	local bufnr = vim.fn.bufnr(input_bufname)
-	if bufnr == -1 then
-		bufnr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
-		vim.api.nvim_buf_set_name(bufnr, input_bufname)
-		vim.bo[bufnr].buftype = 'nofile'
-		vim.bo[bufnr].bufhidden = 'wipe'
-		vim.bo[bufnr].swapfile = false
-		vim.bo[bufnr].filetype = 'text'
-		vim.bo[bufnr].modifiable = true
+local chat_win
+local input_win
 
-		-- Keybindings for the input buffer
-		vim.keymap.set('n', '<CR>', function() M.send_current_input() end, { buffer = bufnr })
-	end
-	return bufnr
-end
+M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+vim.bo[M.input_buffer_nr].buftype = 'nofile'
+vim.bo[M.input_buffer_nr].bufhidden = 'wipe'
+vim.bo[M.input_buffer_nr].swapfile = false
+vim.bo[M.input_buffer_nr].filetype = 'text'
+vim.bo[M.input_buffer_nr].modifiable = true
 
-local function ensure_buf()
-	local bufnr = vim.fn.bufnr(bufname)
-	if bufnr == -1 then
-		bufnr = vim.api.nvim_create_buf(false, true)
-		vim.api.nvim_buf_set_name(bufnr, bufname)
-		vim.bo[bufnr].buftype = "nofile"
-		vim.bo[bufnr].bufhidden = "hide" -- keep content when hidden
-		vim.bo[bufnr].swapfile = false
-		vim.bo[bufnr].modifiable = true
-		vim.bo[bufnr].filetype = "text"
-	end
-	return bufnr
-end
-
-M.buffer_nr = ensure_buf()
-M.input_buffer_nr = ensure_input_buf()
+M.buffer_nr = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(M.buffer_nr, bufname)
+vim.bo[M.buffer_nr].buftype = "nofile"
+vim.bo[M.buffer_nr].bufhidden = "hide" -- keep content when hidden
+vim.bo[M.buffer_nr].swapfile = false
+vim.bo[M.buffer_nr].modifiable = true
+vim.bo[M.buffer_nr].filetype = "text"
 
 -- Autoclose TAI UI buffers on Neovim exit
 vim.api.nvim_create_autocmd("VimLeavePre", {
-  group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
-  callback = function()
-    if vim.api.nvim_buf_is_valid(M.buffer_nr) then
-      vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
-    end
-    if vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
-      vim.api.nvim_buf_delete(M.input_buffer_nr, { force = true })
-    end
-  end,
+	group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
+	callback = function()
+		if vim.api.nvim_buf_is_valid(M.buffer_nr) then
+			vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
+		end
+		if vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+			vim.api.nvim_buf_delete(M.input_buffer_nr, { force = true })
+		end
+	end,
 })
-M.input_buffer_nr = ensure_input_buf()
 
 function M.append_to_buffer(content)
 	local new_lines = vim.split(content, "\n")
@@ -67,9 +51,8 @@ function M.append_to_buffer(content)
 	end)
 end
 
-function M.toggle_output_window(callback)
-	local bufnr = M.buffer_nr
-	local winid = vim.fn.bufwinnr(bufnr)
+function M.toggle_chat_window(callback)
+	local winid = vim.fn.bufwinnr(M.buffer_nr)
 	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
 	if winid ~= -1 then
 		-- Close the window
@@ -84,22 +67,29 @@ end
 
 function M.open(callback)
 	vim.schedule(function()
-		if vim.fn.bufwinnr(M.buffer_nr) == -1 then
+		local chat_window_nr = vim.fn.bufwinnr(M.buffer_nr)
+		if chat_window_nr == -1 then
 			vim.cmd("vsplit")
-			local win = vim.api.nvim_get_current_win()
-			vim.api.nvim_win_set_buf(win, M.buffer_nr)
-			vim.api.nvim_win_set_width(win, 80)
+			chat_win = vim.api.nvim_get_current_win()
+			vim.api.nvim_win_set_buf(chat_win, M.buffer_nr)
+			vim.api.nvim_win_set_width(chat_win, 80)
 
 			-- Open input buffer in horizontal split below the output
 			vim.cmd("below split") -- horizontal split below
-			local input_win = vim.api.nvim_get_current_win()
+			input_win = vim.api.nvim_get_current_win()
 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
 			vim.api.nvim_win_set_height(input_win, 6) -- 6 lines for input
 
 			vim.keymap.set('n', '<CR>', function()
-				local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false), '\n')
+				local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
+					'\n')
+				vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
 				callback(input)
 			end, { buffer = M.input_buffer_nr })
+			vim.cmd("startinsert")
+		else
+			vim.api.nvim_set_current_win(input_win)
+			vim.cmd("startinsert")
 		end
 	end)
 end
@@ -185,39 +175,6 @@ function M.replace_visual_selection(content)
 
 	local replacement = vim.split(content, "\n", { plain = true })
 	vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
-end
-
--- Prompt user for multi-line input with Shift+Enter support
-function M.input(callback)
-	-- Focus input window and enter insert mode
-	vim.api.nvim_get_current_win()
-	vim.cmd("startinsert")
-
-	-- local bufnr = vim.api.nvim_create_buf(false, true)
-	-- local width = math.min(80, vim.o.columns - 10)
-	-- local height = math.min(10, vim.o.lines - 10)
-
-	-- local winnr = vim.api.nvim_open_win(bufnr, true, {
-	-- 	relative = 'editor',
-	-- 	width = width,
-	-- 	height = height,
-	-- 	col = (vim.o.columns - width) / 2,
-	-- 	row = (vim.o.lines - height) / 2,
-	-- 	style = 'minimal',
-	-- 	border = 'rounded'
-	-- })
-
-	-- vim.bo[bufnr].buftype = 'nofile'
-	-- vim.bo[bufnr].bufhidden = 'wipe'
-	-- vim.bo[bufnr].swapfile = false
-	-- vim.bo[bufnr].filetype = 'text'
-
-	-- vim.keymap.set('n', '<CR>', function()
-	-- 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
-	-- 	local text = table.concat(lines, '\n')
-	-- 	vim.api.nvim_win_close(winnr, false)
-	-- 	callback(text)
-	-- end, { buffer = bufnr })
 end
 
 return M
