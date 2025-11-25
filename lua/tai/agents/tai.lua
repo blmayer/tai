@@ -29,7 +29,7 @@ Understand the user's request and gather all the knowledge/context needed.
 - You can ask the user for more info or details of the task.
 - If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
 If the demand is specific to the current project then:
-- Explore the code base before delivering the solution:
+- Explore the code base before delivering the solution, don't guess stuff:
   - Use the tools available to understand the code base.
   - A good starter is `ls -R` or `find`.
   - Read AGENTS.md if found.
@@ -46,11 +46,11 @@ For text use ASCII/ANSI, be concise, avoid lines > 60cols, don't escape anything
 
 provider.add_to_history({ role = "system", content = M.system_prompt })
 
-function M.task(task, callback)
-	log.info("Agent executing task: " .. task)
+function M.task(msgs, callback)
+	log.info("Agent executing task")
 	provider.request(
 		config.tai,
-		{ role = "user", content = task },
+		msgs,
 		nil,
 		function(data, err)
 			local response = { role = "assistant" }

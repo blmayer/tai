@@ -1,12 +1,14 @@
 local M = {}
 local log = require("tai.log")
+local config = require("tai.config")
+local tai = require("tai.agents.tai")
+local tools = require("tai.agents.tools")
 
 local bufname = "tai-chat"
 local input_bufname = "tai-chat-input"
 
 local chat_win
 local input_win
-local callback
 
 M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
 vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
@@ -52,7 +54,7 @@ function M.append_to_buffer(content)
 	end)
 end
 
-function M.scroll_down()
+local function scroll_down()
 	vim.schedule(function()
 		local original_win = vim.api.nvim_get_current_win()
 		vim.api.nvim_set_current_win(chat_win)
@@ -62,7 +64,7 @@ function M.scroll_down()
 	end)
 end
 
-function M.add_sep()
+local function add_sep()
 	local width = vim.api.nvim_win_get_width(chat_win)
 	local result = ""
 	for i = 1, width do
@@ -71,19 +73,121 @@ function M.add_sep()
 	M.append_to_buffer(result .. "\n")
 end
 
-function M.set_chat_callback(cb)
-	callback = cb
+local function show_response(fields)
+	log.debug("Showing response")
+	M.open()
+
+	local content = ""
+	if fields.error then
+		content = content .. "[tai] " .. fields.error .. "\n"
+		M.append_to_buffer(content)
+		return
+	end
+	if fields.content and fields.content ~= "" then
+		content = content .. fields.content .. "\n"
+	end
+
+	if fields.tool_calls then
+		for _, call in ipairs(fields.tool_calls or {}) do
+			local args = call["function"].arguments
+
+			if call["function"].name == "run" then
+				content = content .. "[tai] Running " .. args.command .. "\n"
+			elseif call["function"].name == "read_file" then
+				content = content .. "[tai] Reading " .. args.file_path .. "\n"
+			elseif call["function"].name == "patch" then
+				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
+				for _, change in ipairs(args.changes) do
+					content = content .. "\t" .. change.file .. ":\n"
+					for _, hunk in ipairs(change.hunks) do
+						if hunk.operation == "delete" then
+							content = content .. "\tdelete " .. hunk.lines .. "\n"
+						else
+							content = content ..
+							    "\t" ..
+							    hunk.operation ..
+							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+						end
+					end
+				end
+			end
+		end
+	end
+	if not fields.tool_calls and not fields.content then
+		content = content .. "[tai] Received empty reply."
+	end
+
+	M.append_to_buffer(content)
+end
+
+local function handle_chat_reply(reply, err)
+	vim.schedule(function()
+		log.info("handling chat reply: " .. vim.json.encode(reply))
+		if err then
+			log.error("received error from agent: " .. err)
+			show_response({ error = err })
+			return
+		end
+
+		show_response(reply)
+		if reply.tool_calls then
+			local results = {}
+			for _, call in ipairs(reply.tool_calls) do
+				local name = call["function"].name
+				local args = call["function"].arguments
+
+				local out
+				if name == "run" then
+					log.debug("Asking for confirmation")
+					local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
+					if input == 1 then
+						log.debug("Confirmed")
+						out = tools.run(name, args)
+					else
+						log.debug("Declined")
+						out = "[sys] User declined"
+					end
+				else
+					out = tools.run(name, args)
+				end
+
+				table.insert(
+					results,
+					{
+						role = "tool",
+						name = name,
+						content = out,
+						tool_call_id = call.id
+					}
+				)
+			end
+			return tai.task(results, handle_chat_reply)
+		end
+	end)
 end
 
 local function send_input()
 	vim.schedule(function()
-		M.scroll_down()
-		local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
-			'\n')
+		scroll_down()
+		local input = table.concat(
+			vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
+			'\n'
+		)
 		vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
-		callback(input)
+
+		if not input or input == "" then return end
+		vim.schedule(function()
+			add_sep()
+			M.append_to_buffer(input .. "\n")
+		end)
+
+		log.debug("got input: " .. input)
+		tai.task({{ role = "user", content = input }}, handle_chat_reply)
 	end)
 end
+
+vim.keymap.set('n', '<CR>', send_input, { buffer = M.input_buffer_nr })
+vim.keymap.set('i', '<S-CR>', send_input, { buffer = M.input_buffer_nr })
 
 function M.toggle_chat_window()
 	local winid = vim.fn.bufwinnr(M.buffer_nr)
@@ -121,95 +225,13 @@ function M.open()
 			input_win = vim.api.nvim_get_current_win()
 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
 			vim.api.nvim_win_set_height(input_win, 8) -- 8 lines for input
-
-			vim.keymap.set('n', '<CR>', send_input, { buffer = M.input_buffer_nr })
-			vim.keymap.set('i', '<S-CR>', send_input, { buffer = M.input_buffer_nr })
 		end
 	end)
 end
 
-function M.show_response(fields)
-	log.debug("Showing response")
-	M.open()
-
-	local content = ""
-	if fields.error then
-		content = content .. "[tai] " .. fields.error .. "\n"
-		M.append_to_buffer(content)
-		return
-	end
-	if fields.content and fields.content ~= "" then
-		content = content .. fields.content .. "\n"
-	end
-
-	if fields.tool_calls then
-		for _, call in ipairs(fields.tool_calls) do
-			local args = call["function"].arguments
-
-			if call["function"].name == "run" then
-				content = content .. "[tai] Running " .. args.command .. "\n"
-			elseif call["function"].name == "read_file" then
-				content = content .. "[tai] Reading " .. args.file_path .. "\n"
-			elseif call["function"].name == "patch" then
-				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
-				for _, change in ipairs(args.changes) do
-					content = content .. "\t" .. change.file .. ":\n"
-					for _, hunk in ipairs(change.hunks) do
-						if hunk.operation == "delete" then
-							content = content .. "\tdelete " .. hunk.lines .. "\n"
-						else
-							content = content ..
-							    "\t" ..
-							    hunk.operation ..
-							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
-						end
-					end
-				end
-			end
-		end
-	end
-	if not fields.tool_calls and not fields.content then
-		content = content .. "[tai] Received empty reply."
-	end
-
-	M.append_to_buffer(content)
-end
-
 function M.clear()
 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
-end
-
--- Insert the content at the cursor (insert mode)
-function M.insert_response(content)
-	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
-	local lines = vim.split(content, "\n", { plain = true })
-	local bufnr = vim.api.nvim_get_current_buf()
-
-	local current_line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
-	local before = current_line:sub(1, col)
-	local after = current_line:sub(col + 1)
-
-	lines[1] = before .. lines[1]
-	lines[#lines] = lines[#lines] .. after
-
-	local new_col = #lines[#lines] - #after
-	vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, lines)
-	vim.api.nvim_win_set_cursor(0, { row + #lines - 1, new_col })
-end
-
--- Replace selected text (visual mode)
-function M.replace_visual_selection(content)
-	local _, csrow, cscol, _ = unpack(vim.fn.getpos("'<"))
-	local _, cerow, cecol, _ = unpack(vim.fn.getpos("'>"))
-	local bufnr = vim.api.nvim_get_current_buf()
-
-	if csrow > cerow or (csrow == cerow and cscol > cecol) then
-		csrow, cerow = cerow, csrow
-		cscol, cecol = cecol, cscol
-	end
-
-	local replacement = vim.split(content, "\n", { plain = true })
-	vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
+	tai.clear_history()
 end
 
 return M
