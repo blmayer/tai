@@ -1,8 +1,7 @@
 local M = {}
 local log = require("tai.log")
-local config = require("tai.config")
 local tai = require("tai.agents.tai")
-local tools = require("tai.agents.tools")
+local tools = require("tai.tools")
 
 local bufname = "tai-chat"
 local input_bufname = "tai-chat-input"
@@ -91,7 +90,7 @@ local function show_response(fields)
 		for _, call in ipairs(fields.tool_calls or {}) do
 			local args = call["function"].arguments
 
-			if call["function"].name == "run" then
+			if call["function"].name == "shell" then
 				content = content .. "[tai] Running " .. args.command .. "\n"
 			elseif call["function"].name == "read_file" then
 				content = content .. "[tai] Reading " .. args.file_path .. "\n"
@@ -137,7 +136,7 @@ local function handle_chat_reply(reply, err)
 				local args = call["function"].arguments
 
 				local out
-				if name == "run" then
+				if name == "shell" then
 					log.debug("Asking for confirmation")
 					local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
 					if input == 1 then

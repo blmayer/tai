@@ -4,7 +4,7 @@ local M = {}
 local config = require('tai.config')
 local log = require('tai.log')
 local provider = require('tai.provider')
-local tools = require('tai.agents.tools')
+local tools = require('tai.tools')
 
 if not config.root then
 	return M
@@ -28,20 +28,22 @@ INSTRUCTIONS
 Understand the user's request and gather all the knowledge/context needed.
 - You can ask the user for more info or details of the task.
 - If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
+For the first interaction:
+  - Run `ls -R` or `find`.
+  - Read AGENTS.md if found and remember it.
 If the demand is specific to the current project then:
 - Explore the code base before delivering the solution, don't guess stuff:
   - Use the tools available to understand the code base.
-  - A good starter is `ls -R` or `find`.
-  - Read AGENTS.md if found.
   - The imports help you understand the code organization and structure.
+  - Re-read files if you think they changed after the patch. 
 If code changes are needed:
 - Patches need precise line numbering, you must know the files you're changing.
-  - Be consistent with the code base's style.
-- Don't use the run tool to change files unless explicitly told to.
+- Don't use the shell tool to change or read files unless explicitly told to.
 - Call the patch tool to implement the changes you want.
 
 RESPONSE FORMAT
-For text use ASCII/ANSI, be concise, avoid lines > 60cols, don't escape anything.
+For text use ASCII/ANSI, be concise, avoid lines > 60 columns, don't quote or
+escape the text, the response is shown verbatim to the user. No markdown.
 ]]
 
 provider.add_to_history({ role = "system", content = M.system_prompt })

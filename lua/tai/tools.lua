@@ -9,7 +9,7 @@ M.defs = {
 		["function"] = {
 			name = "read_file",
 			description =
-			"Reads the content of a file from the file system. And returns the content with numberred lines.",
+			"Reads the content of a file from the file system. And returns the content with numberred lines. Don't use `cat` command. Use this tool.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -39,7 +39,7 @@ M.defs = {
 					changes = {
 						type = "array",
 						description =
-						"List of changes to be made, by file. Each change is applied independently on the original file, i.e. the order matters, but line numbers are not updated.",
+						"List of changes to be made, by file. Each change is applied in order, so you must keep track of how line numbers change.",
 						items = {
 							type = "object",
 							properties = {
@@ -63,7 +63,7 @@ M.defs = {
 											lines = {
 												type = "string",
 												description =
-												"Range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$.",
 											},
 											content = {
 												type = "string",
@@ -83,12 +83,12 @@ M.defs = {
 			}
 		}
 	},
-	run = {
+	shell = {
 		type = "function",
 		["function"] = {
-			name = "run",
+			name = "shell",
 			description =
-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed.",
+			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Don't use this for reading files.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -113,6 +113,10 @@ function M.pretty_info(tools)
 	local pre = "You can use the following tool calls:\n"
 	local tools_desc = vim.tbl_map(
 		function(t)
+			if not M.defs[t] then
+				return ""
+			end
+
 			local desc = M.defs[t]["function"].description
 			local props = M.defs[t]["function"].parameters.properties
 			local args = "Arguments:\n"
@@ -135,7 +139,8 @@ local function read_file(file_path)
 
 	local file = io.open(file_path, "r")
 	if not file then
-		return "[sys] File `" .. file_path .. "` not found."
+		return "[sys] File `" ..
+		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
 	end
 
 	local content = file:read("*all")
@@ -192,7 +197,7 @@ local function dangerous_command(cmd)
 end
 
 local function run_command(cmd)
-	log.debug("Running run `" .. cmd .. "`")
+	log.debug("Running `" .. cmd .. "`")
 
 	local danger = dangerous_command(cmd)
 	if danger then
@@ -261,9 +266,32 @@ local function apply_patch(name, changes)
 	-- Apply changes to new buffer (replace with your actual diff content)
 	for _, change in ipairs(changes) do
 		local file = change.file
+		local buf = nil
 
-		vim.cmd("topleft vnew " .. file)
-		local buf = vim.api.nvim_get_current_buf()
+		-- Check if file is already open in a buffer
+		for _, b in ipairs(vim.api.nvim_list_bufs()) do
+			if vim.api.nvim_buf_is_loaded(b) then
+				local buf_name = vim.api.nvim_buf_get_name(b)
+				if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
+					buf = b
+					break
+				end
+			end
+		end
+
+		local is_open = false
+		if buf then
+			for _, win in ipairs(vim.api.nvim_list_wins()) do
+				if vim.api.nvim_win_get_buf(win) == buf then
+					is_open = true
+					break
+				end
+			end
+		end
+		if not is_open or not buf then
+			vim.cmd("topleft vnew " .. file)
+			buf = vim.api.nvim_get_current_buf()
+		end
 		-- local new_buf = vim.api.nvim_create_buf(0, false)
 
 		-- Copy lines from current buffer to new buffer
@@ -288,10 +316,10 @@ local function apply_patch(name, changes)
 			elseif operation == "change" then
 				-- Replace lines with new content
 				local new_lines = vim.split(content, '\n')
-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
+				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
 			elseif operation == "delete" then
 				-- Remove lines
-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, {})
+				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
 			end
 		end
 
@@ -336,7 +364,7 @@ function M.run(tool, args)
 			return "[sys] missing read_file argument"
 		end
 		return read_file(args.file_path)
-	elseif tool == "run" then
+	elseif tool == "shell" then
 		if not args.command then
 			return "[sys] missing command argument"
 		end
