@@ -1,7 +1,7 @@
 local M = {}
 
 local log = require("tai.log")
-local tools = require("tai.agents.tools")
+local tools = require("tai.tools")
 
 local url = "https://api.mistral.ai/v1/chat/completions"
 
