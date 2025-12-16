@@ -6,17 +6,13 @@
 <style>pre{width:52ch;margin:2ch auto}a{color:#ff00ff}</style>
 <pre><i><b>tai.nvim</b></i>
 
-a minimal Neovim plugin built to bring AI-powered
-text and code insights directly to your editor.
-
-the plugin sends selections, prompts, or full files
-for processing using the groq API.
+a minimal Neovim plugin built to bring AI coding
+agents directly to your editor.
 
 
 <b>features</b>
 
-- send motions or visual selections from Neovim
-- prompt for input and combine it with text or files
+- agents can read files and run commands
 - responses show up in a split buffer in Neovim
 - apply patches or run commands
 - agents create plans for big code changes
@@ -27,21 +23,14 @@ for processing using the groq API.
 - groq
 - gemini
 - mistral (wip, their handoff is not working)
+- ollama
+- z.ai
 
 
 <b>keybindings</b>
 
-<i>normal mode:</i>
-
-gT + motion	- send motion selection
-gP + motion	- send motion selection with input
 &lt;leader&gt;ti 	- prompt input and send
 &lt;leader&gt;tr 	- reset the chat history
-
-
-<i>insert mode:</i>
-
-&lt;C-x&gt;&lt;C-t&gt;	- trigger complete function
 
 
 <b>installation</b>
@@ -74,6 +63,23 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
   vim.keymap.set("i", "&lt;leader&gt;tf", function()
     vim.schedule(tai.prompt_full_file)
   end, { noremap = true })
+
+
+<b>configuring</b>
+
+tai only needs a simple config file located at the
+root of your project, create a file named .tai with
+this structure:
+
+{
+	"provider": string,
+	"tai": {
+		"tools": []string
+		"model": string
+	}
+}
+
+tool options: read_file, shell, patch.
 
 
 <b>usage</b>
