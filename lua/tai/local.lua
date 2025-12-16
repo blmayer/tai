@@ -1,27 +1,37 @@
 local M = {}
 
 local log = require("tai.log")
-local tools = require("tai.agents.tools")
+local tools = require("tai.tools")
 
-local url = 'http://localhost:11434/api/chat'
+local url = 'http://localhost:11434/v1/chat/completions'
 
 local history = nil
 
 function M.add_to_history(message)
+	log.debug("adding message to history")
 	local msg = vim.deepcopy(message)
-	if not history then
-		history = { msg }
-	else
-		table.insert(history, msg)
+	for _, call in ipairs(msg.tool_calls or {}) do
+		local args = call["function"].arguments
+		call["function"].arguments = vim.json.encode(args)
 	end
+
+	if not history then
+		log.debug("new history")
+		history = { msg }
+		return
+	end
+	log.debug("insert into history")
+	table.insert(history, msg)
 end
 
 function M.clear_history()
 	history = nil
 end
 
-function M.request(model_config, msg, format, callback)
-	M.add_to_history(msg)
+function M.request(model_config, msgs, format, callback)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
 
 	local agent_tools = vim.tbl_map(
 		function(t)
@@ -62,7 +72,7 @@ function M.request(model_config, msg, format, callback)
 
 			log.debug("Request response: " .. obj.stdout)
 			if not obj.stdout or obj.stdout == "" then
-				return callback(nil, "Received empty response from Gemini")
+				return callback(nil, "Received empty response from server")
 			end
 
 			local parsed = vim.json.decode(obj.stdout)
@@ -70,15 +80,11 @@ function M.request(model_config, msg, format, callback)
 				return callback(nil, "Failed to decode JSON: " .. parsed)
 			end
 
-			if #parsed > 0 and parsed.error then
-				return callback(nil, "Received error: " .. parsed.error)
-			end
-
 			if parsed.error then
-				return callback(nil, parsed.error)
+				return callback(nil, "Received error: " .. parsed.error.message)
 			end
 
-			local content = parsed.message.content
+			local content = parsed.choices[1].message.content
 			local fields = {}
 			if content and content ~= "" then
 				log.debug("response content: " .. content)
@@ -92,7 +98,15 @@ function M.request(model_config, msg, format, callback)
 					fields.content = content
 				end
 			end
-			fields.tool_calls = parsed.message.tool_calls
+
+			local tool_calls = parsed.choices[1].message.tool_calls
+			if tool_calls and tool_calls ~= vim.NIL then
+				fields.tool_calls = tool_calls
+				for _, call in ipairs(fields.tool_calls) do
+					local args = call["function"].arguments
+					call["function"].arguments = vim.json.decode(args)
+				end
+			end
 			callback(fields, nil)
 		end)
 end
