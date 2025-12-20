@@ -20,7 +20,7 @@ M.defs = {
 					range = {
 						type = "string",
 						description =
-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d-$: get last lines. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$; last 5 lines: -5-$.",
+						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
 					}
 				},
 				required = { "file_path" }
@@ -68,7 +68,7 @@ M.defs = {
 											lines = {
 												type = "string",
 												description =
-												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$.",
+												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
 											},
 											content = {
 												type = "string",
@@ -142,14 +142,14 @@ local function parse_lines(range)
 		return -1, -1
 	end
 
-	-- Handle negative ranges (e.g., -5-$ for last 5 lines)
-	local start, end_line = range:match("^(-%d+)-%$")
+	-- Handle negative ranges (e.g., -5:$ for last 5 lines)
+	local start, end_line = range:match("^(-%d+):%$")
 	if start and end_line then
 		return tonumber(start), -1
 	end
 
-	-- Handle range (e.g., "2-5")
-	start, end_line = range:match("^(%d+)-(%d+)$")
+	-- Handle range (e.g., "2:5")
+	start, end_line = range:match("^(%d+):(%d+)$")
 	if start and end_line then
 		return tonumber(start) - 1, tonumber(end_line) - 1
 	end
@@ -228,54 +228,8 @@ local function read_file(file_path, range)
 	return numbered_content
 end
 
-local function dangerous_command(cmd)
-	local parts = vim.split(cmd, "%s+")
-	if #parts == 0 then return false end
-
-	local base = parts[1]:match("^([^/]+)$")
-	if not base then
-		return nil
-	end
-
-	local ok = false
-	for _, c in ipairs(config.allowed_commands) do
-		if c == base then
-			ok = true
-			break
-		end
-	end
-
-	if not ok then
-		return "[sys] Command not allowed."
-	end
-
-	for _, arg in ipairs(parts) do
-		if arg:sub(1, 1) == "-" then
-			goto continue
-		end
-		if arg:sub(1, 1) == "/" then
-			return "[sys] Paths cannot start from root (/). Use relative."
-		end
-		if arg:match("%.%.") then
-			return false
-		end
-		if arg:match("[*?]") then
-			return false
-		end
-		::continue::
-	end
-
-	return nil
-end
-
 local function run_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
-
-	local danger = dangerous_command(cmd)
-	if danger then
-		log.debug("command is not allowed: " .. danger)
-		return "[sys] Command not executed because: " .. danger
-	end
 
 	local env = {}
 	for _, name in ipairs({ "PATH" }) do

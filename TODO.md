@@ -1,7 +1,6 @@
 # TODO
 
-- tools must be per agent, not provider:
-  - instantiate a tool new_tools(agent_config)
+- fix patch tool's poor performance
 
 
 # DONE

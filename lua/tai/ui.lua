@@ -1,6 +1,6 @@
 local M = {}
 local log = require("tai.log")
-local tai = require("tai.agents.tai")
+local tai = require("tai.agent")
 local tools = require("tai.tools")
 
 local bufname = "tai-chat"
@@ -72,97 +72,73 @@ local function add_sep()
 	M.append_to_buffer(result .. "\n")
 end
 
-local function show_response(fields)
+local function process_response(fields)
+	vim.schedule(function()
 	log.debug("Showing response")
 	M.open()
 
-	local content = ""
 	if fields.error then
-		content = content .. "[tai] " .. fields.error .. "\n"
-		M.append_to_buffer(content)
+		M.append_to_buffer("[tai] " .. fields.error .. "\n")
 		return
 	end
 	if fields.content and fields.content ~= "" then
-		content = content .. fields.content .. "\n"
+		M.append_to_buffer(fields.content .. "\n")
 	end
 
 	if fields.tool_calls then
+		local results = {}
 		for _, call in ipairs(fields.tool_calls or {}) do
+			local name = call["function"].name
 			local args = call["function"].arguments
 
-			if call["function"].name == "shell" then
-				content = content .. "[tai] Running " .. args.command .. "\n"
-			elseif call["function"].name == "read_file" then
-				content = content .. "[tai] Reading " .. args.file_path .. "\n"
-			elseif call["function"].name == "patch" then
-				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
+			if name == "shell" then
+				log.debug("Asking for confirmation")
+				local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
+				if input == 1 then
+					log.debug("Confirmed")
+					M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+					out = tools.run(name, args)
+				else
+					log.debug("Declined")
+					out = "[sys] User declined"
+				end
+			elseif name == "read_file" then
+				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
+				out = tools.run(name, args)
+			elseif name == "patch" then
+				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
+				out = tools.run(name, args)
 				for _, change in ipairs(args.changes) do
-					content = content .. "\t" .. change.file .. ":\n"
+					M.append_to_buffer("\t" .. change.file .. ":\n")
 					for _, hunk in ipairs(change.hunks) do
 						if hunk.operation == "delete" then
-							content = content .. "\tdelete " .. hunk.lines .. "\n"
+							M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
 						else
-							content = content ..
-							    "\t" ..
-							    hunk.operation ..
-							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+							M.append_to_buffer(
+								"\t" ..
+								hunk.operation ..
+								" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+							)
 						end
 					end
 				end
 			end
+			table.insert(
+				results,
+				{
+					role = "tool",
+					name = name,
+					content = out,
+					tool_call_id = call.id
+				}
+			)
 		end
+		return tai.task(results, process_response)
 	end
 	if not fields.tool_calls and not fields.content then
-		content = content .. "[tai] Received empty reply."
+		M.append_to_buffer("[tai] Received empty reply.")
 	end
-
-	M.append_to_buffer(content)
-end
-
-local function handle_chat_reply(reply, err)
-	vim.schedule(function()
-		log.info("handling chat reply: " .. vim.json.encode(reply))
-		if err then
-			log.error("received error from agent: " .. err)
-			show_response({ error = err })
-			return
-		end
-
-		show_response(reply)
-		if reply.tool_calls then
-			local results = {}
-			for _, call in ipairs(reply.tool_calls) do
-				local name = call["function"].name
-				local args = call["function"].arguments
-
-				local out
-				if name == "shell" then
-					log.debug("Asking for confirmation")
-					local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
-					if input == 1 then
-						log.debug("Confirmed")
-						out = tools.run(name, args)
-					else
-						log.debug("Declined")
-						out = "[sys] User declined"
-					end
-				else
-					out = tools.run(name, args)
-				end
-
-				table.insert(
-					results,
-					{
-						role = "tool",
-						name = name,
-						content = out,
-						tool_call_id = call.id
-					}
-				)
-			end
-			return tai.task(results, handle_chat_reply)
-		end
-	end)
+end)
 end
 
 local function send_input()
@@ -181,7 +157,7 @@ local function send_input()
 		end)
 
 		log.debug("got input: " .. input)
-		tai.task({{ role = "user", content = input }}, handle_chat_reply)
+		tai.task({ { role = "user", content = input } }, process_response)
 	end)
 end
 

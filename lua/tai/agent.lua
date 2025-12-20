@@ -19,7 +19,7 @@ requests or general questions. Your job is to address/implement them in the
 current project code base.
 
 The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
-    vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
+    vim.uv.cwd() .. [[, you have full access to the project folder, in a ]] ..
     host.machine .. " " .. host.sysname .. [[ machine.
 
 ]] .. tools.pretty_info(config.tai.tools) .. [[
@@ -37,9 +37,12 @@ If the demand is specific to the current project then:
   - The imports help you understand the code organization and structure.
   - Re-read files if you think they changed after the patch. 
 If code changes are needed:
+- To implement the changes call the patch tool.
 - Patches need precise line numbering, you must know the files you're changing.
+- Organize patches so that small changes can be sent on the same patch, but
+  group many small changes by function/method/class.
+- For changes multiple files better send them separately.
 - Don't use the shell tool to change or read files unless explicitly told to.
-- Call the patch tool to implement the changes you want.
 
 RESPONSE FORMAT
 For text use ASCII/ANSI, be concise, avoid lines > 60 columns, don't quote or
@@ -57,14 +60,14 @@ function M.task(msgs, callback)
 		function(data, err)
 			local response = { role = "assistant" }
 			if err then
-				response.content = err
+				return callback({error = err})
 			else
 				response.content = vim.json.encode(data.content)
 				response.tool_calls = data.tool_calls
 			end
 			provider.add_to_history(response)
 
-			callback(data, err)
+			callback(data)
 		end
 	)
 end
