@@ -15,13 +15,10 @@ end
 local history = nil
 
 function M.add_to_history(message)
-	log.debug("adding message to history")
 	if not history then
-		log.debug("new history")
 		history = { message }
 		return
 	end
-	log.debug("insert into history")
 	table.insert(history, message)
 end
 
@@ -116,7 +113,6 @@ function M.request(model_config, msgs, format, callback)
 			end
 
 			if message.tool_calls and message.tool_calls ~= vim.NIL then
-				log.debug(message.tool_calls)
 				fields.tool_calls = message.tool_calls
 				for _, call in ipairs(fields.tool_calls) do
 					local args = call["function"].arguments
