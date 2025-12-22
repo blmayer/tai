@@ -374,8 +374,8 @@ function M.run(tool, args)
 		if not args.changes then
 			return "[sys] missing changes argument"
 		end
-		vim.schedule(function() apply_patch(args.name, args.changes) end)
-		return "[sys] patch received and submitted for user approval"
+		vim.schedule_wrap(apply_patch(args.name, args.changes))
+		return "[sys] patch applied and submitted for user approval"
 	end
 
 	return "[sys] Unknown tool `" .. tool .. "`"

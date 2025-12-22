@@ -73,7 +73,6 @@ local function add_sep()
 end
 
 local function process_response(fields)
-	vim.schedule(function()
 	log.debug("Showing response")
 	M.open()
 
@@ -84,30 +83,39 @@ local function process_response(fields)
 	if fields.content and fields.content ~= "" then
 		M.append_to_buffer(fields.content .. "\n")
 	end
+	if not fields.tool_calls or #fields.tool_calls == 0 then
+		return
+	end
 
-	if fields.tool_calls then
+	vim.schedule(function()
 		local results = {}
 		for _, call in ipairs(fields.tool_calls or {}) do
 			local name = call["function"].name
 			local args = call["function"].arguments
 
+			local res = {
+				role = "tool",
+				name = name,
+				tool_call_id = call.id
+			}
 			if name == "shell" then
 				log.debug("Asking for confirmation")
-				local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
-				if input == 1 then
-					log.debug("Confirmed")
-					M.append_to_buffer("[tai] Running " .. args.command .. "\n")
-					out = tools.run(name, args)
-				else
-					log.debug("Declined")
-					out = "[sys] User declined"
-				end
+					local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
+					if input == 1 then
+						log.debug("Confirmed")
+						M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+						res.content = tools.run(name, args)
+					else
+						log.debug("Declined")
+						res.content = "[sys] User declined"
+					end
 			elseif name == "read_file" then
 				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
-				out = tools.run(name, args)
+				res.content = tools.run(name, args)
+				res.file_path = args.file_path
 			elseif name == "patch" then
 				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
-				out = tools.run(name, args)
+				res.content = tools.run(name, args)
 				for _, change in ipairs(args.changes) do
 					M.append_to_buffer("\t" .. change.file .. ":\n")
 					for _, hunk in ipairs(change.hunks) do
@@ -123,22 +131,10 @@ local function process_response(fields)
 					end
 				end
 			end
-			table.insert(
-				results,
-				{
-					role = "tool",
-					name = name,
-					content = out,
-					tool_call_id = call.id
-				}
-			)
+			table.insert(results, res)
 		end
 		return tai.task(results, process_response)
-	end
-	if not fields.tool_calls and not fields.content then
-		M.append_to_buffer("[tai] Received empty reply.")
-	end
-end)
+	end)
 end
 
 local function send_input()
