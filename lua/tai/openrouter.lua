@@ -3,23 +3,28 @@ local M = {}
 local log = require("tai.log")
 local tools = require("tai.tools")
 
-local url = "https://api.mistral.ai/v1/chat/completions"
+local url = "https://openrouter.ai/api/v1/chat/completions"
 
-local api_key = os.getenv("MISTRAL_API_KEY")
+local api_key = os.getenv("OPENROUTER_API_KEY")
 if not api_key then
 	vim.schedule(function()
-		vim.notify("[tai] ❌ Missing MISTRAL_API_KEY environment variable.", vim.log.levels.ERROR)
+		vim.notify("[tai] ❌ Missing OPENROUTER_API_KEY environment variable.", vim.log.levels.ERROR)
 	end)
 end
 
 local history = nil
 
 function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
+	for _, call in ipairs(msg.tool_calls or {}) do
+		local args = call["function"].arguments
+		call["function"].arguments = vim.json.encode(args)
+	end
 	if not history then
-		history = { message }
+		history = { msg }
 		return
 	end
-	table.insert(history, message)
+	table.insert(history, msg)
 end
 
 function M.clear_history()
@@ -97,12 +102,14 @@ function M.request(model_config, msgs, format, callback)
 			end
 
 			-- Mistral errors are usually at the root level, e.g., parsed.error
-			if parsed.object == "error" then
-				return callback(nil, parsed.message or "Unknown Mistral API error")
+			if parsed.error then
+				return callback(nil,
+					(parsed.error.message .. ": " .. parsed.error.metadata.raw) or
+					"Unknown Openrouter API error")
 			end
 
 			if not parsed.choices or #parsed.choices == 0 then
-				return callback(nil, "No choices received from Mistral")
+				return callback(nil, "No choices received from Openrouter")
 			end
 
 			local message = parsed.choices[1].message

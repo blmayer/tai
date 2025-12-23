@@ -72,6 +72,56 @@ local function add_sep()
 	M.append_to_buffer(result .. "\n")
 end
 
+local function run_tools(tool_calls, callback)
+	local results = {}
+	for _, call in ipairs(tool_calls or {}) do
+		local name = call["function"].name
+		local args = call["function"].arguments
+
+		local res = {
+			role = "tool",
+			name = name,
+			tool_call_id = call.id
+		}
+		if name == "shell" then
+			log.debug("Asking for confirmation")
+			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
+			if input == 1 then
+				log.debug("Confirmed")
+				M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+				res.content = tools.run(name, args)
+			else
+				log.debug("Declined")
+				M.append_to_buffer("[tai] Declined " .. args.command .. "\n")
+				res.content = "[sys] User declined running this command"
+			end
+		elseif name == "read_file" then
+			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
+			res.content = tools.run(name, args)
+			res.file_path = args.file_path
+		elseif name == "patch" then
+			M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
+			res.content = tools.run(name, args)
+			for _, change in ipairs(args.changes) do
+				M.append_to_buffer("\t" .. change.file .. ":\n")
+				for _, hunk in ipairs(change.hunks) do
+					if hunk.operation == "delete" then
+						M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
+					else
+						M.append_to_buffer(
+							"\t" ..
+							hunk.operation ..
+							" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+						)
+					end
+				end
+			end
+		end
+		table.insert(results, res)
+	end
+	callback(results)
+end
+
 local function process_response(fields)
 	log.debug("Showing response")
 	M.open()
@@ -88,52 +138,10 @@ local function process_response(fields)
 	end
 
 	vim.schedule(function()
-		local results = {}
-		for _, call in ipairs(fields.tool_calls or {}) do
-			local name = call["function"].name
-			local args = call["function"].arguments
-
-			local res = {
-				role = "tool",
-				name = name,
-				tool_call_id = call.id
-			}
-			if name == "shell" then
-				log.debug("Asking for confirmation")
-					local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
-					if input == 1 then
-						log.debug("Confirmed")
-						M.append_to_buffer("[tai] Running " .. args.command .. "\n")
-						res.content = tools.run(name, args)
-					else
-						log.debug("Declined")
-						res.content = "[sys] User declined"
-					end
-			elseif name == "read_file" then
-				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
-				res.content = tools.run(name, args)
-				res.file_path = args.file_path
-			elseif name == "patch" then
-				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
-				res.content = tools.run(name, args)
-				for _, change in ipairs(args.changes) do
-					M.append_to_buffer("\t" .. change.file .. ":\n")
-					for _, hunk in ipairs(change.hunks) do
-						if hunk.operation == "delete" then
-							M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
-						else
-							M.append_to_buffer(
-								"\t" ..
-								hunk.operation ..
-								" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
-							)
-						end
-					end
-				end
-			end
-			table.insert(results, res)
-		end
-		return tai.task(results, process_response)
+		run_tools(
+			fields.tool_calls,
+			function(res) tai.task(res, process_response) end
+		)
 	end)
 end
 
