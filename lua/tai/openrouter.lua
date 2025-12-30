@@ -104,7 +104,7 @@ function M.request(model_config, msgs, format, callback)
 			-- Mistral errors are usually at the root level, e.g., parsed.error
 			if parsed.error then
 				return callback(nil,
-					(parsed.error.message .. ": " .. parsed.error.metadata.raw) or
+					(parsed.error.message .. (": " .. parsed.error.metadata) or "") or
 					"Unknown Openrouter API error")
 			end
 

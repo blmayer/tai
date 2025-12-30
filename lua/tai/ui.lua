@@ -100,22 +100,9 @@ local function run_tools(tool_calls, callback)
 			res.content = tools.run(name, args)
 			res.file_path = args.file_path
 		elseif name == "patch" then
-			M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
+			M.append_to_buffer("[tai] Patching file " .. args.file .. ":\n")
+			M.append_to_buffer(args.diff .. "\n")
 			res.content = tools.run(name, args)
-			for _, change in ipairs(args.changes) do
-				M.append_to_buffer("\t" .. change.file .. ":\n")
-				for _, hunk in ipairs(change.hunks) do
-					if hunk.operation == "delete" then
-						M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
-					else
-						M.append_to_buffer(
-							"\t" ..
-							hunk.operation ..
-							" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
-						)
-					end
-				end
-			end
 		end
 		table.insert(results, res)
 	end

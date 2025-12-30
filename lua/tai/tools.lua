@@ -31,8 +31,7 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "patch",
-			description =
-			"Applies the given changes in order. Please double check the line numbers match, they ere altered by changes. Returns nil.",
+			description = "Writes a change to the file. Returns nil.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -41,50 +40,22 @@ M.defs = {
 						description =
 						"Name for this patch or description, can be used for commits."
 					},
-					changes = {
-						type = "array",
+					file = {
+						type = "string",
 						description =
-						"List of changes to be made, by file. Each change is applied in order, so you must keep track of how line numbers change.",
-						items = {
-							type = "object",
-							properties = {
-								file = {
-									type = "string",
-									description =
-									"File name for these changes. relative to the current folder (don't start with /)."
-								},
-								hunks = {
-									type = "array",
-									description = "List of changes for this file.",
-									items = {
-										type = "object",
-										properties = {
-											operation = {
-												type = "string",
-												description =
-												"Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
-												enum = { "add", "change", "delete" }
-											},
-											lines = {
-												type = "string",
-												description =
-												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
-											},
-											content = {
-												type = "string",
-												description =
-												"New content, will be pasted verbatim. Not used for delete operation. Don't add line numbers.",
-											},
-										},
-										required = { "operation", "lines" }
-									}
-								}
-							},
-							required = { "file", "hunks" }
-						}
+						"File name for these changes. relative to the current folder (don't start with /)."
+					},
+					diff = {
+						type = "string",
+						description =
+						"Content of the patch in contextual diff format:\n" ..
+						"<optional context lines>\n" ..
+						"-<old content>\n" ..
+						"+<new content>\n" ..
+						"Context lines are optional if changes are unambiguous."
 					}
 				},
-				required = { "changes" }
+				required = { "file", "diff" }
 			}
 		}
 	},
@@ -136,7 +107,7 @@ function M.pretty_info(tools)
 end
 
 -- indexes are 0 based
-local function parse_lines(range)
+local function parse_range(range)
 	-- Handle "$" (last line)
 	if range == "$" then
 		return -1, -1
@@ -196,7 +167,7 @@ local function read_file(file_path, range)
 	end
 
 	-- Parse the range
-	local start, end_line = parse_lines(range)
+	local start, end_line = parse_range(range)
 	local lines = #file:lines()
 	if start < 0 or end_line < 0 then
 		start = lines + start + 1
@@ -261,99 +232,159 @@ local function run_command(cmd)
 	return output
 end
 
-local function apply_patch(name, changes)
-	log.debug("Running patch in " .. #changes .. " file(s).")
+local function parse_diff(diff_text)
+    local hunk = {
+        lines = {},
+        old_lines = {},
+        new_lines = {}
+    }
 
-	-- Apply changes to new buffer (replace with your actual diff content)
-	for _, change in ipairs(changes) do
-		local file = change.file
-		local buf = nil
+    local lines = vim.split(diff_text, '\n', { plain = true })
 
-		-- Check if file is already open in a buffer
-		for _, b in ipairs(vim.api.nvim_list_bufs()) do
-			if vim.api.nvim_buf_is_loaded(b) then
-				local buf_name = vim.api.nvim_buf_get_name(b)
-				if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
-					buf = b
-					break
-				end
+    for i, line in ipairs(lines) do
+        -- Check for context lines (lines without - or + prefix)
+        if line:sub(1, 1) ~= "-" and line:sub(1, 1) ~= "+" then
+            hunk.order = "ctx-op"
+            table.insert(hunk.lines, line)
+            goto continue_label
+        end
+
+        -- Start of a hunk
+        if line:sub(1, 1) == "-" then
+            if #hunk.lines == 0 then
+                hunk.order = "op-ctx"
+            end
+
+            table.insert(hunk.old_lines, line:sub(2))
+        elseif line:sub(1, 1) == "+" then
+            if #hunk.lines == 0 then
+                hunk.order = "op-ctx"
+            end
+            table.insert(hunk.new_lines, line:sub(2))
+        end
+
+        ::continue_label::
+    end
+
+    -- Determine the operation type
+    if #hunk.old_lines > 0 and #hunk.new_lines == 0 then
+        hunk.operation = "delete"
+    elseif #hunk.old_lines == 0 and #hunk.new_lines > 0 then
+        hunk.operation = "add"
+    elseif #hunk.old_lines > 0 and #hunk.new_lines > 0 then
+        hunk.operation = "change"
+    else
+        -- No valid operation
+        return nil
+    end
+
+    return hunk
+end
+
+local function apply_diff(file_path, hunk)
+	local buf = nil
+
+	-- Check if file is already open in a buffer
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(b) then
+			local buf_name = vim.api.nvim_buf_get_name(b)
+			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file then
+				buf = b
+				break
 			end
 		end
-
-		local is_open = false
-		if buf then
-			for _, win in ipairs(vim.api.nvim_list_wins()) do
-				if vim.api.nvim_win_get_buf(win) == buf then
-					is_open = true
-					break
-				end
-			end
-		end
-		if not is_open or not buf then
-			vim.cmd("topleft vnew " .. file)
-			buf = vim.api.nvim_get_current_buf()
-		end
-		-- local new_buf = vim.api.nvim_create_buf(0, false)
-
-		-- Copy lines from current buffer to new buffer
-		-- local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		-- vim.api.nvim_buf_set_lines(new_buf, 0, -1, false, lines)
-
-		for _, hunk in ipairs(change.hunks) do
-			local operation = hunk.operation
-			local lines_str = hunk.lines
-			local content = hunk.content
-
-			-- Parse line range
-			local start, end_line = parse_lines(lines_str)
-
-			if operation == "add" then
-				-- Insert content after the specified lines
-				local new_lines = vim.split(content, '\n')
-				if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
-					start = start + 1
-				end
-				vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
-			elseif operation == "change" then
-				-- Replace lines with new content
-				local new_lines = vim.split(content, '\n')
-				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
-			elseif operation == "delete" then
-				-- Remove lines
-				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
-			end
-		end
-
-		-- -- generate unified diff text directly in Lua
-		-- local new_lines = vim.api.nvim_buf_get_lines(new_buf, 0, -1, false)
-		-- local diff_text = vim.diff(
-		-- 	table.concat(lines, "\n"),
-		-- 	table.concat(new_lines, "\n"),
-		-- 	{ result_type = "unified" }
-		-- )
-
-		-- -- split into lines for display
-		-- local diff_lines = vim.split(diff_text, "\n", { plain = true })
-
-		-- -- create a scratch buffer
-		-- local diff_buf = vim.api.nvim_create_buf(false, true)
-		-- vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, diff_lines)
-		-- vim.bo[diff_buf].filetype = "diff"
-		-- vim.bo[diff_buf].modifiable = false
-
-		-- local win = vim.api.nvim_get_current_win()
-		-- vim.api.nvim_win_set_buf(win, new_buf)
-
-		vim.api.nvim_buf_create_user_command(
-			buf,
-			'AcceptPatch',
-			function()
-				-- Accept changes (this is the critical part)
-				vim.cmd('w ' .. file)
-			end,
-			{ nargs = 0 }
-		)
 	end
+
+	local is_open = false
+	if buf then
+		for _, win in ipairs(vim.api.nvim_list_wins()) do
+			if vim.api.nvim_win_get_buf(win) == buf then
+				is_open = true
+				break
+			end
+		end
+	end
+	if not is_open or not buf then
+		vim.cmd("topleft vnew " .. file_path)
+		buf = vim.api.nvim_get_current_buf()
+	end
+
+	-- Find the location to apply the patch
+	local start_line = 1
+	local found = false
+
+	if #hunk.lines > 0 then
+	    -- Search for context lines
+	    for j = 1, #lines - #hunk.lines + 1 do
+		local match = true
+		for k = 1, #hunk.lines do
+		    if lines[j + k - 1] ~= hunk.lines[k] then
+			match = false
+			break
+		    end
+		end
+
+		if match then
+		    found = true
+		    if hunk.order == "ctx-op" then
+			start_line = j + #hunk.lines
+		    else
+			start_line = j
+		    end
+		    break
+		end
+	    end
+	else
+	    -- Search for old content directly
+	    for j = 1, #lines - #hunk.old_lines + 1 do
+		local match = true
+		for k = 1, #hunk.old_lines do
+		    if lines[j + k - 1] ~= hunk.old_lines[k] then
+			match = false
+			break
+		    end
+		end
+
+		if match then
+		    start_line = j
+		    found = true
+		    break
+		end
+	    end
+	end
+
+	if not found then
+	    return false, "Could not find location to apply patch"
+	end
+
+	-- Apply the patch
+	if hunk.operation == "add" then
+	    -- Insert new content after context/old content
+	    for j = #hunk.new_lines, 1, -1 do
+		table.insert(lines, start_line, hunk.new_lines[j])
+	    end
+	elseif hunk.operation == "change" then
+	    -- Replace old content with new content
+	    -- Remove old lines
+	    for j = 1, #hunk.old_lines do
+		table.remove(lines, start_line)
+	    end
+
+	    -- Insert new lines
+	    for j = #hunk.new_lines, 1, -1 do
+		table.insert(lines, start_line, hunk.new_lines[j])
+	    end
+	elseif hunk.operation == "delete" then
+	    -- Remove old content
+	    for j = 1, #hunk.old_lines do
+		table.remove(lines, start_line)
+	    end
+	end
+
+	-- Write the modified content back to the buffer
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+
+	return true
 end
 
 -- TODO: there must be an enum for tool names
@@ -371,10 +402,17 @@ function M.run(tool, args)
 		end
 		return run_command(args.command)
 	elseif tool == "patch" then
-		if not args.changes then
-			return "[sys] missing changes argument"
+		if not args.file or not args.diff then
+			return "[sys] missing file or change arguments"
 		end
-		vim.schedule_wrap(apply_patch(args.name, args.changes))
+
+		-- Parse the contextual diff
+		local hunk = parse_diff(args.diff)
+		if not hunk then
+			return "[sys] no valid hunks found in patch"
+		end
+
+		vim.schedule_wrap(apply_diff(args.file, hunk))
 		return "[sys] patch applied and submitted for user approval"
 	end
 
