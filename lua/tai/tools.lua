@@ -9,7 +9,7 @@ M.defs = {
 		["function"] = {
 			name = "read_file",
 			description =
-			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
+			"Reads the full content of a file from the file system, or if given, a range of lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -144,40 +144,51 @@ local function read_file(file_path, range)
 		return "[sys] Paths cannot start from root (/). Use relative."
 	end
 
-	local file = io.open(file_path, "r")
-	if not file then
-		return "[sys] File `" ..
-		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+	-- Check if file is already open in a buffer
+	local buf = nil
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(b) then
+			local buf_name = vim.api.nvim_buf_get_name(b)
+			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
+				buf = b
+				break
+			end
+		end
 	end
 
-	local numbered_lines = {}
-	if not range then
+	local lines
+	if buf then
+		log.debug("reading from buffer")
+		lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	else
+		log.debug("reading from file")
+		local file = io.open(file_path, "r")
+		if not file then
+			return "[sys] File `" ..
+			    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+		end
 		local content = file:read("*all")
 		file:close()
 
-		local lines = vim.split(content, '\n', { plain = true })
+		lines = vim.split(content, '\n', { plain = true })
+	end
 
-		-- If no range is specified, return all lines
-		for i, line in ipairs(lines) do
-			table.insert(numbered_lines, string.format("%d: %s", i, line))
-		end
-		local numbered_content = table.concat(numbered_lines, "\n")
-		log.debug("read_file output: " .. numbered_content)
-		return numbered_content
+	if not range then
+		return table.concat(lines, "\n")
 	end
 
 	-- Parse the range
 	local start, end_line = parse_range(range)
-	local lines = #file:lines()
 	if start < 0 or end_line < 0 then
-		start = lines + start + 1
-		end_line = lines + end_line + 1
+		start = #lines + start + 1
+		end_line = #lines + end_line + 1
 	end
 
 	local current_line = 1
-	for line in file:lines() do
+	local res = {}
+	for _, line in ipairs(lines) do
 		if current_line >= start and current_line <= end_line then
-			table.insert(numbered_lines, string.format("%d: %s", current_line, line))
+			table.insert(res, line)
 		end
 
 		-- Stop early if we've passed the end of our range
@@ -188,15 +199,12 @@ local function read_file(file_path, range)
 		current_line = current_line + 1
 	end
 
-	file:close()
 
-	if #numbered_lines == 0 then
+	if #res == 0 then
 		return "[sys] Invalid range: " .. range
 	end
 
-	local numbered_content = table.concat(numbered_lines, "\n")
-	log.debug("read_file output: " .. numbered_content)
-	return numbered_content
+	return table.concat(res, "\n")
 end
 
 local function run_command(cmd)
@@ -227,7 +235,6 @@ local function run_command(cmd)
 	if not output then
 		output = "[sys] `" .. cmd .. "` returned null"
 	end
-	log.debug("command output: " .. output)
 
 	return output
 end
@@ -266,18 +273,7 @@ local function parse_diff(diff_text)
         ::continue_label::
     end
 
-    -- Determine the operation type
-    if #hunk.old_lines > 0 and #hunk.new_lines == 0 then
-        hunk.operation = "delete"
-    elseif #hunk.old_lines == 0 and #hunk.new_lines > 0 then
-        hunk.operation = "add"
-    elseif #hunk.old_lines > 0 and #hunk.new_lines > 0 then
-        hunk.operation = "change"
-    else
-        -- No valid operation
-        return nil
-    end
-
+    log.debug("Parsed hunk: " .. hunk.order .. ": " .. #hunk.lines .. " context lines, " .. #hunk.old_lines .. " removed lines, " .. #hunk.new_lines .. " new lines.")
     return hunk
 end
 
@@ -308,6 +304,7 @@ local function apply_diff(file_path, hunk)
 		vim.cmd("topleft vnew " .. file_path)
 		buf = vim.api.nvim_get_current_buf()
 	end
+	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 	-- Find the location to apply the patch
 	local start_line = 1
@@ -329,8 +326,9 @@ local function apply_diff(file_path, hunk)
 		    if hunk.order == "ctx-op" then
 			start_line = j + #hunk.lines
 		    else
-			start_line = j
+			start_line = j - #hunk.old_lines
 		    end
+		    log.debug("found match on line " .. start_line)
 		    break
 		end
 	    end
@@ -346,7 +344,8 @@ local function apply_diff(file_path, hunk)
 		end
 
 		if match then
-		    start_line = j
+		    start_line = j - #hunk.old_lines + 1
+		    log.debug("found match on line " .. start_line)
 		    found = true
 		    break
 		end
@@ -357,28 +356,16 @@ local function apply_diff(file_path, hunk)
 	    return false, "Could not find location to apply patch"
 	end
 
-	-- Apply the patch
-	if hunk.operation == "add" then
-	    -- Insert new content after context/old content
-	    for j = #hunk.new_lines, 1, -1 do
-		table.insert(lines, start_line, hunk.new_lines[j])
-	    end
-	elseif hunk.operation == "change" then
-	    -- Replace old content with new content
-	    -- Remove old lines
-	    for j = 1, #hunk.old_lines do
+	-- Remove old lines
+	for j = 1, #hunk.old_lines do
+		log.debug("removing line")
 		table.remove(lines, start_line)
-	    end
+	end
 
-	    -- Insert new lines
-	    for j = #hunk.new_lines, 1, -1 do
+	-- Insert new lines
+	for j = #hunk.new_lines, 1, -1 do
+		log.debug("inserting line " .. j)
 		table.insert(lines, start_line, hunk.new_lines[j])
-	    end
-	elseif hunk.operation == "delete" then
-	    -- Remove old content
-	    for j = 1, #hunk.old_lines do
-		table.remove(lines, start_line)
-	    end
 	end
 
 	-- Write the modified content back to the buffer
