@@ -104,7 +104,7 @@ local function run_tools(tool_calls, callback)
 			M.append_to_buffer(args.diff .. "\n")
 			res.content = tools.run(name, args)
 		end
-		log.debug("Output of " .. name .. ": " .. res.content)
+		log.debug("Output of " .. name .. ": " .. (res.content or ""))
 		table.insert(results, res)
 	end
 	callback(results)

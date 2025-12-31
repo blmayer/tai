@@ -199,7 +199,6 @@ local function read_file(file_path, range)
 		current_line = current_line + 1
 	end
 
-
 	if #res == 0 then
 		return "[sys] Invalid range: " .. range
 	end
@@ -240,41 +239,57 @@ local function run_command(cmd)
 end
 
 local function parse_diff(diff_text)
-    local hunk = {
-        lines = {},
-        old_lines = {},
-        new_lines = {}
-    }
+	local hunk = {
+		lines = {},
+		old_lines = {},
+		new_lines = {}
+	}
 
-    local lines = vim.split(diff_text, '\n', { plain = true })
+	local lines = vim.split(diff_text, '\n', { plain = true })
 
-    for i, line in ipairs(lines) do
-        -- Check for context lines (lines without - or + prefix)
-        if line:sub(1, 1) ~= "-" and line:sub(1, 1) ~= "+" then
-            hunk.order = "ctx-op"
-            table.insert(hunk.lines, line)
-            goto continue_label
-        end
+	for i, line in ipairs(lines) do
+		if line:sub(1, 2) == "\\-" or line:sub(1, 2) == "\\+" then
+			-- To avoid diffs starting and ending with context
+			if hunk.order == "op-ctx" then
+				return nil, "error: context on start and end"
+			end
+			hunk.order = "ctx-op"
+			-- Remove the escape character and treat as context
+			local unescaped_line = line:sub(2)
+			table.insert(hunk.lines, unescaped_line)
+			goto continue_label
+		end
 
-        -- Start of a hunk
-        if line:sub(1, 1) == "-" then
-            if #hunk.lines == 0 then
-                hunk.order = "op-ctx"
-            end
+		-- Check for context lines (lines without - or + prefix)
+		if line:sub(1, 1) ~= "-" and line:sub(1, 1) ~= "+" then
+			-- To avoid diffs starting and ending with context
+			if hunk.order == "op-ctx" then
+				return nil, "error: context on start and end"
+			end
+			hunk.order = "ctx-op"
+			table.insert(hunk.lines, line)
+			goto continue_label
+		end
 
-            table.insert(hunk.old_lines, line:sub(2))
-        elseif line:sub(1, 1) == "+" then
-            if #hunk.lines == 0 then
-                hunk.order = "op-ctx"
-            end
-            table.insert(hunk.new_lines, line:sub(2))
-        end
+		-- Start of a hunk
+		if line:sub(1, 1) == "-" then
+		    if #hunk.lines == 0 then
+			hunk.order = "op-ctx"
+		    end
 
-        ::continue_label::
-    end
+		    table.insert(hunk.old_lines, line:sub(2))
+		elseif line:sub(1, 1) == "+" then
+		    if #hunk.lines == 0 then
+			hunk.order = "op-ctx"
+		    end
+		    table.insert(hunk.new_lines, line:sub(2))
+		end
 
-    log.debug("Parsed hunk: " .. hunk.order .. ": " .. #hunk.lines .. " context lines, " .. #hunk.old_lines .. " removed lines, " .. #hunk.new_lines .. " new lines.")
-    return hunk
+		::continue_label::
+	end
+
+	log.debug("Parsed hunk: " .. hunk.order .. ": " .. #hunk.lines .. " context lines, " .. #hunk.old_lines .. " removed lines, " .. #hunk.new_lines .. " new lines.")
+	return hunk
 end
 
 local function apply_diff(file_path, hunk)
@@ -311,49 +326,49 @@ local function apply_diff(file_path, hunk)
 	local found = false
 
 	if #hunk.lines > 0 then
-	    -- Search for context lines
-	    for j = 1, #lines - #hunk.lines + 1 do
-		local match = true
-		for k = 1, #hunk.lines do
-		    if lines[j + k - 1] ~= hunk.lines[k] then
-			match = false
-			break
-		    end
-		end
+		-- Search for context lines
+		for j = 1, #lines - #hunk.lines + 1 do
+			for k = 1, #hunk.lines do
+				if lines[j + k - 1] ~= hunk.lines[k] then
+					return false, "context mismatch"
+				end
+			end
 
-		if match then
-		    found = true
-		    if hunk.order == "ctx-op" then
-			start_line = j + #hunk.lines
-		    else
-			start_line = j - #hunk.old_lines
-		    end
-		    log.debug("found match on line " .. start_line)
-		    break
+			found = true
+			if hunk.order == "ctx-op" then
+			        start_line = j + #hunk.lines
+			else
+			        start_line = j - #hunk.old_lines
+			end
+			log.debug("found match on line " .. start_line)
+			break
 		end
-	    end
 	else
-	    -- Search for old content directly
-	    for j = 1, #lines - #hunk.old_lines + 1 do
-		local match = true
-		for k = 1, #hunk.old_lines do
-		    if lines[j + k - 1] ~= hunk.old_lines[k] then
-			match = false
-			break
-		    end
-		end
+		if #hunk.old_lines > 0 then
+			-- Search for old content directly
+			for j = 1, #lines - #hunk.old_lines + 1 do
+				local match = true
+				for k = 1, #hunk.old_lines do
+					if lines[j + k - 1] ~= hunk.old_lines[k] then
+						return false, "old content mismatch"
+					end
+				end
+				found = true
 
-		if match then
-		    start_line = j - #hunk.old_lines + 1
-		    log.debug("found match on line " .. start_line)
-		    found = true
-		    break
+				start_line = j - #hunk.old_lines + 1
+				log.debug("found match on line " .. start_line)
+				break
+			end
+		else
+			-- Adding to empty file or at the beginning
+			found = true
+			start_line = 1
+			log.debug("adding to empty file at line " .. start_line)
 		end
-	    end
 	end
 
 	if not found then
-	    return false, "Could not find location to apply patch"
+		return false, "could not find location to apply patch"
 	end
 
 	-- Remove old lines
@@ -374,7 +389,6 @@ local function apply_diff(file_path, hunk)
 	return true
 end
 
--- TODO: there must be an enum for tool names
 function M.run(tool, args)
 	log.debug("Running tool call")
 
@@ -394,16 +408,20 @@ function M.run(tool, args)
 		end
 
 		-- Parse the contextual diff
-		local hunk = parse_diff(args.diff)
+		local hunk, err = parse_diff(args.diff)
 		if not hunk then
-			return "[sys] no valid hunks found in patch"
+			return "[sys] no valid hunks found in patch: " .. err
 		end
 
-		vim.schedule_wrap(apply_diff(args.file, hunk))
-		return "[sys] patch applied and submitted for user approval"
+		local ok, err = apply_diff(args.file, hunk)
+		if not ok then
+			return "[sys] " .. err 
+		else
+			return "[sys] patch applied and submitted for user approval"
+		end
+	else 
+		return "[sys] unknown tool `" .. tool .. "`"
 	end
-
-	return "[sys] Unknown tool `" .. tool .. "`"
 end
 
 return M

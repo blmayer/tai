@@ -136,13 +136,37 @@ Changing the first line:
 +new text
 more text
 
+Invalid context: hunk has more than one context:
+
+some text
+-more text
+and more text
+
 ### Important Notes:
 - Ensure the context matches the file content and location to avoid errors.
+  - Whitespace counts, it must be byte by byte correct.
+  - Context is dangerous, use the least possible.
 - If the patch fails, re-read the file and adjust the context accordingly.
-- If changes are close merge them by using the same context and doing both
-  operations.
-- Send only one set of changes per patch.
-- NEVER use context lines before AND after the changes.
+  - Don't repeat this more than one time.
+- Send only one change per patch.
+
+#### Adding to Empty Files
+When adding content to an empty file, ALL new lines MUST start with the `+` prefix:
+
++first line
++second line
++third line
+
+This is CRITICAL - without the `+` prefix, the patch will fail.
+
+#### Files with lines starting with + or -
+In order to not confuse the parser escape the lines with \, for example:
+
+- this is a list item
+
+If used in a context, should be escaped:
+
+\- this is a list item
 
 ## shell
 To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
