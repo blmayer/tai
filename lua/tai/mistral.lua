@@ -109,9 +109,7 @@ function M.request(model_config, msgs, format, callback)
 			local content = message.content
 			local fields = {}
 			if content and content ~= "" then
-				log.debug("response content: " .. content)
 				if format == "json_object" then
-					log.debug("parsing JSON content")
 					fields.content = vim.json.decode(content)
 					if not fields.content then
 						return callback(nil, "Failed to decode message content as JSON")
