@@ -47,12 +47,7 @@ M.defs = {
 					},
 					diff = {
 						type = "string",
-						description =
-						"Content of the patch in contextual diff format:\n" ..
-						"<optional context lines>\n" ..
-						"-<old content>\n" ..
-						"+<new content>\n" ..
-						"Context lines are optional if changes are unambiguous."
+						description = "Content of the patch in contextual diff format"
 					}
 				},
 				required = { "file", "diff" }
@@ -288,31 +283,37 @@ local function parse_diff(diff_text)
 		::continue_label::
 	end
 
-	log.debug("Parsed hunk: " .. hunk.order .. ": " .. #hunk.lines .. " context lines, " .. #hunk.old_lines .. " removed lines, " .. #hunk.new_lines .. " new lines.")
+	log.debug("Parsed hunk: " .. vim.inspect(hunk))
 	return hunk
 end
 
+-- Add a helper function to trim whitespace
+local function trim(s)
+	return s:gsub("^%s*(.-)%s*$", "%1")
+end
+
+-- Update the context matching logic in apply_diff
 local function apply_diff(file_path, hunk)
 	local buf = nil
 
 	-- Check if file is already open in a buffer
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_loaded(b) then
-			local buf_name = vim.api.nvim_buf_get_name(b)
-			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file then
-				buf = b
-				break
-			end
+		    local buf_name = vim.api.nvim_buf_get_name(b)
+		    if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
+			buf = b
+			break
+		    end
 		end
 	end
 
 	local is_open = false
 	if buf then
 		for _, win in ipairs(vim.api.nvim_list_wins()) do
-			if vim.api.nvim_win_get_buf(win) == buf then
-				is_open = true
-				break
-			end
+		    if vim.api.nvim_win_get_buf(win) == buf then
+		        is_open = true
+		        break
+		    end
 		end
 	end
 	if not is_open or not buf then
@@ -326,38 +327,47 @@ local function apply_diff(file_path, hunk)
 	local found = false
 
 	if #hunk.lines > 0 then
-		-- Search for context lines
+		-- Search for context lines with trimmed whitespace
 		for j = 1, #lines - #hunk.lines + 1 do
+			local match = true
 			for k = 1, #hunk.lines do
-				if lines[j + k - 1] ~= hunk.lines[k] then
-					return false, "context mismatch"
+				local file_line = trim(lines[j + k - 1])
+				local patch_line = trim(hunk.lines[k])
+				if file_line ~= patch_line then
+					match = false
+					break
 				end
 			end
-
-			found = true
-			if hunk.order == "ctx-op" then
-			        start_line = j + #hunk.lines
-			else
-			        start_line = j - #hunk.old_lines
+			if match then
+				found = true
+				if hunk.order == "ctx-op" then
+					start_line = j + #hunk.lines
+				else
+					start_line = j
+				end
+				log.debug("found match on line " .. start_line)
+				break
 			end
-			log.debug("found match on line " .. start_line)
-			break
 		end
 	else
 		if #hunk.old_lines > 0 then
-			-- Search for old content directly
+			-- Search for old content directly with trimmed whitespace
 			for j = 1, #lines - #hunk.old_lines + 1 do
 				local match = true
 				for k = 1, #hunk.old_lines do
-					if lines[j + k - 1] ~= hunk.old_lines[k] then
-						return false, "old content mismatch"
+					local file_line = trim(lines[j + k - 1])
+					local patch_line = trim(hunk.old_lines[k])
+					if file_line ~= patch_line then
+						match = false
+						break
 					end
 				end
-				found = true
-
-				start_line = j - #hunk.old_lines + 1
-				log.debug("found match on line " .. start_line)
-				break
+				if match then
+					found = true
+					start_line = j
+					log.debug("found match on line " .. start_line)
+					break
+				end
 			end
 		else
 			-- Adding to empty file or at the beginning
@@ -415,7 +425,7 @@ function M.run(tool, args)
 
 		local ok, err = apply_diff(args.file, hunk)
 		if not ok then
-			return "[sys] " .. err 
+			return "[sys] " .. err
 		else
 			return "[sys] patch applied and submitted for user approval"
 		end

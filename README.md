@@ -1,7 +1,6 @@
 # tai.nvim
 
-> This project contains a simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim.
-
+> This project contains a **simple Neovim plugin** to send text selections or prompts and receive responses, enabling **interactive workflows** from within Neovim.
 
 ## Providers
 

@@ -12,12 +12,6 @@ end
 
 local host = vim.uv.os_uname()
 
---- Use `patch` to edit files:
---{
---	"name": "optional name for the patch",
---	"file": "path/to/file",
---	"diff": "<patch content>"
---}
 M.system_prompt = [[
 Please resolve the user's task by editing and testing the code files in your
 current code execution session.
@@ -99,13 +93,29 @@ or
 <operation><content>
 <optional context (anchor) lines>
 
-Context lines are only optional if the changes are unambiguous. If there's any
-ambiguity, add enough context lines to make the location clear.
-Operations available are:
-- Lines starting with `-` indicate old content to be removed
-- Lines starting with `+` indicate new content to be added
-- Lines without `-` or `+` prefix are context lines that help locate where the
-  change should be applied
+Operations are the characters + or -. `+` indicates new content and `-`
+indicates content to be removed.
+
+Context lines are **sequential** lines of the file that are used for locating
+content. They are only optional with a delete opration and if the changes are
+unambiguous. If there's any ambiguity, add enough context lines to make the
+location clear.
+
+### Important Notes:
+- Ensure the context matches the neighbouring content to avoid errors.
+  - Whitespace counts, it must be byte by byte correct.
+  - Context is dangerous, use the minimum needed.
+- Send only one change per patch.
+- A patch must contain at least one line with an operation `-` or `+`.
+
+#### Escaping context lines starting with + or -
+In order to not confuse the parser escape the lines with `\`, for example:
+
+- this is a list item
+
+If used in a context, should be escaped:
+
+\- this is a list item
 
 ### Examples:
 
@@ -142,24 +152,6 @@ Invalid context: hunk has more than one context:
 some text
 -more text
 and more text
-
-### Important Notes:
-- Ensure the context matches the neighbouring content to avoid errors.
-  - Whitespace counts, it must be byte by byte correct.
-  - Context is dangerous, use the minimum needed.
-- If the patch fails, re-read the file and adjust the context accordingly.
-  - Don't repeat this more than one time.
-- Send only one change per patch.
-- A patch must contain at leat one line with an operation `-` or `+`.
-
-#### Escaping context lines starting with + or -
-In order to not confuse the parser escape the lines with `\`, for example:
-
-- this is a list item
-
-If used in a context, should be escaped:
-
-\- this is a list item
 
 ## shell
 To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
