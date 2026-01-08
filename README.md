@@ -105,6 +105,5 @@ The .tai file supports the following fields:
 
 
 ## License
-
-MIT License
+This project is licensed under the MIT License.
 

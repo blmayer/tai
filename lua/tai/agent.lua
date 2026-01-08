@@ -24,7 +24,7 @@ You MUST adhere to the following criteria when executing the task:
 # Instructions
 - User instructions may overwrite the _CODING GUIDELINES_ section in this
   developer message.
-- Use `ls -R` or `find` to explore the project and gather context.
+- Use `ls -R` to explore the project and gather context.
 - If you find an agents file you MUST read it, it contains important info.
 - If completing the user's task requires writing or modifying files:
   - Your code and final answer should follow these _CODING GUIDELINES_:
@@ -59,19 +59,20 @@ tool descriptions provided. Use the provider-native tool-calling mechanism.
 All file paths must be relative to the project's directory and don't start
 paths with `/` or `./`.
 
-## read_file
-To read files ALWAYS use the `read_file` tool. `read_file` reads the full
-content of a file from the file system, or if given, a range of lines. And
-returns the content with numberred lines. To use it call the `read_file` with
-the following example parameters:
-{
-	"file_path": "<path/to/file>",
-	"range": "<optional range of lines to read>"
-}
 Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
 Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
 lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
 last 5 lines: -5:$.",
+
+## read_file
+To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+content of a file from the file system, or if given, a range of lines. And
+returns the content. To use it call the `read_file` with the following
+example parameters:
+{
+	"file_path": "<path/to/file>",
+	"range": "<optional range of lines to read>"
+}
 
 ## patch
 To edit files, ALWAYS use the `patch` tool. `patch` effectively
@@ -81,88 +82,27 @@ structure:
 {
 	"name": "<optional name for the patch>",
 	"file": "<path/to/file>",
-	"diff": "<contextual diff format>"
+	"changes": [
+		{
+			"operation": "<add|change|delete>",
+			"lines": "<range of lines>",
+			"content": "<new content>"
+		}
+	]
 }
-The contextual diff format is:
-
-<optional context (anchor) lines>
-<operation><content>
-
-or
-
-<operation><content>
-<optional context (anchor) lines>
-
-Operations are the characters + or -. `+` indicates new content and `-`
-indicates content to be removed.
-
-Context lines are **sequential** lines of the file that are used for locating
-content. They are only optional with a delete opration and if the changes are
-unambiguous. If there's any ambiguity, add enough context lines to make the
-location clear.
-
-### Important Notes:
-- Ensure the context matches the neighbouring content to avoid errors.
-  - Whitespace counts, it must be byte by byte correct.
-  - Context is dangerous, use the minimum needed.
-- Send only one change per patch.
-- A patch must contain at least one line with an operation `-` or `+`.
-
-#### Escaping context lines starting with + or -
-In order to not confuse the parser escape the lines with `\`, for example:
-
-- this is a list item
-
-If used in a context, should be escaped:
-
-\- this is a list item
-
-### Examples:
-
-Suppose the file contains:
-some text
-more text
-and more text
-and more text
-
-Change the line "more text":
--more text
-+new text
-
-Adding new content after "and more text":
-and more text
-and more text
-+new line 1
-+new line 2
-
-Delete the line "more text":
--more text
-
-Changing the first line:
--some text
-+new text
-more text
-
-Adding to Empty Files: all new lines MUST start with the `+` prefix:
-+first line
-+second line
-+third line
-
-Invalid context: hunk has more than one context:
-some text
--more text
-and more text
 
 ## shell
 To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
-current directory. You can use this tool to explore the codebase, run builds,
-do file operations like renaming, changing permissions, etc. To use it call the
-`shell` tool with the parameters:
+project's root directory. You can use this tool to explore the codebase, run
+builds, do file operations like renaming, changing permissions, etc. To use
+it call the `shell` tool with the parameters:
 {
 	"command": "shell pipeline"
 }
 Each tool execution gives you a clean env, so paths are reset to the project's
-folder and any set variables are cleared.
+folder and any set variables are cleared. NEVER USE this tool for reading or
+writing to files, to read files ALWAYS use the `read_file` tool, and for
+writing use the `patch` tool. Don't use absolute paths.
 
 # Exploration
 If you are not sure about file content or codebase structure pertaining to the
@@ -185,8 +125,7 @@ Before coding, always:
 
 # Verification
 Routinely verify your code works as you work through the task, especially any
-deliverables to ensure they run properly. Don't hand back to the user until you
-are sure that the problem is solved.
+deliverables to ensure they run properly.
 ]]
 
 provider.add_to_history({ role = "system", content = M.system_prompt })

@@ -77,7 +77,7 @@ function M.request(model_config, msgs, format, callback)
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. request_body)
+	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 	vim.system(
 		{
 			"curl", "-s", "-X", "POST", url,
@@ -91,7 +91,6 @@ function M.request(model_config, msgs, format, callback)
 				return
 			end
 
-			log.debug("Request response: " .. obj.stdout)
 			if not obj.stdout or obj.stdout == "" then
 				return callback(nil, "Received empty response from Mistral")
 			end
@@ -100,6 +99,7 @@ function M.request(model_config, msgs, format, callback)
 			if not parsed then
 				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
 			end
+			log.debug("Request response: " .. vim.inspect(parsed))
 
 			-- Mistral errors are usually at the root level, e.g., parsed.error
 			if parsed.error then

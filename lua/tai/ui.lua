@@ -100,8 +100,15 @@ local function run_tools(tool_calls, callback)
 			res.content = tools.run(name, args)
 			res.file_path = args.file_path
 		elseif name == "patch" then
-			M.append_to_buffer("[tai] Patching file " .. args.file .. ":\n")
-			M.append_to_buffer(args.diff .. "\n")
+			M.append_to_buffer("[tai] Patching ".. args.file .. "\n")
+			for _, change in ipairs(args.changes) do
+				M.append_to_buffer(string.format(
+				    "Operation: %s, Lines: %s\nContent:\n%s\n",
+				    change.operation,
+				    change.lines,
+				    change.content
+				))
+			end
 			res.content = tools.run(name, args)
 		end
 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
