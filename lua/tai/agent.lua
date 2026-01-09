@@ -90,6 +90,7 @@ structure:
 		}
 	]
 }
+Prefer to do small patches.
 
 ## shell
 To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
@@ -103,6 +104,14 @@ Each tool execution gives you a clean env, so paths are reset to the project's
 folder and any set variables are cleared. NEVER USE this tool for reading or
 writing to files, to read files ALWAYS use the `read_file` tool, and for
 writing use the `patch` tool. Don't use absolute paths.
+
+## summarize
+Use the `summarize` tool when you think the conversation context is getting too
+large. This tool will summarize the entire conversation history and replace it
+with a concise summary, reducing the context size. Use this tool proactively
+when you notice the conversation is becoming lengthy, especially before making
+additional tool calls that might fail due to context limits. Calling it will
+end the current conversation, so it's better to call it after the task is done.
 
 # Exploration
 If you are not sure about file content or codebase structure pertaining to the
@@ -133,7 +142,7 @@ provider.add_to_history({ role = "system", content = M.system_prompt })
 function M.task(msgs, callback)
 	log.info("Agent executing task")
 	provider.request(
-		config.tai,
+		config,
 		msgs,
 		nil,
 		function(data, err)

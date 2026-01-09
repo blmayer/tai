@@ -2,22 +2,6 @@ local M = {}
 
 local log = require("tai.log")
 
-M.allowed_commands = {
-	"cat",
-	"cut",
-	"date",
-	"echo",
-	"find",
-	"grep",
-	"head",
-	"git",
-	"ls",
-	"make",
-	"sort",
-	"tail",
-	"wc"
-}
-
 local function find_tai_root()
 	local current = vim.fn.getcwd()
 	while current ~= "/" do
@@ -36,12 +20,8 @@ if not root_path then
 end
 
 M.model = "devstral-medium-latest"
-M.summary_model = "ministral-8b-latest"
-M.complete_model = "llama-3.3-70b-versatile"
-M.skip_cache = false
 M.provider = "z_ai"
 M.root = root_path
-M.cache_dir = M.root .. "/.tai-cache/"
 
 local file = io.open(M.root .. "/.tai", "r")
 if file then
@@ -52,55 +32,9 @@ if file then
 	end
 	if data and type(data) == 'table' then
 		M.model = data.model or M.model
-		M.summary_model = data.summary_model or M.summary_model
-		M.complete_model = data.complete_model or M.complete_model
 		M.provider = data.provider or M.provider
-		M.skip_cache = data.skip_cache or M.skip_cache
-
-		if data.allowed_commands then
-			M.allowed_commands = data.allowed_commands
-		end
-
-		if data.planner then
-			M.planner = {
-				model = data.planner.model,
-				options = data.planner.options,
-				tools = data.planner.tools,
-				think = data.planner.think or nil
-			}
-		end
-		if data.coder then
-			M.coder = {
-				model = data.coder.model,
-				options = data.coder.options,
-				tools = data.coder.tools,
-				think = data.coder.think or nil
-			}
-		end
-		if data.patcher then
-			M.patcher = {
-				model = data.patcher.model,
-				options = data.patcher.options,
-				tools = data.patcher.tools,
-				think = data.patcher.think or nil
-			}
-		end
-		if data.writer then
-			M.writer = {
-				model = data.writer.model,
-				options = data.writer.options,
-				tools = data.writer.tools,
-				think = data.writer.think or nil
-			}
-		end
-		if data.tai then
-			M.tai = {
-				model = data.tai.model,
-				options = data.tai.options,
-				tools = data.tai.tools,
-				think = data.tai.think or nil
-			}
-		end
+		M.options = data.options
+		M.think = data.think or nil
 	end
 end
 

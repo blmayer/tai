@@ -36,15 +36,15 @@ function M.request(model_config, msgs, format, callback)
 		M.add_to_history(msg)
 	end
 
-	local agent_tools = vim.tbl_map(
-		function(t)
-			return tools.defs[t]
-		end,
-		model_config.tools or {}
-	)
 	local body = {
 		model = model_config.model,
 		messages = {},
+		tools = {
+			tools.defs["read_file"],
+			tools.defs["shell"],
+			tools.defs["patch"],
+			tools.defs["summarize"],
+		},
 	}
 	for _, message in ipairs(history) do
 		local new_message = {}
@@ -54,10 +54,6 @@ function M.request(model_config, msgs, format, callback)
 			end
 		end
 		table.insert(body.messages, new_message)
-	end
-
-	if #agent_tools > 0 then
-		body.tools = agent_tools
 	end
 
 	-- Mistral API does not directly support 'format', 'reasoning_effort' or 'extra_body' at the top level

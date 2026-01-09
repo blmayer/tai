@@ -85,31 +85,51 @@ local function run_tools(tool_calls, callback)
 		}
 		if name == "shell" then
 			log.debug("Asking for confirmation")
-			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n", 1)
+			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n\n&s (skip)", 1)
 			if input == 1 then
 				log.debug("Confirmed")
 				M.append_to_buffer("[tai] Running " .. args.command .. "\n")
 				res.content = tools.run(name, args)
-			else
+			elseif input == 2 then
 				log.debug("Declined")
 				M.append_to_buffer("[tai] Declined " .. args.command .. "\n")
 				res.content = "[sys] User declined running this command"
+			else
+				-- input == 3: skip - don't add anything to results, effectively skipping this tool call
+				log.debug("Skipped")
+				M.append_to_buffer("[tai] Stoped at " .. args.command .. "\n")
+				return -- Return control to the user
 			end
 		elseif name == "read_file" then
 			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
 			res.content = tools.run(name, args)
 			res.file_path = args.file_path
 		elseif name == "patch" then
-			M.append_to_buffer("[tai] Patching ".. args.file .. "\n")
+			M.append_to_buffer("[tai] Patching " .. args.file .. "\n")
 			for _, change in ipairs(args.changes) do
 				M.append_to_buffer(string.format(
-				    "Operation: %s, Lines: %s\nContent:\n%s\n",
-				    change.operation,
-				    change.lines,
-				    change.content
+					"Operation: %s, Lines: %s\nContent:\n%s\n",
+					change.operation,
+					change.lines,
+					change.content
 				))
 			end
 			res.content = tools.run(name, args)
+		elseif name == "summarize" then
+			M.append_to_buffer("[tai] Summarizing\n")
+			return tai.task(
+				{ tools.summary_msg },
+				function(summ)
+					if summ.error then
+						log.error("sumarize error: " .. summ.error)
+						return
+					end
+
+					res.content = summ.content
+					tai.clear_history()
+					tai.add_to_history(res)
+				end
+			)
 		end
 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
 		table.insert(results, res)

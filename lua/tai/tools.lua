@@ -1,7 +1,18 @@
 local M = {}
 
 local log = require('tai.log')
-local config = require('tai.config')
+
+M.summary_msg = {
+	role = "user",
+	content = [[
+Summarize all our prompts so far, don't include any file content. Follow this:
+- Retain any important info about the project, file structure etc
+- Make a brief summary of the chat.
+- if there is an ongoing operation also include:
+  - important file content.
+  - the task definition, progress and the next steps.
+]]
+}
 
 M.defs = {
 	read_file = {
@@ -32,7 +43,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Applies the given changes in order. Please double check the line numbers match, they are altered by previouls changes. Returns nil.",
+			"Edits files using line-based operations. CRITICAL: Read the file FIRST with read_file to get current line numbers. All 'lines' values are 1-based and reference the ORIGINAL file state. Multiple changes in ONE call all reference the SAME original state - do NOT adjust for other changes in the same call.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -49,7 +60,7 @@ M.defs = {
 					changes = {
 						type = "array",
 						description =
-						"List of changes to be made. Each change is applied in order, so you must keep track of how line numbers change.",
+						"List of changes to be made. Each change is applied in order",
 						items = {
 							type = "object",
 							properties = {
@@ -62,12 +73,12 @@ M.defs = {
 								lines = {
 									type = "string",
 									description =
-									"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
+									"1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first)",
 								},
 								content = {
 									type = "string",
 									description =
-									"New contente to be inserted. Not used for delete operation. Don't add line numbers.",
+									"New content (omit for delete operation)",
 								}
 							},
 							required = { "operation", "lines" }
@@ -83,19 +94,26 @@ M.defs = {
 		["function"] = {
 			name = "shell",
 			description =
-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Don't use this for reading files. Returns the otput of the command.",
+			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Don't use this for reading or writing files, use read_file and patch tools respectively. Returns the otput of the command.",
 			parameters = {
 				type = "object",
 				properties = {
 					command = {
 						type = "string",
 						description =
-						    "The pipeline to be interpreted by the shell in the user's machine, usually bash. These are the user approved programs: " ..
-						    table.concat(config.allowed_commands, ", ")
+						"The pipeline to be interpreted by the shell in the user's machine, usually bash."
 					}
 				},
 				required = { "command" }
 			}
+		}
+	},
+	summarize = {
+		type = "function",
+		["function"] = {
+			name = "summarize",
+			description =
+			"Summarizes the chat history to reduce context size. This should be used when the conversation is getting too long and the context is becoming too large. Calling this function will replace the history.",
 		}
 	}
 }
@@ -125,7 +143,7 @@ function M.pretty_info(tools)
 	return pre .. table.concat(tools_desc, "\n") .. "\n"
 end
 
--- indexes are 0 based
+-- indexes are 1 based
 local function parse_lines(range)
 	-- Handle "$" (last line)
 	if range == "$" then
@@ -291,67 +309,55 @@ local function apply_patch(name, file, changes)
 		buf = vim.api.nvim_get_current_buf()
 	end
 
-	-- Apply changes to new buffer (replace with your actual diff content)
+	-- Apply changes to new buffer
+	-- vim.api.nvim_buf_set_lines is 0 indexed
+	local line_shift = 0
 	for _, hunk in ipairs(changes) do
-
-		-- local new_buf = vim.api.nvim_create_buf(0, false)
-
-		-- Copy lines from current buffer to new buffer
-		-- local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		-- vim.api.nvim_buf_set_lines(new_buf, 0, -1, false, lines)
-
 		local operation = hunk.operation
 		local lines_str = hunk.lines
 		local content = hunk.content
 
+		-- Get current state of buffer
+		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+		local total_lines = #current_lines
+
 		-- Parse line range
 		local start, end_line = parse_lines(lines_str)
 
+		-- Adjust for line shift from previous changes
+		local adjusted_start = start + line_shift
+		local adjusted_end = end_line + line_shift
+
+		-- Clamp to valid ranges
+		if adjusted_start < 0 then adjusted_start = 0 end
+		if adjusted_end >= total_lines then adjusted_end = total_lines - 1 end
+
+
 		if operation == "add" then
-			-- Insert content after the specified lines
+			-- Insert content after the specified line
 			local new_lines = vim.split(content, '\n')
-			if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
-				start = start + 1
+			local insert_pos = adjusted_end + 1
+			if lines_str == "0" then
+				insert_pos = 0
 			end
-			vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
+			vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
+			-- Track the addition for subsequent changes
+			line_shift = line_shift + #new_lines
 		elseif operation == "change" then
 			-- Replace lines with new content
 			local new_lines = vim.split(content, '\n')
-			vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
+			local old_line_count = adjusted_end - adjusted_start + 1
+			local new_line_count = #new_lines
+			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
+			-- Track the net change for subsequent changes
+			line_shift = line_shift + (new_line_count - old_line_count)
 		elseif operation == "delete" then
 			-- Remove lines
-			vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
+			local old_line_count = adjusted_end - adjusted_start + 1
+			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, {})
+			-- Track the deletion for subsequent changes
+			line_shift = line_shift - old_line_count
 		end
-
-		-- -- generate unified diff text directly in Lua
-		-- local new_lines = vim.api.nvim_buf_get_lines(new_buf, 0, -1, false)
-		-- local diff_text = vim.diff(
-		-- 	table.concat(lines, "\n"),
-		-- 	table.concat(new_lines, "\n"),
-		-- 	{ result_type = "unified" }
-		-- )
-
-		-- -- split into lines for display
-		-- local diff_lines = vim.split(diff_text, "\n", { plain = true })
-
-		-- -- create a scratch buffer
-		-- local diff_buf = vim.api.nvim_create_buf(false, true)
-		-- vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, diff_lines)
-		-- vim.bo[diff_buf].filetype = "diff"
-		-- vim.bo[diff_buf].modifiable = false
-
-		-- local win = vim.api.nvim_get_current_win()
-		-- vim.api.nvim_win_set_buf(win, new_buf)
-
-		-- vim.api.nvim_buf_create_user_command(
-		-- 	buf,
-		-- 	'AcceptPatch',
-		-- 	function()
-		-- 		-- Accept changes (this is the critical part)
-		-- 		vim.cmd('w ' .. file)
-		-- 	end,
-		-- 	{ nargs = 0 }
-		-- )
 	end
 end
 
@@ -380,7 +386,7 @@ function M.run(tool, args)
 		if err then
 			return "[sys] patch error: " .. err
 		end
-		return "[sys] patch applied and submitted for user approval"
+		return "[sys] patch applied"
 	end
 
 	return "[sys] Unknown tool `" .. tool .. "`"
