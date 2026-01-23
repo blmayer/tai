@@ -2,7 +2,7 @@ local M = {}
 
 local log = require("tai.log")
 local tools = require("tai.tools")
-
+local config = require("tai.config")
 local url = "https://api.openai.com/v1/chat/completions"
 
 local api_key = os.getenv("OPENAI_API_KEY")
@@ -12,7 +12,7 @@ if not api_key then
 	end)
 end
 
-local history = { {} }
+local history = nil
 
 function M.add_to_history(message)
 	local msg = vim.deepcopy(message)
@@ -20,40 +20,58 @@ function M.add_to_history(message)
 		local args = call["function"].arguments
 		call["function"].arguments = vim.json.encode(args)
 	end
+	if not history then
+		history = { msg }
+		return
+	end
 	table.insert(history, msg)
 end
 
 function M.clear_history()
-	history = { {} }
+	history = nil
 end
 
-function M.request(model_config, msg, format, callback)
-	M.add_to_history(msg)
+function M.request(model_config, msgs, format, callback)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
 
-	local agent_tools = vim.tbl_map(
-		function(t)
-			return tools.defs[t]
-		end,
-		model_config.tools or {}
-	)
 	local body = {
 		model = model_config.model,
-		messages = history,
-		tools = agent_tools,
+		messages = {},
 	}
+
+	if config.use_tools ~= false then
+		body.tools = {
+			tools.defs["read_file"],
+			tools.defs["shell"],
+			tools.defs["patch"],
+			tools.defs["summarize"],
+		}
+	end
+	for _, message in ipairs(history) do
+		local new_message = {}
+		for key, value in pairs(message) do
+			if key ~= "file_path" then
+				new_message[key] = value
+			end
+		end
+		table.insert(body.messages, new_message)
+	end
+
 	if format then
 		body.format = format
 	end
-	if model_config.think ~= nil then
-		body.reasoning_effort = model_config.think
-	end
+
 	if model_config.options then
-		body.extra_body = model_config.options
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
 	end
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. request_body)
+	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 	vim.system(
 		{
 			"curl", "-s", "-X", "POST", url,
@@ -67,7 +85,6 @@ function M.request(model_config, msg, format, callback)
 				return
 			end
 
-			log.debug("Request response: " .. obj.stdout)
 			if not obj.stdout or obj.stdout == "" then
 				return callback(nil, "Received empty response from Gemini")
 			end
@@ -76,6 +93,7 @@ function M.request(model_config, msg, format, callback)
 			if not parsed then
 				return callback(nil, "Failed to decode JSON: " .. parsed)
 			end
+			log.debug("Request response: " .. vim.inspect(parsed))
 
 			if parsed and parsed.error then
 				return callback(nil, "Received error: " .. parsed.error.message)
@@ -88,8 +106,8 @@ function M.request(model_config, msg, format, callback)
 			local message = parsed.choices[1].message
 			local content = message.content
 			local fields = {}
-			if content and content ~= "" then
-				log.debug("response content: " .. content)
+			if content and content ~= vim.NIL then
+				log.debug("response content: " .. content or "")
 				if format ~= nil then
 					log.debug("parsing JSON content")
 					fields.content = vim.json.decode(content)

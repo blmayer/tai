@@ -24,7 +24,7 @@ You MUST adhere to the following criteria when executing the task:
 # Instructions
 - User instructions may overwrite the _CODING GUIDELINES_ section in this
   developer message.
-- Use `ls -R` to explore the project and gather context.
+- Use `ls -Rl` to explore the project and gather context.
 - If you find an agents file you MUST read it, it contains important info.
 - If completing the user's task requires writing or modifying files:
   - Your code and final answer should follow these _CODING GUIDELINES_:
@@ -51,6 +51,19 @@ You MUST adhere to the following criteria when executing the task:
   - Do NOT show the full contents of large files you have already written,
     unless the user explicitly asks for them.
 
+]]
+
+if config.use_tools == false then
+	M.system_prompt = M.system_prompt .. [[
+# Tools
+You do NOT have access to tools in this session.
+
+- Do NOT emit tool calls.
+- Instead, instruct the user what commands to run and what files/lines to change.
+- Be explicit and copy-pasteable in your instructions.
+]]
+else
+	M.system_prompt = M.system_prompt .. [[
 # Tools
 You have access to tools that can help you accomplish the goal, their result
 is sent back to you. Choose the most appropriate tool based on the task and the
@@ -90,7 +103,9 @@ structure:
 		}
 	]
 }
-Prefer to do small patches.
+IMPORTANT: ALWAYS generate the smallest possible patch, so that you change just
+the needed lines. You can also send multiple patches, so you change multiple
+places individualy.
 
 ## shell
 To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
@@ -135,7 +150,10 @@ Before coding, always:
 # Verification
 Routinely verify your code works as you work through the task, especially any
 deliverables to ensure they run properly.
+After applying a patch you should re-read afected files to ensure the patch was
+applied correctly. But stop after 3 attempts.
 ]]
+end
 
 provider.add_to_history({ role = "system", content = M.system_prompt })
 

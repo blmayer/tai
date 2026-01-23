@@ -2,7 +2,7 @@ local M = {}
 
 local log = require("tai.log")
 local tools = require("tai.tools")
-
+local config = require("tai.config")
 local url = "https://api.mistral.ai/v1/chat/completions"
 
 local api_key = os.getenv("MISTRAL_API_KEY")
@@ -51,7 +51,7 @@ function M.request(model_config, msgs, format, callback)
 		table.insert(body.messages, new_message)
 	end
 
-	if #agent_tools > 0 then
+	if config.use_tools ~= false and #agent_tools > 0 then
 		body.tools = agent_tools
 	end
 

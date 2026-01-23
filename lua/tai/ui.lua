@@ -85,7 +85,7 @@ local function run_tools(tool_calls, callback)
 		}
 		if name == "shell" then
 			log.debug("Asking for confirmation")
-			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n\n&s (skip)", 1)
+			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n\n&s (stop)", 1)
 			if input == 1 then
 				log.debug("Confirmed")
 				M.append_to_buffer("[tai] Running " .. args.command .. "\n")
@@ -95,10 +95,11 @@ local function run_tools(tool_calls, callback)
 				M.append_to_buffer("[tai] Declined " .. args.command .. "\n")
 				res.content = "[sys] User declined running this command"
 			else
-				-- input == 3: skip - don't add anything to results, effectively skipping this tool call
-				log.debug("Skipped")
-				M.append_to_buffer("[tai] Stoped at " .. args.command .. "\n")
-				return -- Return control to the user
+				M.append_to_buffer("[tai] Stopped at " .. args.command .. "\n")
+				res.content = "[sys] User stopped the conversation"
+				table.insert(results, res)
+				callback(results)
+				return
 			end
 		elseif name == "read_file" then
 			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")

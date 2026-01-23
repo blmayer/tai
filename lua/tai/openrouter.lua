@@ -2,7 +2,7 @@ local M = {}
 
 local log = require("tai.log")
 local tools = require("tai.tools")
-
+local config = require("tai.config")
 local url = "https://openrouter.ai/api/v1/chat/completions"
 
 local api_key = os.getenv("OPENROUTER_API_KEY")
@@ -39,13 +39,16 @@ function M.request(model_config, msgs, format, callback)
 	local body = {
 		model = model_config.model,
 		messages = {},
-		tools = {
+	}
+
+	if config.use_tools ~= false then
+		body.tools = {
 			tools.defs["read_file"],
 			tools.defs["shell"],
 			tools.defs["patch"],
 			tools.defs["summarize"],
-		},
-	}
+		}
+	end
 	for _, message in ipairs(history) do
 		local new_message = {}
 		for key, value in pairs(message) do
@@ -99,9 +102,7 @@ function M.request(model_config, msgs, format, callback)
 
 			-- Mistral errors are usually at the root level, e.g., parsed.error
 			if parsed.error then
-				return callback(nil,
-					(parsed.error.message .. (": " .. parsed.error.metadata) or "") or
-					"Unknown Openrouter API error")
+				return callback(nil, parsed.error.message)
 			end
 
 			if not parsed.choices or #parsed.choices == 0 then

@@ -21,6 +21,7 @@ end
 
 M.model = "devstral-medium-latest"
 M.provider = "z_ai"
+M.use_tools = true
 M.root = root_path
 
 local file = io.open(M.root .. "/.tai", "r")
@@ -33,6 +34,10 @@ if file then
 	if data and type(data) == 'table' then
 		M.model = data.model or M.model
 		M.provider = data.provider or M.provider
+		M.use_tools = data.use_tools
+		if M.use_tools == nil then
+			M.use_tools = true
+		end
 		M.options = data.options
 		M.think = data.think or nil
 	end

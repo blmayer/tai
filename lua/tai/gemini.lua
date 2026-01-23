@@ -2,7 +2,7 @@ local M = {}
 
 local log = require("tai.log")
 local tools = require("tai.agents.tools")
-
+local config = require("tai.config")
 local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
 local api_key = os.getenv("GEMINI_API_KEY")
@@ -30,17 +30,20 @@ end
 function M.request(model_config, msg, format, callback)
 	M.add_to_history(msg)
 
-	local agent_tools = vim.tbl_map(
-		function(t)
-			return tools.defs[t]
-		end,
-		model_config.tools or {}
-	)
 	local body = {
 		model = model_config.model,
 		messages = history,
-		tools = agent_tools,
 	}
+
+	if config.use_tools ~= false then
+		local agent_tools = vim.tbl_map(
+			function(t)
+				return tools.defs[t]
+			end,
+			model_config.tools or {}
+		)
+		body.tools = agent_tools
+	end
 	if format then
 		body.format = format
 	end
