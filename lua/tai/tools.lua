@@ -34,7 +34,8 @@ M.defs = {
 						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
 					}
 				},
-				required = { "file_path" }
+				additionalProperties = false,
+				required = { "file_path", "range" }
 			}
 		}
 	},
@@ -78,14 +79,16 @@ M.defs = {
 								content = {
 									type = "string",
 									description =
-									"New content (omit for delete operation)",
+									"New content (empty for delete operation)",
 								}
 							},
-							required = { "operation", "lines" }
+							additionalProperties = false,
+							required = { "operation", "lines", "content" }
 						}
 					}
 				},
-				required = { "file", "changes" }
+				additionalProperties = false,
+				required = { "file", "changes", "name" }
 			}
 		}
 	},
@@ -104,6 +107,7 @@ M.defs = {
 						"The pipeline to be interpreted by the shell in the user's machine, usually bash."
 					}
 				},
+				additionalProperties = false,
 				required = { "command" }
 			}
 		}
@@ -114,6 +118,11 @@ M.defs = {
 			name = "summarize",
 			description =
 			"Summarizes the chat history to reduce context size. This should be used when the conversation is getting too long and the context is becoming too large. Calling this function will replace the history.",
+			parameters = {
+				type = "object",
+				properties = vim.empty_dict(),
+				additionalProperties = false
+			}
 		}
 	}
 }

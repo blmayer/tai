@@ -2,12 +2,23 @@ local M = {}
 local log = require("tai.log")
 local tai = require("tai.agent")
 local tools = require("tai.tools")
+local config = require("tai.config")
 
-local bufname = "tai-chat"
+local bufname_prefix = "tai-chat"
 local input_bufname = "tai-chat-input"
 
 local chat_win
 local input_win
+
+function M.update_chat_name()
+	local name = bufname_prefix
+	if config and config.provider and config.model then
+		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
+	end
+	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
+		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
+	end
+end
 
 M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
 vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
@@ -18,7 +29,7 @@ vim.bo[M.input_buffer_nr].filetype = 'text'
 vim.bo[M.input_buffer_nr].modifiable = true
 
 M.buffer_nr = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_buf_set_name(M.buffer_nr, bufname)
+M.update_chat_name()
 vim.bo[M.buffer_nr].buftype = "nofile"
 vim.bo[M.buffer_nr].bufhidden = "hide" -- keep content when hidden
 vim.bo[M.buffer_nr].swapfile = false

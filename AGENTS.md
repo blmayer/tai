@@ -5,14 +5,6 @@ This repo also includes a small static website under `www/`.
 
 These notes are intended for **automated coding agents** working in this repository.
 
-## Golden rules
-
-- Make the *smallest, most focused* change that solves the user’s request.
-- Prefer root-cause fixes over surface patches.
-- Keep style consistent with surrounding code.
-- Run a relevant check (tests/lint or a minimal smoke run) before finishing.
-- When modifying behavior, update docs (`README.md`) if the user-facing contract changes.
-
 ## Repository layout
 
 - `lua/tai/` — Neovim plugin implementation (all core logic)
@@ -58,12 +50,5 @@ These notes are intended for **automated coding agents** working in this reposit
 - This repo is primarily Lua (Neovim plugin). Keep code idiomatic Lua.
 - Prefer explicit, readable code over cleverness.
 - Avoid adding new dependencies unless necessary.
-
-## Quick sanity checks
-
-There may not be a formal test suite. At minimum:
-
-- Ensure Lua files parse (no syntax errors).
-- If you can, run Neovim and load the plugin to smoke-test the affected flow.
 
 (Agent reminder) You are editing the Tai plugin’s own code—double-check changes for regressions.

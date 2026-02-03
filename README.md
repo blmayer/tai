@@ -4,7 +4,7 @@
 
 ## Providers
 
-This project is compatible with the Groq, Gemini, Mistral, Z.AI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
 
        GROQ_API_KEY=your_api_key_here
 
@@ -14,11 +14,13 @@ for Groq, or:
 
 for Gemini, or:
 
-for Mistral, or:
-
        ZAI_API_KEY=your_api_key_here
 
-for Z.AI, or configure a local Ollama server (localhost:11434).
+for Z.AI, or:
+
+       OPENAI_API_KEY=your_api_key_here
+
+for OpenAI, or configure a local Ollama server (localhost:11434).
 
 Mistral support is in progress (their API is flaky ATM).
 
@@ -92,16 +94,8 @@ The default mappings will give you:
 
 The .tai file supports the following fields:
 - model: The model used for chat completions.
-- summary_model: The model used for summaries.
-- complete_model: The model used for complete tasks.
 - provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
-- skip_cache: A flag to skip caching.
-- planner: Configuration for the planner model (model, options, tools, think).
-- coder: Configuration for the coder model.
-- patcher: Configuration for the patcher model.
-- writer: Configuration for the writer model.
-- tai: Configuration for the all-rounder model.
-- allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
+- options: Options sent to the model, specific for each provider.
 
 
 ## License
