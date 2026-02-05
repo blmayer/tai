@@ -83,7 +83,7 @@ local function add_sep()
 	M.append_to_buffer(result .. "\n")
 end
 
-local function run_tools(tool_calls, callback)
+local function run_tools(tool_calls)
 	local results = {}
 	for _, call in ipairs(tool_calls or {}) do
 		local name = call["function"].name
@@ -109,8 +109,7 @@ local function run_tools(tool_calls, callback)
 				M.append_to_buffer("[tai] Stopped at " .. args.command .. "\n")
 				res.content = "[sys] User stopped the conversation"
 				table.insert(results, res)
-				callback(results)
-				return
+				return results
 			end
 		elseif name == "read_file" then
 			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
@@ -118,6 +117,9 @@ local function run_tools(tool_calls, callback)
 			res.file_path = args.file_path
 		elseif name == "patch" then
 			M.append_to_buffer("[tai] Patching " .. args.file .. "\n")
+			if args.name then
+				M.append_to_buffer("[tai] " .. args.name .. "\n")
+			end
 			for _, change in ipairs(args.changes) do
 				M.append_to_buffer(string.format(
 					"Operation: %s, Lines: %s\nContent:\n%s\n",
@@ -129,7 +131,7 @@ local function run_tools(tool_calls, callback)
 			res.content = tools.run(name, args)
 		elseif name == "summarize" then
 			M.append_to_buffer("[tai] Summarizing\n")
-			return tai.task(
+			tai.task(
 				{ tools.summary_msg },
 				function(summ)
 					if summ.error then
@@ -142,11 +144,12 @@ local function run_tools(tool_calls, callback)
 					tai.add_to_history(res)
 				end
 			)
+			return nil
 		end
 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
 		table.insert(results, res)
 	end
-	callback(results)
+	return results
 end
 
 local function process_response(fields)
@@ -165,13 +168,12 @@ local function process_response(fields)
 	end
 
 	vim.schedule(function()
-		run_tools(
-			fields.tool_calls,
-			function(res) tai.task(res, process_response) end
-		)
+		local res = run_tools(fields.tool_calls)
+		if res then
+			tai.task(res, process_response)
+		end
 	end)
 end
-
 local function send_input()
 	vim.schedule(function()
 		scroll_down()

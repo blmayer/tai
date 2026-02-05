@@ -120,12 +120,26 @@ local function request_chat_completions(model_config, msgs, format, callback)
 	local request_body = vim.json.encode(body)
 
 	log.debug("Requesting " .. chat_url .. " with " .. vim.inspect(body))
-	vim.system({
+
+	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
+	-- file instead of passing it as a curl argv element.
+	local tmp = vim.fn.tempname()
+	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
+	if not ok_write then
+		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+	end
+
+	local function cleanup()
+		pcall(vim.fn.delete, tmp)
+	end
+
+	local ok_system, system_err = pcall(vim.system, {
 		"curl", "-s", "-X", "POST", chat_url,
 		"-H", "Authorization: Bearer " .. api_key,
 		"-H", "Content-Type: application/json",
-		"-d", request_body,
+		"--data-binary", "@" .. tmp,
 	}, { text = true }, function(obj)
+		cleanup()
 		if obj.code ~= 0 then
 			local err_msg = "curl returned code " .. obj.code
 			callback(nil, err_msg)
@@ -171,6 +185,11 @@ local function request_chat_completions(model_config, msgs, format, callback)
 		end
 		callback(fields, nil)
 	end)
+
+	if not ok_system then
+		cleanup()
+		return callback(nil, tostring(system_err))
+	end
 end
 
 local function request_responses(model_config, msgs, format, callback)
@@ -237,12 +256,26 @@ local function request_responses(model_config, msgs, format, callback)
 	local request_body = vim.json.encode(body)
 
 	log.debug("Requesting " .. responses_url .. " with " .. vim.inspect(body))
-	vim.system({
+
+	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
+	-- file instead of passing it as a curl argv element.
+	local tmp = vim.fn.tempname()
+	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
+	if not ok_write then
+		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+	end
+
+	local function cleanup()
+		pcall(vim.fn.delete, tmp)
+	end
+
+	local ok_system, system_err = pcall(vim.system, {
 		"curl", "-s", "-X", "POST", responses_url,
 		"-H", "Authorization: Bearer " .. api_key,
 		"-H", "Content-Type: application/json",
-		"-d", request_body,
+		"--data-binary", "@" .. tmp,
 	}, { text = true }, function(obj)
+		cleanup()
 		if obj.code ~= 0 then
 			local err_msg = "curl returned code " .. obj.code
 			callback(nil, err_msg)
@@ -320,6 +353,11 @@ local function request_responses(model_config, msgs, format, callback)
 
 		callback(fields, nil)
 	end)
+
+	if not ok_system then
+		cleanup()
+		return callback(nil, tostring(system_err))
+	end
 end
 
 function M.request(model_config, msgs, format, callback)
