@@ -24,7 +24,7 @@ M.defs = {
 			parameters = {
 				type = "object",
 				properties = {
-					file_path = {
+					file = {
 						type = "string",
 						description = "The path to the file to read."
 					},
@@ -35,7 +35,7 @@ M.defs = {
 					}
 				},
 				additionalProperties = false,
-				required = { "file_path", "range" }
+				required = { "file", "range" }
 			}
 		}
 	},
@@ -44,7 +44,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Edits files using line-based operations. CRITICAL: Read the file FIRST with read_file to get current line numbers. All 'lines' values are 1-based and reference the ORIGINAL file state. Multiple changes in ONE call all reference the SAME original state - do NOT adjust for other changes in the same call.",
+			"Edits files using line-based operations. All 'lines' values are 1-based and reference the current file state. So a patch is affected by previous ones. All changes in a patch the the same file state.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -61,7 +61,7 @@ M.defs = {
 					changes = {
 						type = "array",
 						description =
-						"List of changes to be made. Each change is applied in order",
+						"List of changes to be made. All changes will use the ORIGINAL state of the file.",
 						items = {
 							type = "object",
 							properties = {
@@ -126,31 +126,6 @@ M.defs = {
 		}
 	}
 }
-
-function M.pretty_info(tools)
-	if not tools or #tools == 0 then
-		return ""
-	end
-
-	local pre = "You can use the following tool calls:\n"
-	local tools_desc = vim.tbl_map(
-		function(t)
-			if not M.defs[t] then
-				return ""
-			end
-
-			local desc = M.defs[t]["function"].description
-			local props = M.defs[t]["function"].parameters.properties
-			local args = "Arguments:\n"
-			for k, v in pairs(props) do
-				args = args .. "- " .. k .. " (" .. v.type .. "): " .. v.description
-			end
-			return t .. ": " .. desc .. "\n" .. args
-		end,
-		tools
-	)
-	return pre .. table.concat(tools_desc, "\n") .. "\n"
-end
 
 -- indexes are 1 based
 local function parse_lines(range)
@@ -338,9 +313,9 @@ local function apply_patch(name, file, changes)
 		local adjusted_end = end_line + line_shift
 
 		-- Clamp to valid ranges
+		if end_line == -1 then adjusted_end = - 1 end
 		if adjusted_start < 0 then adjusted_start = 0 end
 		if adjusted_end >= total_lines then adjusted_end = total_lines - 1 end
-
 
 		if operation == "add" then
 			-- Insert content after the specified line
@@ -375,10 +350,10 @@ function M.run(tool, args)
 	log.debug("Running tool call")
 
 	if tool == "read_file" then
-		if not args.file_path then
-			return "[sys] missing read_file argument"
+		if not args.file then
+			return "[sys] missing file argument"
 		end
-		return read_file(args.file_path)
+		return read_file(args.file)
 	elseif tool == "shell" then
 		if not args.command then
 			return "[sys] missing command argument"
