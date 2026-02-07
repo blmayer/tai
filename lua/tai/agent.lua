@@ -76,11 +76,21 @@ content of a file from the file system, or if given, a range of lines, and
 returns the content. To use it call the `read_file` with the following
 example parameters:
 {
-	"fileth": "<path/to/file>",
+	"file": "<path/to/file>",
 	"range": "<range of lines to read or empty for full file>"
 }
 IMPORTANT: reading files repeateadly is useless, read need files only once or
 if they have changed.
+
+
+## connect_file
+Use the `connect_file` tool to add a file's content to the conversation and keep it updated across subsequent messages. To use it call the `connect_file` tool with the following structure:
+{
+	"file": "<path/to/file>",
+	"range": "<range of lines to read or empty for full file>"
+}
+IMPORTANT:
+New calls to this tool will invalidate previous ones, so we preserve context.
 
 ## patch
 To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to

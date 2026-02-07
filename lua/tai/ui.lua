@@ -158,6 +158,14 @@ local function run_tools(tool_calls)
 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
 			res.content = tools.run(name, args)
 			res.file_path = args.file
+			res.file_range = args.range
+			M.append_to_buffer(res.content .. "\n")
+			M.append_to_buffer("}}}\n")
+		elseif name == "connect_file" then
+			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
+			res.content = tools.run(name, args)
+			res.file_path = args.file
+			res.file_range = args.range
 			M.append_to_buffer(res.content .. "\n")
 			M.append_to_buffer("}}}\n")
 		elseif name == "patch" then

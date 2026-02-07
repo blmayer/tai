@@ -1,7 +1,7 @@
 local M = {}
 
 local log = require("tai.log")
-local tools = require("tai.agents.tools")
+local tools = require("tai.tools")
 local config = require("tai.config")
 local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 

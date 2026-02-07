@@ -38,8 +38,9 @@ These notes are intended for **automated coding agents** working in this reposit
 
 - **Add/adjust a tool**
   - Update `lua/tai/tools.lua`.
+  - Add tool details to system prompt in `lua/tai/agent.lua`
   - Ensure the tool schema and the execution function stay in sync.
-  - Consider UX impact (how results are shown) in `ui.lua`.
+  - Consider UX impact (how results are shown) in `lua/tai/ui.lua`.
 
 - **Change default behavior**
   - Update defaults in `config.lua`.

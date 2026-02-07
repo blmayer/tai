@@ -78,132 +78,21 @@ function M.clear_history()
 	history = nil
 end
 
-local function request_chat_completions(model_config, msgs, format, callback)
-	for _, msg in ipairs(msgs) do
-		M.add_to_history(msg)
-	end
-
-	local body = {
-		model = model_config.model,
-		messages = {},
-	}
-
-	if config.use_tools ~= false then
-		body.tools = {
-			tools.defs["read_file"],
-			tools.defs["shell"],
-			tools.defs["patch"],
-			tools.defs["summarize"],
-		}
-	end
-
-	for _, message in ipairs(history or {}) do
-		local new_message = {}
-		for key, value in pairs(message) do
-			if key ~= "file_path" then
-				new_message[key] = value
-			end
-		end
-		table.insert(body.messages, new_message)
-	end
-
-	if format then
-		body.format = format
-	end
-
-	if model_config.options then
-		for k, v in pairs(model_config.options) do
-			body[k] = v
-		end
-	end
-
-	local request_body = vim.json.encode(body)
-
-	log.debug("Requesting " .. chat_url .. " with " .. vim.inspect(body))
-
-	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
-	-- file instead of passing it as a curl argv element.
-	local tmp = vim.fn.tempname()
-	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
-	if not ok_write then
-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
-	end
-
-	local function cleanup()
-		pcall(vim.fn.delete, tmp)
-	end
-
-	local ok_system, system_err = pcall(vim.system, {
-		"curl", "-s", "-X", "POST", chat_url,
-		"-H", "Authorization: Bearer " .. api_key,
-		"-H", "Content-Type: application/json",
-		"--data-binary", "@" .. tmp,
-	}, { text = true }, function(obj)
-		cleanup()
-		if obj.code ~= 0 then
-			local err_msg = "curl returned code " .. obj.code
-			callback(nil, err_msg)
-			return
-		end
-
-		if not obj.stdout or obj.stdout == "" then
-			return callback(nil, "Received empty response from OpenAI")
-		end
-
-		local parsed = vim.json.decode(obj.stdout)
-		if not parsed then
-			return callback(nil, "Failed to decode JSON response")
-		end
-		log.debug("Request response: " .. vim.inspect(parsed))
-
-		if parsed and parsed.error then
-			return callback(nil, "Received error: " .. parsed.error.message)
-		end
-
-		local message = parsed.choices[1].message
-		local content = message.content
-		local fields = {}
-		if content and content ~= vim.NIL then
-			log.debug("response content: " .. (content or ""))
-			if format ~= nil then
-				log.debug("parsing JSON content")
-				fields.content = vim.json.decode(content)
-				if not fields.content then
-					return callback(nil, "Failed to decode message")
-				end
-			else
-				fields.content = content
-			end
-		end
-
-		fields.tool_calls = message.tool_calls
-		for _, call in ipairs(fields.tool_calls or {}) do
-			local args = call["function"].arguments
-			if type(args) == "string" then
-				call["function"].arguments = vim.json.decode(args)
-			end
-		end
-		callback(fields, nil)
-	end)
-
-	if not ok_system then
-		cleanup()
-		return callback(nil, tostring(system_err))
-	end
-end
-
 local function request_responses(model_config, msgs, format, callback)
 	-- Preserve existing chat history behavior but translate to Responses API.
 	for _, msg in ipairs(msgs) do
 		add_history_message(vim.deepcopy(msg))
 	end
 
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
+
 	local input = {}
 	for _, msg in ipairs(history or {}) do
 		-- strip file_path (internal)
 		local new_msg = {}
 		for k, v in pairs(msg) do
-			if k ~= "file_path" then
+			if k ~= "file_path" and k ~= "file_range" then
 				new_msg[k] = v
 			end
 		end
@@ -235,6 +124,7 @@ local function request_responses(model_config, msgs, format, callback)
 
 		body.tools = {
 			to_responses_tool(tools.defs["read_file"]),
+			to_responses_tool(tools.defs["connect_file"]),
 			to_responses_tool(tools.defs["shell"]),
 			to_responses_tool(tools.defs["patch"]),
 			to_responses_tool(tools.defs["summarize"]),

@@ -36,6 +36,9 @@ function M.request(model_config, msgs, format, callback)
 		M.add_to_history(msg)
 	end
 
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
+
 	local body = {
 		model = model_config.model,
 		messages = {},
@@ -47,12 +50,14 @@ function M.request(model_config, msgs, format, callback)
 			tools.defs["shell"],
 			tools.defs["patch"],
 			tools.defs["summarize"],
+			tools.defs["connect_file"],
+
 		}
 	end
 	for _, message in ipairs(history) do
 		local new_message = {}
 		for key, value in pairs(message) do
-			if key ~= "file_path" then
+			if key ~= "file_path" and key ~= "file_range" then
 				new_message[key] = value
 			end
 		end

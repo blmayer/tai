@@ -39,6 +39,29 @@ M.defs = {
 			}
 		}
 	},
+	connect_file = {
+		type = "function",
+		["function"] = {
+			name = "connect_file",
+			description = "Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
+			parameters = {
+				type = "object",
+				properties = {
+					file = {
+						type = "string",
+						description = "The path to the file to read."
+					},
+					range = {
+						type = "string",
+						description = "Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+					}
+				},
+				additionalProperties = false,
+				required = { "file", "range" }
+			}
+		}
+	},
+
 	patch = {
 		type = "function",
 		["function"] = {
@@ -194,7 +217,7 @@ local function read_file(file_path, range)
 	end
 
 	local numbered_lines = {}
-	if not range then
+	if not range or range == "" then
 		-- If no range is specified, return all lines
 		for i, line in ipairs(lines) do
 			table.insert(numbered_lines, string.format("%d: %s", i, line))
@@ -204,32 +227,37 @@ local function read_file(file_path, range)
 		return numbered_content
 	end
 
-	-- Parse the range
-	local start, end_line = parse_lines(range)
-	if start < 0 or end_line < 0 then
-		start = lines + start + 1
-		end_line = lines + end_line + 1
+	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
+	local start0, end0 = parse_lines(range)
+	local nlines = #lines
+
+	-- Convert negative indexes (relative to end) to 0-based absolute indexes
+	if start0 < 0 then
+		start0 = nlines + start0
+	end
+	if end0 < 0 then
+		end0 = nlines + end0
 	end
 
-	for i, line in ipairs(lines) do
-		if i >= start and i <= end_line then
-			table.insert(numbered_lines, string.format("%d: %s", i, line))
-		end
+	-- Convert to 1-based for display
+	local start1 = start0 + 1
+	local end1 = end0 + 1
 
-		-- Stop early if we've passed the end of our range
-		if i > end_line then
-			break
-		end
-	end
-
-	if #numbered_lines == 0 then
+	if start1 < 1 or end1 < 1 or start1 > nlines or end1 > nlines or start1 > end1 then
 		return "[sys] Invalid range: " .. range
+	end
+
+	for i = start1, end1 do
+		local line = lines[i] or ""
+		table.insert(numbered_lines, string.format("%d: %s", i, line))
 	end
 
 	local numbered_content = table.concat(numbered_lines, "\n")
 	log.debug("read_file output: " .. numbered_content)
 	return numbered_content
+
 end
+
 
 local function run_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
@@ -345,6 +373,32 @@ local function apply_patch(name, file, changes)
 	end
 end
 
+function M.refresh_connected_files(history)
+	-- Walk from the end so we can detect older connect_file calls for the same file.
+	local latest = {}
+	for i = #history, 1, -1 do
+		local msg = history[i]
+		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+			local key = msg.file_path .. "::" .. (msg.file_range or "")
+			if latest[key] then
+				msg.content = "[sys] content shown in newer call"
+				msg.file_path = nil
+				msg.file_range = nil
+			else
+				latest[key] = true
+			end
+		end
+	end
+
+	-- Refresh remaining (latest) connect_file messages.
+	for _, msg in ipairs(history or {}) do
+		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+			msg.content = read_file(msg.file_path, msg.file_range or "")
+		end
+	end
+end
+
+
 -- TODO: there must be an enum for tool names
 function M.run(tool, args)
 	log.debug("Running tool call")
@@ -353,7 +407,12 @@ function M.run(tool, args)
 		if not args.file then
 			return "[sys] missing file argument"
 		end
-		return read_file(args.file)
+		return read_file(args.file, args.range)
+	elseif tool == "connect_file" then
+		if not args.file then
+			return "[sys] missing file argument"
+		end
+		return read_file(args.file, args.range)
 	elseif tool == "shell" then
 		if not args.command then
 			return "[sys] missing command argument"
