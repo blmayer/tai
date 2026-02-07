@@ -16,6 +16,7 @@ agents directly to your editor.
 - responses show up in a split buffer in Neovim
 - apply patches or run commands
 - agents create plans for big code changes
+- code folding in the chat
 
 
 <i>providers</i>
@@ -26,6 +27,7 @@ agents directly to your editor.
 - ollama
 - z.ai
 - local
+- openai
 
 
 <b>keybindings</b>
@@ -74,19 +76,14 @@ this structure:
 
 {
 	"provider": string,
-	"tai": {
-		"tools": []string
-		"model": string
-	}
+	"model": string
 }
-
-tool options: read_file, shell, patch.
 
 
 <b>usage</b>
 
 make sure the correct env var is set: <i>GROQ_API_KEY</i>,
-for Groq or <i>GEMINI_API_KEY</i> for Gemini.
+for Groq or <i>GEMINI_API_KEY</i> for Gemini etc.
 create a .tai file at the root or your project.
 editting any file in that project should start tai.
 then just use the keybindings above.
@@ -95,12 +92,12 @@ then just use the keybindings above.
 <i>screenshots</i>
 
 - <a href="2025-08-05-174307_1372x1415_scrot.png">side panel</a>
-- <a href="2025-08-05-174401_1372x1415_scrot.png">input for prompt</a>
+- <a href="folding.png">side panel with folding</a>
 
 
 <b>license</b>
 
 MIT License
 
-(C) 2025 Brian Mayer
+(C) 2025-2026 Brian Mayer
 </pre>
