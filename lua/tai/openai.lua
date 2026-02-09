@@ -124,7 +124,6 @@ local function request_responses(model_config, msgs, format, callback)
 
 		body.tools = {
 			to_responses_tool(tools.defs["read_file"]),
-			to_responses_tool(tools.defs["connect_file"]),
 			to_responses_tool(tools.defs["shell"]),
 			to_responses_tool(tools.defs["patch"]),
 			to_responses_tool(tools.defs["summarize"]),

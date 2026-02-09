@@ -36,11 +36,12 @@ Workflow:
   task.
 - If you edit code: keep changes minimal and consistent, ignore unrelated issues,
   update docs if user-facing and keep the style consistent.
+- New files may now appear in `ls` as they can be only in the session's buffer.
 - Keep the user informed of your choices during the process.
 - Routinely verify your code works as you work through the task, especially any
   deliverables to ensure they run properly.
-- After applying a patch you should re-read afected files to ensure the patch was
-  applied correctly.
+- After applying a patch you should check the affected files to ensure the patch
+  was applied correctly.
   - Don't run commands if you didn't verify the patch.
   - Read the changed files ONLY ONE TIME.
   - Stop after 3 attempts with failure.
@@ -73,24 +74,16 @@ last 5 lines: -5:$.",
 ## read_file
 To read files ALWAYS use the `read_file` tool. `read_file` reads the full
 content of a file from the file system, or if given, a range of lines, and
-returns the content. To use it call the `read_file` with the following
-example parameters:
+returns the content. Use it if you need the file content in your context, so
+you can patch it or understand the codebase. The content is kept updated by the
+system, so it always reflects the current state of the file. To use it call the
+`read_file` with the following structure:
 {
 	"file": "<path/to/file>",
 	"range": "<range of lines to read or empty for full file>"
 }
-IMPORTANT: reading files repeateadly is useless, read need files only once or
-if they have changed.
-
-
-## connect_file
-Use the `connect_file` tool to add a file's content to the conversation and keep it updated across subsequent messages. To use it call the `connect_file` tool with the following structure:
-{
-	"file": "<path/to/file>",
-	"range": "<range of lines to read or empty for full file>"
-}
-IMPORTANT:
-New calls to this tool will invalidate previous ones, so we preserve context.
+IMPORTANT: reading the same file more than once is useless, if you re-read a
+file the old response is cleared.
 
 ## patch
 To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to

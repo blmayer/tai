@@ -378,7 +378,7 @@ function M.refresh_connected_files(history)
 	local latest = {}
 	for i = #history, 1, -1 do
 		local msg = history[i]
-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
 			local key = msg.file_path .. "::" .. (msg.file_range or "")
 			if latest[key] then
 				msg.content = "[sys] content shown in newer call"
@@ -392,7 +392,7 @@ function M.refresh_connected_files(history)
 
 	-- Refresh remaining (latest) connect_file messages.
 	for _, msg in ipairs(history or {}) do
-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
 			msg.content = read_file(msg.file_path, msg.file_range or "")
 		end
 	end
@@ -404,11 +404,6 @@ function M.run(tool, args)
 	log.debug("Running tool call")
 
 	if tool == "read_file" then
-		if not args.file then
-			return "[sys] missing file argument"
-		end
-		return read_file(args.file, args.range)
-	elseif tool == "connect_file" then
 		if not args.file then
 			return "[sys] missing file argument"
 		end
