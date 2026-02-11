@@ -20,6 +20,16 @@ function M.update_chat_name()
 	end
 end
 
+local function update_token_display(token_count)
+	local name = input_bufname
+	if token_count then
+		name = string.format("%s (ctx: %u)", input_bufname, token_count)
+	end
+	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
+	end
+end
+
 M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
 vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
 vim.bo[M.input_buffer_nr].buftype = "nofile"
@@ -169,6 +179,8 @@ local function run_tools(tool_calls)
 			M.append_to_buffer(res.content .. "\n")
 			M.append_to_buffer("}}}\n")
 		elseif name == "patch" then
+			local out = tools.run(name, args)
+
 			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
 			for _, change in ipairs(args.changes or {}) do
 				M.append_to_buffer(string.format(
@@ -179,13 +191,12 @@ local function run_tools(tool_calls)
 					change.content
 				))
 			end
-			local out = tools.run(name, args)
 			res.content = out
 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
 			M.append_to_buffer("}}}\n")
 			refresh_and_close_folds()
 		elseif name == "summarize" then
-			M.append_to_buffer("[tai] Summarizing\n")
+			M.append_to_buffer("{{{ Summarizing chat\n}}}\n")
 			tai.task(
 				{ tools.summary_msg },
 				function(summ)
@@ -202,16 +213,17 @@ local function run_tools(tool_calls)
 			return nil
 		end
 
-		log.debug("Output of " .. name .. ": " .. (res.content or ""))
 		table.insert(results, res)
 	end
 	return results
 end
 
 local function process_response(fields)
-	log.debug("Showing response")
 	M.open()
 
+	if fields.token_usage then
+		vim.schedule(function() update_token_display(fields.token_usage) end)
+	end
 	if fields.error then
 		M.append_to_buffer("[tai] " .. fields.error .. "\n")
 		return

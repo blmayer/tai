@@ -131,6 +131,10 @@ function M.request(model_config, msgs, format, callback)
 			end
 
 			-- Mistral tool call arguments are already JSON objects, no need to decode
+			-- Extract token usage if available
+			if parsed.usage and parsed.usage.total_tokens then
+				fields.token_usage = parsed.usage.total_tokens
+			end
 			callback(fields, nil)
 		end)
 end
