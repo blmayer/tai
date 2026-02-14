@@ -2,6 +2,7 @@ local M = {}
 
 local log = require("tai.log")
 local tools = require("tai.tools")
+local config = require("tai.config")
 
 local url = "https://api.z.ai/api/paas/v4/chat/completions"
 
@@ -26,8 +27,13 @@ function M.clear_history()
 	history = nil
 end
 
-function M.request(model_config, msg, format, callback)
-	M.add_to_history(msg)
+function M.request(model_config, msgs, format, callback)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
+
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
 
 	local agent_tools = vim.tbl_map(
 		function(t)
@@ -43,6 +49,9 @@ function M.request(model_config, msg, format, callback)
 	if format then
 		body.format = format
 	end
+	if config.use_tools ~= false and #agent_tools > 0 then
+		body.tools = agent_tools
+	end
 	if model_config.think ~= nil then
 		body.reasoning_effort = model_config.think
 	end
@@ -52,7 +61,7 @@ function M.request(model_config, msg, format, callback)
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. request_body)
+	log.debug("Requesting " .. url .. " with " .. vim.inspect(request_body))
 	vim.system(
 		{
 			"curl", "-s", "-X", "POST", url,
@@ -66,7 +75,6 @@ function M.request(model_config, msg, format, callback)
 				return
 			end
 
-			log.debug("Request response: " .. obj.stdout)
 			if not obj.stdout or obj.stdout == "" then
 				return callback(nil, "Received empty response from Gemini")
 			end
@@ -75,6 +83,7 @@ function M.request(model_config, msg, format, callback)
 			if not parsed then
 				return callback(nil, "Failed to decode JSON: " .. parsed)
 			end
+			log.debug("Request response: " .. vim.inspect(parsed))
 
 			if parsed and parsed.error then
 				return callback(nil, "Received error: " .. parsed.error.message)
