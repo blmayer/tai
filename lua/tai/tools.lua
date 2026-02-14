@@ -20,7 +20,7 @@ M.defs = {
 		["function"] = {
 			name = "read_file",
 			description =
-			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
+			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested always at current state.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -43,7 +43,8 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "connect_file",
-			description = "Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
+			description =
+			"Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
 			parameters = {
 				type = "object",
 				properties = {
@@ -53,7 +54,8 @@ M.defs = {
 					},
 					range = {
 						type = "string",
-						description = "Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+						description =
+						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
 					}
 				},
 				additionalProperties = false,
@@ -255,7 +257,6 @@ local function read_file(file_path, range)
 	local numbered_content = table.concat(numbered_lines, "\n")
 	log.debug("read_file output: " .. numbered_content)
 	return numbered_content
-
 end
 
 
@@ -341,7 +342,7 @@ local function apply_patch(name, file, changes)
 		local adjusted_end = end_line + line_shift
 
 		-- Clamp to valid ranges
-		if end_line == -1 then adjusted_end = - 1 end
+		if end_line == -1 then adjusted_end = -1 end
 		if adjusted_start < 0 then adjusted_start = 0 end
 		if adjusted_end >= total_lines then adjusted_end = total_lines - 1 end
 
@@ -398,10 +399,9 @@ function M.refresh_connected_files(history)
 	end
 end
 
-
 -- TODO: there must be an enum for tool names
 function M.run(tool, args)
-	log.debug("Running tool call")
+	log.debug("Running tool call " .. tool)
 
 	if tool == "read_file" then
 		if not args.file then
@@ -425,6 +425,8 @@ function M.run(tool, args)
 			return "[sys] patch error: " .. err
 		end
 		return "[sys] patch applied"
+	elseif tool == "summarize" then
+		return "[sys] agent called summarize tool."
 	end
 
 	return "[sys] Unknown tool `" .. tool .. "`"
