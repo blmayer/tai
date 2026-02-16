@@ -117,9 +117,13 @@ function M.request(model_config, msgs, format, callback)
                     fields.content = message.content
                 end
             end
-
             fields.tool_calls = message.tool_calls
             provider_common.decode_tool_call_arguments(fields.tool_calls)
+
+            -- Extract token usage if available
+            if parsed.usage and parsed.usage.total_tokens then
+                fields.token_usage = parsed.usage.total_tokens
+            end
 
             callback(fields, nil)
         end)
