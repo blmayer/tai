@@ -1,9 +1,8 @@
-
 local M = {}
-
-local log = require("tai.log")
+local provider_common = require("tai.provider_common")
 local tools = require("tai.tools")
 local config = require("tai.config")
+local log = require("tai.log")
 local url = "https://api.stepfun.ai/v1/chat/completions"
 
 local api_key = os.getenv("STEPFUN_API_KEY")
@@ -35,25 +34,12 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-	local agent_tools = vim.tbl_map(
-		function(t)
-			return tools.defs[t]
-		end,
-		model_config.tools or {}
-	)
+	local agent_tools = provider_common.build_agent_tools(model_config)
+
 	local body = {
 		model = model_config.model,
-		messages = {},
+		messages = provider_common.filter_messages(history),
 	}
-	for _, message in ipairs(history) do
-		local new_message = {}
-		for key, value in pairs(message) do
-			if key ~= "file_path" and key ~= "file_range" then
-				new_message[key] = value
-			end
-		end
-		table.insert(body.messages, new_message)
-	end
 
 	if config.use_tools ~= false and #agent_tools > 0 then
 		body.tools = agent_tools
@@ -70,39 +56,11 @@ function M.request(model_config, msgs, format, callback)
 	end
 
 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
-
 	local request_body = vim.json.encode(body)
-	-- Use a temporary file to avoid E2BIG (argument list too long) with curl
-	local tmp = vim.fn.tempname()
-	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
-	if not ok_write then
-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
-	end
 
-	local function cleanup()
-		pcall(vim.fn.delete, tmp)
-	end
-
-	local ok_system, system_err = pcall(vim.system, {
-		"curl", "-s", "-X", "POST", url,
-		"-H", "Authorization: Bearer " .. api_key,
-		"-H", "Content-Type: application/json",
-		"--data-binary", "@" .. tmp,
-	}, { text = true }, function(obj)
-		cleanup()
-		if obj.code ~= 0 then
-			local err_msg = "curl returned code " .. obj.code
-			callback(nil, err_msg)
-			return
-		end
-
-		if not obj.stdout or obj.stdout == "" then
-			return callback(nil, "Received empty response from StepFun")
-		end
-
-		local parsed = vim.json.decode(obj.stdout)
-		if not parsed then
-			return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
+		if err then
+			return callback(nil, err)
 		end
 
 		log.debug("Request response: " .. vim.inspect(parsed))
@@ -111,30 +69,9 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, parsed.message or "Unknown StepFun API error")
 		end
 
-		if not parsed.choices or #parsed.choices == 0 then
-			return callback(nil, "No choices received from StepFun")
-		end
-
-		local message = parsed.choices[1].message
-		local content = message.content
-		local fields = {}
-		if content and content ~= "" then
-			if format == "json_object" then
-				fields.content = vim.json.decode(content)
-				if not fields.content then
-					return callback(nil, "Failed to decode message content as JSON")
-				end
-			else
-				fields.content = content
-			end
-		end
-
-		if message.tool_calls and message.tool_calls ~= vim.NIL then
-			fields.tool_calls = message.tool_calls
-			for _, call in ipairs(fields.tool_calls) do
-				local args = call["function"].arguments
-				call["function"].arguments = vim.json.decode(args)
-			end
+		local fields, extract_err = provider_common.extract_fields(parsed, format)
+		if extract_err then
+			return callback(nil, extract_err)
 		end
 
 		-- Extract token usage if available
@@ -143,11 +80,6 @@ function M.request(model_config, msgs, format, callback)
 		end
 		callback(fields, nil)
 	end)
-
-	if not ok_system then
-		cleanup()
-		return callback(nil, tostring(system_err))
-	end
 end
 
 return M

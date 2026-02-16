@@ -1,8 +1,9 @@
 local M = {}
 
-local log = require("tai.log")
 local tools = require("tai.tools")
+local provider_common = require("tai.provider_common")
 local config = require("tai.config")
+local log = require("tai.log")
 local url = "https://openrouter.ai/api/v1/chat/completions"
 
 local api_key = os.getenv("OPENROUTER_API_KEY")
@@ -32,115 +33,96 @@ function M.clear_history()
 end
 
 function M.request(model_config, msgs, format, callback)
-	for _, msg in ipairs(msgs) do
-		M.add_to_history(msg)
-	end
+    for _, msg in ipairs(msgs) do
+        M.add_to_history(msg)
+    end
 
-	-- Keep connected files up to date in history before sending.
-	tools.refresh_connected_files(history)
+    -- Keep connected files up to date in history before sending.
+    tools.refresh_connected_files(history)
 
-	local body = {
-		model = model_config.model,
-		messages = {},
-	}
+    local body = {
+        model = model_config.model,
+        messages = {},
+    }
 
-	if config.use_tools ~= false then
-		body.tools = {
-			tools.defs["read_file"],
-			tools.defs["shell"],
-			tools.defs["patch"],
-			tools.defs["summarize"],
-			tools.defs["connect_file"],
+    if config.use_tools ~= false then
+        body.tools = {
+            tools.defs["read_file"],
+            tools.defs["shell"],
+            tools.defs["patch"],
+            tools.defs["summarize"],
+            tools.defs["connect_file"],
+        }
+    end
+    for _, message in ipairs(history) do
+        local new_message = provider_common.filter_message(message)
+        table.insert(body.messages, new_message)
+    end
 
-		}
-	end
-	for _, message in ipairs(history) do
-		local new_message = {}
-		for key, value in pairs(message) do
-			if key ~= "file_path" and key ~= "file_range" then
-				new_message[key] = value
-			end
-		end
-		table.insert(body.messages, new_message)
-	end
+    if format == "json_object" then
+        body.response_format = { type = "json_object" }
+    end
 
-	-- Mistral API does not directly support 'format', 'reasoning_effort' or 'extra_body' at the top level
-	-- in the same way Gemini does.
-	-- If a specific format (e.g., JSON) is needed, it's usually via 'response_format'.
-	-- For now, I'll omit these or adapt if user specifies.
-	if format == "json_object" then -- Assuming 'json_object' as a possible format for Mistral
-		body.response_format = { type = "json_object" }
-	end
+    if model_config.options then
+        for k, v in pairs(model_config.options) do
+            body[k] = v
+        end
+    end
 
-	-- Add other model options if provided in model_config.options, assuming they are valid Mistral API parameters
-	if model_config.options then
-		for k, v in pairs(model_config.options) do
-			body[k] = v
-		end
-	end
+    local request_body = vim.json.encode(body)
 
-	local request_body = vim.json.encode(body)
+    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+    vim.system(
+        {
+            "curl", "-s", "-X", "POST", url,
+            "-H", "Authorization: Bearer " .. api_key,
+            "-H", "Content-Type: application/json",
+            "-d", request_body,
+        }, { text = true }, function(obj)
+            if obj.code ~= 0 then
+                local err_msg = "curl returned code " .. obj.code
+                callback(nil, err_msg)
+                return
+            end
 
-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
-	vim.system(
-		{
-			"curl", "-s", "-X", "POST", url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", request_body,
-		}, { text = true }, function(obj)
-			if obj.code ~= 0 then
-				local err_msg = "curl returned code " .. obj.code
-				callback(nil, err_msg)
-				return
-			end
+            if not obj.stdout or obj.stdout == "" then
+                return callback(nil, "Received empty response from Openrouter")
+            end
 
-			if not obj.stdout or obj.stdout == "" then
-				return callback(nil, "Received empty response from Mistral")
-			end
+            local parsed = vim.json.decode(obj.stdout)
+            if not parsed then
+                return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+            end
+            log.debug("Request response: " .. vim.inspect(parsed))
 
-			local parsed = vim.json.decode(obj.stdout)
-			if not parsed then
-				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
-			end
-			log.debug("Request response: " .. vim.inspect(parsed))
+            if parsed.error then
+                return callback(nil, parsed.error.message)
+            end
 
-			-- Mistral errors are usually at the root level, e.g., parsed.error
-			if parsed.error then
-				return callback(nil, parsed.error.message)
-			end
+            if not parsed.choices or #parsed.choices == 0 then
+                return callback(nil, "No choices received from Openrouter")
+            end
 
-			if not parsed.choices or #parsed.choices == 0 then
-				return callback(nil, "No choices received from Openrouter")
-			end
+            local message = parsed.choices[1].message
+            local fields = {}
+            if message.content and message.content ~= "" then
+                log.debug("response content: " .. message.content)
+                if format == "json_object" then
+                    log.debug("parsing JSON content")
+                    fields.content = vim.json.decode(message.content)
+                    if not fields.content then
+                        return callback(nil, "Failed to decode message content as JSON")
+                    end
+                else
+                    fields.content = message.content
+                end
+            end
 
-			local message = parsed.choices[1].message
-			local content = message.content
-			local fields = {}
-			if content and content ~= "" then
-				log.debug("response content: " .. content)
-				if format == "json_object" then
-					log.debug("parsing JSON content")
-					fields.content = vim.json.decode(content)
-					if not fields.content then
-						return callback(nil, "Failed to decode message content as JSON")
-					end
-				else
-					fields.content = content
-				end
-			end
+            fields.tool_calls = message.tool_calls
+            provider_common.decode_tool_call_arguments(fields.tool_calls)
 
-			if message.tool_calls and message.tool_calls ~= vim.NIL then
-				fields.tool_calls = message.tool_calls
-				for _, call in ipairs(fields.tool_calls) do
-					local args = call["function"].arguments
-					call["function"].arguments = vim.json.decode(args)
-				end
-			end
-
-			-- Mistral tool call arguments are already JSON objects, no need to decode
-			callback(fields, nil)
-		end)
+            callback(fields, nil)
+        end)
 end
 
 return M

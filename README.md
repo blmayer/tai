@@ -4,7 +4,7 @@
 
 ## Providers
 
-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StpeFun and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
 
        GROQ_API_KEY=your_api_key_here
 

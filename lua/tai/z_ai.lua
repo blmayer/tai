@@ -1,7 +1,8 @@
 local M = {}
 
-local log = require("tai.log")
+local provider_common = require("tai.provider_common")
 local tools = require("tai.tools")
+local config = require("tai.config")
 local config = require("tai.config")
 
 local url = "https://api.z.ai/api/paas/v4/chat/completions"
@@ -35,22 +36,17 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-	local agent_tools = vim.tbl_map(
-		function(t)
-			return tools.defs[t]
-		end,
-		model_config.tools or {}
-	)
+    local agent_tools = provider_common.build_agent_tools(model_config)
 	local body = {
 		model = model_config.model,
-		messages = history,
+        messages = provider_common.filter_message(history) or {},
 		tools = agent_tools,
 	}
 	if format then
 		body.format = format
 	end
-	if config.use_tools ~= false and #agent_tools > 0 then
-		body.tools = agent_tools
+    if config.use_tools ~= false and #agent_tools > 0 then
+        body.tools = agent_tools
 	end
 	if model_config.think ~= nil then
 		body.reasoning_effort = model_config.think
@@ -109,11 +105,8 @@ function M.request(model_config, msgs, format, callback)
 				end
 			end
 
-			fields.tool_calls = message.tool_calls
-			for _, call in ipairs(fields.tool_calls or {}) do
-				local args = call["function"].arguments
-				call["function"].arguments = vim.json.decode(args)
-			end
+            fields.tool_calls = message.tool_calls
+            provider_common.decode_tool_call_arguments(fields.tool_calls)
 			callback(fields, nil)
 		end)
 end
