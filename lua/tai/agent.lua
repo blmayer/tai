@@ -20,6 +20,8 @@ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
 Output rules:
 - Do not use Markdown.
 - Do not wrap content in quotes/backticks or escape it unless the user asked.
+- Thinking output is not shown to the user, add it to the text output if needed.
+  
 
 Workflow:
 - Decompose the request into explicit requirements, unclear areas, and hidden

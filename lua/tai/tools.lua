@@ -325,6 +325,9 @@ local function apply_patch(name, file, changes)
 	-- Apply changes to new buffer
 	-- vim.api.nvim_buf_set_lines is 0 indexed
 	local line_shift = 0
+	if type(changes) ~= "table" then
+		return "changes must be an array, got " .. type(changes)
+	end
 	for _, hunk in ipairs(changes) do
 		local operation = hunk.operation
 		local lines_str = hunk.lines

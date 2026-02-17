@@ -156,13 +156,21 @@ local function run_tools(tool_calls)
 				res.content = out
 			elseif input == 2 then
 				log.debug("Declined")
-				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}\n")
-				res.content = "[sys] User declined running this command"
+				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}")
+				local comment = vim.fn.input("Comment (optional): ")
+				if comment and comment ~= "" then
+					res.content = "[sys] User declined running this command. Comment: " .. comment
+				else
+					res.content = "[sys] User declined running this command"
+				end
 			else
-				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
-				res.content = "[sys] User stopped the conversation"
-				table.insert(results, res)
-				return results
+				local comment = vim.fn.input("Comment (optional): ")
+				if comment and comment ~= "" then
+					res.content = "[sys] User declined running this command. Comment: " .. comment
+				else
+					M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
+					res.content = "[sys] User stopped the conversation"
+				end
 			end
 		elseif name == "read_file" then
 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
