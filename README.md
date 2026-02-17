@@ -4,7 +4,7 @@
 
 ## Providers
 
-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StpeFun and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
 
        GROQ_API_KEY=your_api_key_here
 
@@ -20,10 +20,11 @@ for Z.AI, or:
 
        OPENAI_API_KEY=your_api_key_here
 
-for OpenAI, or configure a local Ollama server (localhost:11434).
+for OpenAI, or:
 
-Mistral support is in progress (their API is flaky ATM).
+       MINIMAX_API_KEY=your_api_key_here
 
+for Minimax, or configure a local Ollama server (localhost:11434).
 
 ## Integrated workflow
 
