@@ -1,14 +1,10 @@
 local M = {}
 
-local log = require("tai.log")
 local tools = require("tai.tools")
 
 -- Build agent tools from model_config
 function M.build_agent_tools(model_config)
-	return vim.tbl_map(
-		function(t) return tools.defs[t] end,
-		model_config.tools or {}
-	)
+	return tools.defs
 end
 
 -- Filter a single message to remove internal fields
@@ -33,69 +29,42 @@ end
 
 -- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
 -- callback receives (parsed, error)
-function M.make_http_call(url, api_key, body_json, use_temp_file, callback)
-	if use_temp_file then
-		local tmp = vim.fn.tempname()
-		local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
-		if not ok_write then
-			return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+function M.make_http_call(url, api_key, body_json, callback)
+	local tmp = vim.fn.tempname()
+	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
+	if not ok_write then
+		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+	end
+	local function cleanup()
+		pcall(vim.fn.delete, tmp)
+	end
+	local ok_system, system_err = pcall(vim.system, {
+		"curl", "-s", "-X", "POST", url,
+		"-H", "Authorization: Bearer " .. api_key,
+		"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
+		"-H", "X-Title: tai.nvim",
+		"-H", "Content-Type: application/json",
+		"--data-binary", "@" .. tmp,
+	}, { text = true }, function(obj)
+		cleanup()
+		if obj.code ~= 0 then
+			callback(nil, "curl returned code " .. obj.code)
+			return
 		end
-		local function cleanup()
-			pcall(vim.fn.delete, tmp)
+		if not obj.stdout or obj.stdout == "" then
+			callback(nil, "Received empty response")
+			return
 		end
-		local ok_system, system_err = pcall(vim.system, {
-			"curl", "-s", "-X", "POST", url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
-			"-H", "X-Title: tai.nvim",
-			"-H", "Content-Type: application/json",
-			"--data-binary", "@" .. tmp,
-		}, { text = true }, function(obj)
-			cleanup()
-			if obj.code ~= 0 then
-				callback(nil, "curl returned code " .. obj.code)
-				return
-			end
-			if not obj.stdout or obj.stdout == "" then
-				callback(nil, "Received empty response")
-				return
-			end
-			local parsed = vim.json.decode(obj.stdout)
-			if not parsed then
-				callback(nil, "Failed to decode JSON response")
-				return
-			end
-			callback(parsed, nil)
-		end)
-		if not ok_system then
-			cleanup()
-			callback(nil, tostring(system_err))
+		local parsed = vim.json.decode(obj.stdout)
+		if not parsed then
+			callback(nil, "Failed to decode JSON response")
+			return
 		end
-	else
-		local ok_system, system_err = pcall(vim.system, {
-			"curl", "-s", "-X", "POST", url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", body_json,
-		}, { text = true }, function(obj)
-			if obj.code ~= 0 then
-				callback(nil, "curl returned code " .. obj.code)
-				return
-			end
-			if not obj.stdout or obj.stdout == "" then
-				callback(nil, "Received empty response")
-				return
-			end
-			local parsed = vim.json.decode(obj.stdout)
-			if not parsed then
-				callback(nil, "Failed to decode JSON response")
-				return
-			end
-			callback(parsed, nil)
-		end)
-		if not ok_system then
-			callback(nil, tostring(system_err))
-		end
+		callback(parsed, nil)
+	end)
+	if not ok_system then
+		cleanup()
+		callback(nil, tostring(system_err))
 	end
 end
 

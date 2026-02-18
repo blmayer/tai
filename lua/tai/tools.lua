@@ -15,7 +15,7 @@ Summarize all our prompts so far, don't include any file content. Follow this:
 }
 
 M.defs = {
-	read_file = {
+	{
 		type = "function",
 		["function"] = {
 			name = "read_file",
@@ -39,7 +39,7 @@ M.defs = {
 			}
 		}
 	},
-	connect_file = {
+	{
 		type = "function",
 		["function"] = {
 			name = "connect_file",
@@ -63,8 +63,7 @@ M.defs = {
 			}
 		}
 	},
-
-	patch = {
+	{
 		type = "function",
 		["function"] = {
 			name = "patch",
@@ -117,7 +116,7 @@ M.defs = {
 			}
 		}
 	},
-	shell = {
+	{
 		type = "function",
 		["function"] = {
 			name = "shell",
@@ -137,7 +136,7 @@ M.defs = {
 			}
 		}
 	},
-	summarize = {
+	{
 		type = "function",
 		["function"] = {
 			name = "summarize",

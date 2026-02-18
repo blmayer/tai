@@ -5,7 +5,7 @@ local tools = require("tai.tools")
 local config = require("tai.config")
 local log = require("tai.log")
 
-local url = "https://api.minimax.io/v1/text/chatcompletion_v2"
+local url = "https://api.minimax.io/v1/chat/completions"
 
 local api_key = os.getenv("MINIMAX_API_KEY")
 if not api_key then
@@ -17,11 +17,16 @@ end
 local history = nil
 
 function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
+	for _, call in ipairs(msg.tool_calls or {}) do
+		local args = call["function"].arguments
+		call["function"].arguments = vim.json.encode(args)
+	end
 	if not history then
-		history = { message }
+		history = { msg }
 		return
 	end
-	table.insert(history, message)
+	table.insert(history, msg)
 end
 
 function M.clear_history()
@@ -60,15 +65,15 @@ function M.request(model_config, msgs, format, callback)
 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
-	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
+	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
 			return callback(nil, err)
 		end
 
 		log.debug("Request response: " .. vim.inspect(parsed))
 
-		if parsed.object == "error" then
-			return callback(nil, parsed.message or "Unknown Minimax API error")
+		if parsed.type == "error" then
+			return callback(nil, parsed.error.message or "Unknown Minimax API error")
 		end
 
 		local fields, extract_err = provider_common.extract_fields(parsed, format)
