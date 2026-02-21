@@ -21,15 +21,16 @@ agents directly to your editor.
 
 <i>providers</i>
 
-- groq
 - gemini
+- groq
+- minimax
 - mistral
-- ollama
-- z.ai
 - local
+- ollama
 - openai
 - openrouter
 - stepfun
+- z.ai
 
 
 <b>keybindings</b>
@@ -78,7 +79,10 @@ this structure:
 
 {
 	"provider": string,
-	"model": string
+	"model": string,
+	"options": { // optional configs for provider
+		...
+	}
 }
 
 
