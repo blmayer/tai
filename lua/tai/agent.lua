@@ -21,7 +21,6 @@ Output rules:
 - Do not use Markdown.
 - Do not wrap content in quotes/backticks or escape it unless the user asked.
 - Thinking output is not shown to the user, add it to the text output if needed.
-  
 
 Workflow:
 - Decompose the request into explicit requirements, unclear areas, and hidden
@@ -85,16 +84,9 @@ last 5 lines: -5:$.",
 ## read_file
 To read files ALWAYS use the `read_file` tool. `read_file` reads the full
 content of a file from the file system, or if given, a range of lines, and
-returns the content. Use it if you need the file content in your context, so
-you can patch it or understand the codebase. The content is kept updated by the
-system, so it always reflects the current state of the file. To use it call the
-`read_file` with the following structure:
-{
-	"file": "<path/to/file>",
-	"range": "<range of lines to read or empty for full file>"
-}
-IMPORTANT: reading the same file more than once is useless, if you re-read a
-file the old response is cleared.
+returns the content. The file content is automatically kept updated in the
+conversation history - even if a read_file call was several messages ago, it
+reflects the current state of the file. DO NOT re-read files unnecessarily.
 
 ## patch
 To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
@@ -159,15 +151,16 @@ function M.task(msgs, callback)
 			local response = { role = "assistant" }
 			if err then
 				return callback({error = err})
-			else
-				response.content = vim.json.encode(data.content)
-				response.tool_calls = data.tool_calls
 			end
+			response.content = data.content
+			response.tool_calls = data.tool_calls
+			response.reasoning_details = data.reasoning_details
 			provider.add_to_history(response)
 			callback(data)
 		end
 	)
 end
+
 
 function M.add_to_history(msg)
 	provider.add_to_history(msg)

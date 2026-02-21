@@ -19,7 +19,14 @@ function M.add_to_history(message)
 	local msg = vim.deepcopy(message)
 	for _, call in ipairs(msg.tool_calls or {}) do
 		local args = call["function"].arguments
-		call["function"].arguments = vim.json.encode(args)
+		local new_args = {}
+		new_args.role = args.role
+		new_args.content = args.content
+		new_args.tool_call_id = args.tool_call_id
+		call["function"].arguments = vim.json.encode(new_args)
+	end
+	if message.role == "tool" then
+		message.name = nil
 	end
 	if not history then
 		history = { msg }
@@ -33,100 +40,62 @@ function M.clear_history()
 end
 
 function M.request(model_config, msgs, format, callback)
-    for _, msg in ipairs(msgs) do
-        M.add_to_history(msg)
-    end
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
 
-    -- Keep connected files up to date in history before sending.
-    tools.refresh_connected_files(history)
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
 
-    local body = {
-        model = model_config.model,
-        messages = {},
-    }
+	local body = {
+		model = model_config.model,
+		messages = {},
+	}
 
-    if config.use_tools ~= false then
-        body.tools = {
-            tools.defs["read_file"],
-            tools.defs["shell"],
-            tools.defs["patch"],
-            tools.defs["summarize"],
-            tools.defs["connect_file"],
-        }
-    end
-    for _, message in ipairs(history) do
-        local new_message = provider_common.filter_message(message)
-        table.insert(body.messages, new_message)
-    end
+	if config.use_tools ~= false then
+		body.tools = provider_common.build_agent_tools(model_config)
+	end
 
-    if format == "json_object" then
-        body.response_format = { type = "json_object" }
-    end
+	body.messages = provider_common.filter_messages(history)
 
-    if model_config.options then
-        for k, v in pairs(model_config.options) do
-            body[k] = v
-        end
-    end
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
 
-    local request_body = vim.json.encode(body)
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
 
-    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
-    vim.system(
-        {
-            "curl", "-s", "-X", "POST", url,
-            "-H", "Authorization: Bearer " .. api_key,
-            "-H", "Content-Type: application/json",
-            "-d", request_body,
-        }, { text = true }, function(obj)
-            if obj.code ~= 0 then
-                local err_msg = "curl returned code " .. obj.code
-                callback(nil, err_msg)
-                return
-            end
+	local request_body = vim.json.encode(body)
 
-            if not obj.stdout or obj.stdout == "" then
-                return callback(nil, "Received empty response from Openrouter")
-            end
+	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 
-            local parsed = vim.json.decode(obj.stdout)
-            if not parsed then
-                return callback(nil, "Failed to decode JSON: " .. obj.stdout)
-            end
-            log.debug("Request response: " .. vim.inspect(parsed))
+	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+		if err then
+			callback(nil, err)
+			return
+		end
 
-            if parsed.error then
-                return callback(nil, parsed.error.message)
-            end
+		log.debug("Request response: " .. vim.inspect(parsed))
 
-            if not parsed.choices or #parsed.choices == 0 then
-                return callback(nil, "No choices received from Openrouter")
-            end
+		if parsed.error then
+			return callback(nil, parsed.error.message)
+		end
 
-            local message = parsed.choices[1].message
-            local fields = {}
-            if message.content and message.content ~= "" then
-                log.debug("response content: " .. message.content)
-                if format == "json_object" then
-                    log.debug("parsing JSON content")
-                    fields.content = vim.json.decode(message.content)
-                    if not fields.content then
-                        return callback(nil, "Failed to decode message content as JSON")
-                    end
-                else
-                    fields.content = message.content
-                end
-            end
-            fields.tool_calls = message.tool_calls
-            provider_common.decode_tool_call_arguments(fields.tool_calls)
+		local fields, extract_err = provider_common.extract_fields(parsed, format)
+		if extract_err then
+			return callback(nil, extract_err)
+		end
 
-            -- Extract token usage if available
-            if parsed.usage and parsed.usage.total_tokens then
-                fields.token_usage = parsed.usage.total_tokens
-            end
+		-- Extract token usage if available
+		if parsed.usage and parsed.usage.total_tokens then
+			fields.token_usage = parsed.usage.total_tokens
+		end
 
-            callback(fields, nil)
-        end)
+		callback(fields, nil)
+	end)
 end
 
 return M

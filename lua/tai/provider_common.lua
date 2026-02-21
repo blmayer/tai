@@ -15,6 +15,10 @@ function M.filter_message(msg)
 			new_msg[k] = v
 		end
 	end
+	-- Remove 'name' field from tool messages as it's not part of the OpenAI API spec
+	if new_msg.role == "tool" then
+		new_msg.name = nil
+	end
 	return new_msg
 end
 

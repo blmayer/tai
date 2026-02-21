@@ -81,6 +81,14 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, extract_err)
 		end
 
+		-- Extract reasoning_details (interleaved thinking) from MiniMax response
+		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
+			local msg = parsed.choices[1].message
+			if msg.reasoning_details then
+				fields.reasoning_details = msg.reasoning_details
+			end
+		end
+
 		-- Extract token usage if available
 		if parsed.usage and parsed.usage.total_tokens then
 			fields.token_usage = parsed.usage.total_tokens

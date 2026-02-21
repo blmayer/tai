@@ -144,53 +144,90 @@ local function run_tools(tool_calls)
 		}
 
 		if name == "shell" then
+			if not args.command then
+				M.append_to_buffer("{{{ Running command failed: no command field.\n}}}")
+				res.content = "[sys] missing command field"
+				goto continue
+			end
+
 			log.debug("Asking for confirmation")
 			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n\n&s (stop)", 1)
 			if input == 1 then
 				log.debug("Confirmed")
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
-				local out = tools.run(name, args)
+				local out = tools.run_command(args.command)
 				M.append_to_buffer((out or "") .. "\n")
-				M.append_to_buffer("}}}\n")
+				M.append_to_buffer("}}}")
 				refresh_and_close_folds()
 				res.content = out
 			elseif input == 2 then
 				log.debug("Declined")
-				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}")
 				local comment = vim.fn.input("Comment (optional): ")
+				M.append_to_buffer("{{{ Declined " .. args.command .. "\n")
 				if comment and comment ~= "" then
 					res.content = "[sys] User declined running this command. Comment: " .. comment
+					M.append_to_buffer("Comment: " .. comment .. "\n")
 				else
 					res.content = "[sys] User declined running this command"
 				end
+				M.append_to_buffer("}}}")
 			else
 				local comment = vim.fn.input("Comment (optional): ")
+				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
 				if comment and comment ~= "" then
-					res.content = "[sys] User declined running this command. Comment: " .. comment
+					res.content = "[sys] User stopped the task. Comment: " .. comment
+					M.append_to_buffer("Comment: " .. comment .. "\n")
 				else
-					M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
-					res.content = "[sys] User stopped the conversation"
+					res.content = "[sys] User stopped the task"
 				end
+				M.append_to_buffer("}}}")
 			end
 		elseif name == "read_file" then
+			if not args.file then
+				M.append_to_buffer("{{{ Reading file failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
+				goto continue
+			end
+
 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
-			res.content = tools.run(name, args)
+			res.content = tools.read_file(args.file, args.range)
 			res.file_path = args.file
 			res.file_range = args.range
 			M.append_to_buffer(res.content .. "\n")
-			M.append_to_buffer("}}}\n")
+			M.append_to_buffer("}}}")
 		elseif name == "connect_file" then
+			if not args.file then
+				M.append_to_buffer("{{{ Connecting file failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
+				goto continue
+			end
+
 			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
-			res.content = tools.run(name, args)
+			res.content = tools.read_file(args.file, args.range)
 			res.file_path = args.file
 			res.file_range = args.range
 			M.append_to_buffer(res.content .. "\n")
-			M.append_to_buffer("}}}\n")
+			M.append_to_buffer("}}}")
 		elseif name == "patch" then
-			local out = tools.run(name, args)
+			if not args.file then
+				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
+				goto continue
+			end
+			if not args.changes or #args.changes == 0 then
+				M.append_to_buffer("{{{ Patching file failed: empty changes field.\n}}}")
+				res.content = "[sys] missing empty changes field"
+				goto continue
+			end
 
 			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
 			for _, change in ipairs(args.changes or {}) do
+				if not change.lines or not change.operation then
+					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
+					res.content = "[sys] patch needs lines and operation fields"
+					goto continue
+				end
+
 				M.append_to_buffer(string.format(
 					"File: %s\nOperation: %s\nLines: %s\nContent:\n%s\n",
 					args.file,
@@ -199,12 +236,14 @@ local function run_tools(tool_calls)
 					change.content
 				))
 			end
+
+			local out = tools.apply_patch(args.name, args.file, args.changes)
 			res.content = out
 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
-			M.append_to_buffer("}}}\n")
+			M.append_to_buffer("}}}")
 			refresh_and_close_folds()
 		elseif name == "summarize" then
-			M.append_to_buffer("{{{ Summarizing chat\n}}}\n")
+			M.append_to_buffer("{{{ Summarizing chat\n}}}")
 			tai.task(
 				{ tools.summary_msg },
 				function(summ)
@@ -221,6 +260,7 @@ local function run_tools(tool_calls)
 			return nil
 		end
 
+		::continue::
 		table.insert(results, res)
 	end
 	return results

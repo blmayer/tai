@@ -35,7 +35,7 @@ M.defs = {
 					}
 				},
 				additionalProperties = false,
-				required = { "file", "range" }
+				required = { "file" }
 			}
 		}
 	},
@@ -164,6 +164,15 @@ local function parse_lines(range)
 		return tonumber(start), -1
 	end
 
+	-- Handle positive-to-$ ranges (e.g., 10:$ for tenth to last line)
+	local dollar_pos = range:match("():%$")
+	if dollar_pos and dollar_pos > 1 then
+		local start_num = tonumber(range:sub(1, dollar_pos - 1))
+		if start_num then
+			return start_num - 1, -1
+		end
+	end
+
 	-- Handle range (e.g., "2:5")
 	start, end_line = range:match("^(%d+):(%d+)$")
 	if start and end_line then
@@ -182,7 +191,7 @@ local function parse_lines(range)
 	return 0, 0
 end
 
-local function read_file(file_path, range)
+function M.read_file(file_path, range)
 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
 
 	if file_path:sub(1, 1) == "/" then
@@ -244,13 +253,17 @@ local function read_file(file_path, range)
 	local start1 = start0 + 1
 	local end1 = end0 + 1
 
-	if start1 < 1 or end1 < 1 or start1 > nlines or end1 > nlines or start1 > end1 then
+	-- Clamp end1 to valid range (allow exceeding file length)
+	if end1 > nlines then
+		end1 = nlines
+	end
+
+	if start1 < 1 or end1 < 0 or start1 > nlines or start1 > end1 then
 		return "[sys] Invalid range: " .. range
 	end
 
 	for i = start1, end1 do
-		local line = lines[i] or ""
-		table.insert(numbered_lines, string.format("%d: %s", i, line))
+		table.insert(numbered_lines, string.format("%d: %s", i, lines[i]))
 	end
 
 	local numbered_content = table.concat(numbered_lines, "\n")
@@ -259,7 +272,7 @@ local function read_file(file_path, range)
 end
 
 
-local function run_command(cmd)
+function M.run_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
 
 	local env = {}
@@ -292,7 +305,7 @@ local function run_command(cmd)
 	return output
 end
 
-local function apply_patch(name, file, changes)
+function M.apply_patch(name, file, changes)
 	log.debug("Patching " .. #changes .. " changes in " .. file)
 
 	-- Check if file is already open in a buffer
@@ -396,42 +409,9 @@ function M.refresh_connected_files(history)
 	-- Refresh remaining (latest) connect_file messages.
 	for _, msg in ipairs(history or {}) do
 		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
-			msg.content = read_file(msg.file_path, msg.file_range or "")
+			msg.content = M.read_file(msg.file_path, msg.file_range or "")
 		end
 	end
-end
-
--- TODO: there must be an enum for tool names
-function M.run(tool, args)
-	log.debug("Running tool call " .. tool)
-
-	if tool == "read_file" then
-		if not args.file then
-			return "[sys] missing file argument"
-		end
-		return read_file(args.file, args.range)
-	elseif tool == "shell" then
-		if not args.command then
-			return "[sys] missing command argument"
-		end
-		return run_command(args.command)
-	elseif tool == "patch" then
-		if not args.file then
-			return "[sys] missing file argument"
-		end
-		if not args.changes then
-			return "[sys] missing changes argument"
-		end
-		local err = apply_patch(args.name, args.file, args.changes)
-		if err then
-			return "[sys] patch error: " .. err
-		end
-		return "[sys] patch applied"
-	elseif tool == "summarize" then
-		return "[sys] agent called summarize tool."
-	end
-
-	return "[sys] Unknown tool `" .. tool .. "`"
 end
 
 return M
