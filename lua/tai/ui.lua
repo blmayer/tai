@@ -158,7 +158,6 @@ local function run_tools(tool_calls)
 				local out = tools.run_command(args.command)
 				M.append_to_buffer((out or "") .. "\n")
 				M.append_to_buffer("}}}")
-				refresh_and_close_folds()
 				res.content = out
 			elseif input == 2 then
 				log.debug("Declined")
@@ -241,7 +240,6 @@ local function run_tools(tool_calls)
 			res.content = out
 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
 			M.append_to_buffer("}}}")
-			refresh_and_close_folds()
 		elseif name == "summarize" then
 			M.append_to_buffer("{{{ Summarizing chat\n}}}")
 			tai.task(
@@ -258,9 +256,14 @@ local function run_tools(tool_calls)
 				end
 			)
 			return nil
+		else
+			local err_msg = "[sys] Invalid tool name: " .. name
+			M.append_to_buffer("{{{ Invalid tool call\n}}}")
+			res.content = err_msg
 		end
 
 		::continue::
+		refresh_and_close_folds()
 		table.insert(results, res)
 	end
 	return results

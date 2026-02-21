@@ -19,14 +19,7 @@ function M.add_to_history(message)
 	local msg = vim.deepcopy(message)
 	for _, call in ipairs(msg.tool_calls or {}) do
 		local args = call["function"].arguments
-		local new_args = {}
-		new_args.role = args.role
-		new_args.content = args.content
-		new_args.tool_call_id = args.tool_call_id
-		call["function"].arguments = vim.json.encode(new_args)
-	end
-	if message.role == "tool" then
-		message.name = nil
+		call["function"].arguments = vim.json.encode(args)
 	end
 	if not history then
 		history = { msg }

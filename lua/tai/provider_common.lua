@@ -15,10 +15,6 @@ function M.filter_message(msg)
 			new_msg[k] = v
 		end
 	end
-	-- Remove 'name' field from tool messages as it's not part of the OpenAI API spec
-	if new_msg.role == "tool" then
-		new_msg.name = nil
-	end
 	return new_msg
 end
 
@@ -94,6 +90,9 @@ function M.extract_fields(parsed, format)
 		else
 			fields.content = content
 		end
+	else
+		-- Some providers fail if you send them a message without content
+		fields.content = ""
 	end
 	if message.tool_calls and message.tool_calls ~= vim.NIL then
 		fields.tool_calls = message.tool_calls
