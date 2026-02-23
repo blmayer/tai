@@ -387,6 +387,8 @@ function M.apply_patch(name, file, changes)
 			line_shift = line_shift - old_line_count
 		end
 	end
+	log.debug("Patch applied")
+	return "[sys] patch applied"
 end
 
 function M.refresh_connected_files(history)
