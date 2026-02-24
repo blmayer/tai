@@ -44,7 +44,7 @@ M.defs = {
 		["function"] = {
 			name = "connect_file",
 			description =
-			"Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
+			"Adds a file's content to the conversation and keeps it updated. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -59,7 +59,7 @@ M.defs = {
 					}
 				},
 				additionalProperties = false,
-				required = { "file", "range" }
+				required = { "file" }
 			}
 		}
 	},
@@ -271,7 +271,6 @@ function M.read_file(file_path, range)
 	return numbered_content
 end
 
-
 function M.run_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
 
@@ -330,9 +329,13 @@ function M.apply_patch(name, file, changes)
 		end
 	end
 	if not is_open or not buf then
+		-- File not loaded yet, create new buffer and window
 		vim.cmd("topleft vnew " .. file)
 		buf = vim.api.nvim_get_current_buf()
 	end
+
+	-- If buffer already exists (visible or not), reuse it directly.
+	-- No need to open a window since we modify via nvim_buf_set_lines API.
 
 	-- Apply changes to new buffer
 	-- vim.api.nvim_buf_set_lines is 0 indexed
@@ -387,8 +390,10 @@ function M.apply_patch(name, file, changes)
 			line_shift = line_shift - old_line_count
 		end
 	end
-	log.debug("Patch applied")
-	return "[sys] patch applied"
+
+	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
+	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
+	return "[sys] Patched " .. file
 end
 
 function M.refresh_connected_files(history)
@@ -396,7 +401,7 @@ function M.refresh_connected_files(history)
 	local latest = {}
 	for i = #history, 1, -1 do
 		local msg = history[i]
-		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
 			local key = msg.file_path .. "::" .. (msg.file_range or "")
 			if latest[key] then
 				msg.content = "[sys] content shown in newer call"
@@ -410,7 +415,7 @@ function M.refresh_connected_files(history)
 
 	-- Refresh remaining (latest) connect_file messages.
 	for _, msg in ipairs(history or {}) do
-		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
 			msg.content = M.read_file(msg.file_path, msg.file_range or "")
 		end
 	end

@@ -1,8 +1,8 @@
 local M = {}
 
 local log = require("tai.log")
-local ui = require("tai.ui")
 local config = require("tai.config")
+local ui = require("tai.ui")
 
 function M.setup(opts)
 	log.set_level(opts.log_level or log.DEBUG)

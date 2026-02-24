@@ -20,8 +20,9 @@ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
 Output rules:
 - Do not use Markdown.
 - Do not wrap content in quotes/backticks or escape it unless the user asked.
-- Thinking output is not shown to the user, add it to the text output if needed.
-
+- Never return only whitespace or newline characters. If there is no meaningful
+  text to return, return an empty string or a brief message like "Done" or
+  "No output". Do not return just "\n" or similar.
 Workflow:
 - Decompose the request into explicit requirements, unclear areas, and hidden
   assumptions.
@@ -45,8 +46,6 @@ Workflow:
   task.
 - If you edit code: keep changes minimal and consistent, ignore unrelated issues,
   update docs if user-facing and keep the style consistent.
-- New or changed files will not appear updated for commands as they are in the 
-  session's buffer until the user saves it.
 - Keep the user informed of your choices during the process.
 - Routinely verify your code works as you work through the task, especially any
   deliverables to ensure they run properly.
@@ -84,9 +83,15 @@ last 5 lines: -5:$.",
 ## read_file
 To read files ALWAYS use the `read_file` tool. `read_file` reads the full
 content of a file from the file system, or if given, a range of lines, and
-returns the content. The file content is automatically kept updated in the
-conversation history - even if a read_file call was several messages ago, it
-reflects the current state of the file. DO NOT re-read files unnecessarily.
+returns the content. DO NOT re-read files unnecessarily. If you need the same
+file many times better to use `connect_file`.
+
+## connect_file
+Use `connect_file` to track files that are being actively worked on. It works
+like `read_file` but keeps the file connected so its content stays updated in
+the conversation as you make changes. This is useful for files you're editing
+or referencing frequently throughout a task. The content will automatically
+refresh when you make changes to the file.
 
 ## patch
 To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
@@ -150,7 +155,7 @@ function M.task(msgs, callback)
 		function(data, err)
 			local response = { role = "assistant" }
 			if err then
-				return callback({error = err})
+				return callback({ error = err })
 			end
 			response.content = data.content
 			response.tool_calls = data.tool_calls
@@ -160,7 +165,6 @@ function M.task(msgs, callback)
 		end
 	)
 end
-
 
 function M.add_to_history(msg)
 	provider.add_to_history(msg)

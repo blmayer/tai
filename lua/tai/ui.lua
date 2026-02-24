@@ -279,6 +279,13 @@ local function process_response(fields)
 		M.append_to_buffer("[tai] " .. fields.error .. "\n")
 		return
 	end
+
+	-- Display reasoning details (interleaved thinking) folded
+	if fields.reasoning_details and #fields.reasoning_details > 0 then
+		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "\n}}}")
+		vim.schedule(function() refresh_and_close_folds() end)
+	end
+
 	if fields.content and fields.content ~= "" then
 		M.append_to_buffer(fields.content .. "\n")
 	end
@@ -309,7 +316,7 @@ local function send_input()
 
 		vim.schedule(function()
 			add_sep()
-			M.append_to_buffer(input .. "\n")
+			M.append_to_buffer(input .. "\n---\n")
 		end)
 
 		log.debug("got input: " .. input)

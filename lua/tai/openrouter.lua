@@ -60,6 +60,10 @@ function M.request(model_config, msgs, format, callback)
 			body[k] = v
 		end
 	end
+	if model_config.think ~= nil then
+		body.reasoning_effort = model_config.think
+	end
+
 
 	local request_body = vim.json.encode(body)
 
@@ -85,6 +89,15 @@ function M.request(model_config, msgs, format, callback)
 		-- Extract token usage if available
 		if parsed.usage and parsed.usage.total_tokens then
 			fields.token_usage = parsed.usage.total_tokens
+		end
+
+		-- Extract reasoning details from OpenRouter response
+		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
+			local msg = parsed.choices[1].message
+			local reasoning_text = msg.reasoning or msg.reasoning_content
+			if reasoning_text and reasoning_text ~= "" then
+				fields.reasoning_details = { { text = reasoning_text } }
+			end
 		end
 
 		callback(fields, nil)
