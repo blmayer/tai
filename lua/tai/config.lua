@@ -3,10 +3,18 @@ local log = require("tai.log")
 
 M.root = vim.fn.getcwd()
 while vim.fn.filereadable(M.root .. "/.tai") == 0 do
-	M.root = vim.fn.fnamemodify(M.root, ":h")
+	local parent = vim.fn.fnamemodify(M.root, ":h")
+	if parent == M.root then
+		-- Reached filesystem root without finding .tai
+		M.root = nil
+		break
+	end
+	M.root = parent
 end
 
-log.debug("Root is " .. M.root)
+if M.root then
+	log.debug("Root is " .. M.root)
+end
 
 if not M.root then
 	return M

@@ -11,7 +11,7 @@ These notes are intended for **automated coding agents** working in this reposit
   - `init.lua` — plugin entrypoint
   - `config.lua` — defaults + user configuration
   - `agent.lua` — orchestration of chat/task flow
-  - `provider.lua` and `openai.lua` / `groq.lua` / `openrouter.lua` / `mistral.lua` / `gemini.lua` — provider adapters
+  - `openai.lua` / `groq.lua` / `openrouter.lua` / `mistral.lua` / `gemini.lua` — provider adapters
   - `tools.lua` — tool definitions + tool execution plumbing
   - `ui.lua` — buffers/windows and UX
   - `log.lua` — logging
@@ -25,7 +25,7 @@ These notes are intended for **automated coding agents** working in this reposit
 2. Trace configuration flow: `config.lua` → where it’s read/merged.
 3. Trace a request:
    - prompt/task setup: `agent.lua`
-   - provider selection + request formatting: `provider.lua` + specific provider file
+   - provider selection + request formatting: specific provider file
    - tool calls: `tools.lua`
    - user-visible output: `ui.lua`
 
@@ -33,8 +33,8 @@ These notes are intended for **automated coding agents** working in this reposit
 
 - **Add a new provider**
   - Create `lua/tai/<provider>.lua` similar to existing providers.
-  - Wire it into `provider.lua` (registry/selection).
-  - Document config keys in `README.md`.
+  - Update `README.md` with document config keys and provider list.
+  - Update `www/index.html` page to keep it in sync.
 
 - **Add/adjust a tool**
   - Update `lua/tai/tools.lua`.
