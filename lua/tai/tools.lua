@@ -334,6 +334,16 @@ function M.apply_patch(name, file, changes)
 		buf = vim.api.nvim_get_current_buf()
 	end
 
+
+	-- Ensure parent directory exists before writing
+	local dir = vim.fn.fnamemodify(file, ":p:h")
+	if dir and dir ~= "" and dir ~= "." and vim.fn.isdirectory(dir) == 0 then
+		local mkdir_result = vim.fn.mkdir(dir, "p")
+		if mkdir_result == -1 then
+			return "[sys] Error: Could not create directory: " .. dir
+		end
+	end
+
 	-- If buffer already exists (visible or not), reuse it directly.
 	-- No need to open a window since we modify via nvim_buf_set_lines API.
 

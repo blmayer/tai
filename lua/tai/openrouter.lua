@@ -86,20 +86,6 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, extract_err)
 		end
 
-		-- Extract token usage if available
-		if parsed.usage and parsed.usage.total_tokens then
-			fields.token_usage = parsed.usage.total_tokens
-		end
-
-		-- Extract reasoning details from OpenRouter response
-		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
-			local msg = parsed.choices[1].message
-			local reasoning_text = msg.reasoning or msg.reasoning_content
-			if reasoning_text and reasoning_text ~= "" then
-				fields.reasoning_details = { { text = reasoning_text } }
-			end
-		end
-
 		callback(fields, nil)
 	end)
 end

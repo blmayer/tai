@@ -79,6 +79,7 @@ function M.extract_fields(parsed, format)
 	if not message then
 		return nil, "No message in response"
 	end
+
 	local content = message.content
 	if content and content ~= "" then
 		if format ~= nil then
@@ -94,6 +95,21 @@ function M.extract_fields(parsed, format)
 		-- Some providers fail if you send them a message without content
 		fields.content = ""
 	end
+
+	-- Extract reasoning details from response
+	if message.reasoning or message.reasoning_content then
+		local reasoning_text = message.reasoning or message.reasoning_content
+		if reasoning_text and reasoning_text ~= "" then
+			fields.reasoning_details = { { text = reasoning_text } }
+		end
+
+		-- Some providers offer a more detailed reasoning response
+		if message.reasoning_details then
+			fields.reasoning_details = message.reasoning_details
+		end
+
+	end
+
 	if message.tool_calls and message.tool_calls ~= vim.NIL then
 		fields.tool_calls = message.tool_calls
 		for _, call in ipairs(fields.tool_calls) do
@@ -106,6 +122,12 @@ function M.extract_fields(parsed, format)
 			end
 		end
 	end
+
+	-- Extract token usage if available
+	if parsed.usage and parsed.usage.total_tokens then
+		fields.token_usage = parsed.usage.total_tokens
+	end
+
 	return fields, nil
 end
 
