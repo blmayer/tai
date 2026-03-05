@@ -2,6 +2,10 @@
 
 > This project contains a **simple Neovim plugin** to send text selections or prompts and receive responses, enabling **interactive workflows** from within Neovim.
 
+<a href="https://dotfyle.com/plugins/blmayer/tai">
+	<img src="https://dotfyle.com/plugins/blmayer/tai/shield?style=flat" />
+</a>
+
 ## Providers
 
 This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
