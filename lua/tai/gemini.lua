@@ -58,7 +58,7 @@ function M.request(model_config, msgs, format, callback)
 	local request_body = vim.json.encode(body)
 
 	log.debug("Requesting " .. url .. " with " .. request_body)
-	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
+	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
 			return callback(nil, err)
 		end

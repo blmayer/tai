@@ -148,7 +148,30 @@ M.defs = {
 				additionalProperties = false
 			}
 		}
-	}
+	},
+	{
+		type = "function",
+		["function"] = {
+			name = "send_image",
+			description =
+			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content.",
+			parameters = {
+				type = "object",
+				properties = {
+					file = {
+						type = "string",
+						description = "The path to the image file to send."
+					},
+					prompt = {
+						type = "string",
+						description = "Optional prompt to guide what to look for in the image."
+					}
+				},
+				additionalProperties = false,
+				required = { "file" }
+			}
+		}
+	},
 }
 
 -- indexes are 1 based
@@ -404,6 +427,60 @@ function M.apply_patch(name, file, changes)
 	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
 	return "[sys] Patched " .. file
+end
+
+-- Convert image file to base64 data URL
+function M.image_data_url(image_path)
+	local full_path = image_path
+
+	-- Handle relative paths (relative to project root or CWD)
+	if image_path:sub(1, 1) ~= "/" then
+		-- Try project root first
+		local config = require("tai.config")
+		if config.root then
+			local try_path = config.root .. "/" .. image_path
+			if vim.fn.filereadable(try_path) == 1 then
+				full_path = try_path
+			end
+		end
+	end
+
+	-- Check if file exists
+	if vim.fn.filereadable(full_path) ~= 1 then
+		-- Try as absolute path
+		if vim.fn.filereadable(image_path) == 1 then
+			full_path = image_path
+		else
+			return nil, "Image file not found: " .. image_path
+		end
+	end
+
+	-- Detect MIME type from extension
+	local ext = image_path:match("%.(%w+)$")
+	local mime_types = {
+		png = "image/png",
+		jpg = "image/jpeg",
+		jpeg = "image/jpeg",
+		gif = "image/gif",
+		webp = "image/webp",
+		bmp = "image/bmp",
+	}
+	local mime = mime_types[ext:lower()] or "image/png"
+
+	-- Read file and encode to base64 using curl
+	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)
+	local handle = io.popen(cmd, "r")
+	if not handle then
+		return nil, "Failed to read image file"
+	end
+	local base64_content = handle:read("*a")
+	handle:close()
+
+	if not base64_content or #base64_content == 0 then
+		return nil, "Failed to encode image to base64"
+	end
+
+	return "data:" .. mime .. ";base64," .. base64_content, nil
 end
 
 function M.refresh_connected_files(history)

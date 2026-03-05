@@ -4,7 +4,6 @@ local log = require("tai.log")
 local tools = require("tai.tools")
 local config = require("tai.config")
 
-local chat_url = "https://api.openai.com/v1/chat/completions"
 local responses_url = "https://api.openai.com/v1/responses"
 
 local api_key = os.getenv("OPENAI_API_KEY")
@@ -78,7 +77,7 @@ function M.clear_history()
 	history = nil
 end
 
-local function request_responses(model_config, msgs, format, callback)
+function M.request(model_config, msgs, format, callback)
 	-- Preserve existing chat history behavior but translate to Responses API.
 	for _, msg in ipairs(msgs) do
 		add_history_message(vim.deepcopy(msg))
@@ -127,6 +126,7 @@ local function request_responses(model_config, msgs, format, callback)
 			to_responses_tool(tools.defs["shell"]),
 			to_responses_tool(tools.defs["patch"]),
 			to_responses_tool(tools.defs["summarize"]),
+			to_responses_tool(tools.defs["send_image"]),
 		}
 	end
 
@@ -247,11 +247,6 @@ local function request_responses(model_config, msgs, format, callback)
 		cleanup()
 		return callback(nil, tostring(system_err))
 	end
-end
-
-function M.request(model_config, msgs, format, callback)
-	-- return request_chat_completions(model_config, msgs, format, callback)
-	return request_responses(model_config, msgs, format, callback)
 end
 
 return M

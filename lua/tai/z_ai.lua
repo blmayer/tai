@@ -2,7 +2,7 @@ local M = {}
 
 local provider_common = require("tai.provider_common")
 local tools = require("tai.tools")
-local config = require("tai.config")
+local log = require("tai.log")
 local config = require("tai.config")
 
 local url = "https://api.z.ai/api/paas/v4/chat/completions"

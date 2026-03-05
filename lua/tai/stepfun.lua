@@ -58,7 +58,7 @@ function M.request(model_config, msgs, format, callback)
 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
-	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
+	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
 			return callback(nil, err)
 		end
@@ -74,10 +74,6 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, extract_err)
 		end
 
-		-- Extract token usage if available
-		if parsed.usage and parsed.usage.total_tokens then
-			fields.token_usage = parsed.usage.total_tokens
-		end
 		callback(fields, nil)
 	end)
 end

@@ -133,6 +133,8 @@ end
 
 local function run_tools(tool_calls)
 	local results = {}
+	local stop = false
+
 	for _, call in ipairs(tool_calls or {}) do
 		local name = call["function"].name
 		local args = call["function"].arguments
@@ -180,6 +182,7 @@ local function run_tools(tool_calls)
 					res.content = "[sys] User stopped the task"
 				end
 				M.append_to_buffer("}}}")
+				stop = true
 			end
 		elseif name == "read_file" then
 			if not args.file then
@@ -256,6 +259,15 @@ local function run_tools(tool_calls)
 				end
 			)
 			return nil
+		elseif name == "send_image" then
+			if not args.file then
+				M.append_to_buffer("{{{ Addind image failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
+				goto continue
+			end
+
+			res.content = "[sys] Image " .. args.file .. " added."
+			M.append_to_buffer("{{{ Adding image " .. args.file .. "\n}}}")
 		else
 			local err_msg = "[sys] Invalid tool name: " .. name
 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
@@ -266,7 +278,28 @@ local function run_tools(tool_calls)
 		refresh_and_close_folds()
 		table.insert(results, res)
 	end
-	return results
+
+
+	-- Second pass is needed for image inputs
+	for _, call in ipairs(tool_calls or {}) do
+		local name = call["function"].name
+		local args = call["function"].arguments
+
+		local res = {
+			role = "user",
+		}
+		if name == "send_image" then
+			local image_url = tools.image_data_url(args.file)
+			res.content = {
+				{
+					type = "image_url",
+					image_url = { url = image_url }
+				}
+			}
+			table.insert(results, res)
+		end
+	end
+	return results, stop
 end
 
 local function process_response(fields)
@@ -294,8 +327,8 @@ local function process_response(fields)
 	end
 
 	vim.schedule(function()
-		local res = run_tools(fields.tool_calls)
-		if res then
+		local res, stop = run_tools(fields.tool_calls)
+		if not stop then
 			tai.task(res, process_response)
 		end
 	end)
