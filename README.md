@@ -71,34 +71,46 @@ and load it in your `init.lua`:
     end, { noremap = true })
 
     vim.keymap.set("n", "<C-w><C-t>", function()
-    	require("tai").toggle_chat_window()
+      vim.schedule(tai.toggle)
     end, { noremap = true })
 
+## Configuration
 
-## Usage
+tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
 
-The default mappings will give you:
+- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
+- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
+- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
+- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
+- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
+- `think`: Enable extended thinking/reasoning for models that support it.
+- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
 
-- Use `gT` plus a motion to send a text selection to the server.
-- Use `gP` plus a motion to send a text selection **with** a prompted input.
-- In normal mode `<leader>ti` to prompt input and send.
-- To toggle the chat window use `Ctrl+w Ctrl+t`
-- Use `<leader>tr` to clear history.
+Example `.tai` file:
 
+```json
+{
+	"provider": "groq",
+	"model": "llama-3.1-70b-versatile",
+	"options": {
+		"temperature": 0.7,
+		"max_tokens": 4096
+	},
+	"use_tools": true,
+	"allowed_commands": {
+		"git": true,
+		"npm": true,
+		"cargo": true
+	}
+}
+```
 
 ## Requirements
 
-- A `.tai` JSON file in your project root, if not found tai will not work.
-- Neovim 0.5 or newer
-- Unix-like OS
-- curl
-
-The .tai file supports the following fields:
-- model: The model used for chat completions.
-- provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
-- options: Options sent to the model, specific for each provider.
-
+- Neovim 0.10+
+- curl (for API calls)
+- An API key for your chosen provider
 
 ## License
-This project is licensed under the MIT License.
 
+This project is licensed under the MIT License.

@@ -73,15 +73,32 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
 
 <b>configuring</b>
 
-tai only needs a simple config file located at the
-root of your project, create a file named .tai with
-this structure:
+tai reads configuration from a <i>.tai</i> JSON file in your project root. The following options are supported:
+
+<ul>
+<li><i>model</i>: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").</li>
+<li><i>provider</i>: The API provider - one of: groq, gemini, mistral, z_ai, openai, openrouter, stepfun, local, minimax.</li>
+<li><i>options</i>: Provider-specific options passed to the API (e.g., temperature, max_tokens). See your provider's API docs.</li>
+<li><i>provider_tools</i>: Array of provider-side tools (e.g., ["web_browser"] for OpenAI).</li>
+<li><i>use_tools</i>: Boolean to enable/disable agent tools. Default is true. When false, the agent will not have access to file read/write or shell command tools.</li>
+<li><i>think</i>: Enable extended thinking/reasoning for models that support it.</li>
+<li><i>allowed_commands</i>: Override the default list of allowed shell commands. By default, tai allows: cat, grep, ag, rg, ls, head, tail, wc, diff, sort, uniq, find, file, stat, date, echo, tree, pwd, which, type.</li>
+</ul>
+
+Example .tai file:
 
 {
-	"provider": string,
-	"model": string,
-	"options": { // optional configs for provider
-		...
+	"provider": "groq",
+	"model": "llama-3.1-70b-versatile",
+	"options": {
+		"temperature": 0.7,
+		"max_tokens": 4096
+	},
+	"use_tools": true,
+	"allowed_commands": {
+		"git": true,
+		"npm": true,
+		"cargo": true
 	}
 }
 

@@ -43,6 +43,12 @@ These notes are intended for **automated coding agents** working in this reposit
   - Consider UX impact (how results are shown) in `lua/tai/ui.lua`.
 
 - **Change default behavior**
+
+- **Add provider-side tools (e.g., web_browser)**
+  - Tools that the provider runs on their side (not executed locally).
+  - Add the tool name to `config.provider_tools` in `.tai` file.
+  - Provider implementations add these tools to the request body.
+  - Update `README.md` and `www/index.html` to document the config field.
   - Update defaults in `config.lua`.
   - If user-facing, update `README.md`.
 

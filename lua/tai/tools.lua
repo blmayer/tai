@@ -18,30 +18,6 @@ M.defs = {
 	{
 		type = "function",
 		["function"] = {
-			name = "read_file",
-			description =
-			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested always at current state.",
-			parameters = {
-				type = "object",
-				properties = {
-					file = {
-						type = "string",
-						description = "The path to the file to read."
-					},
-					range = {
-						type = "string",
-						description =
-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
-					}
-				},
-				additionalProperties = false,
-				required = { "file" }
-			}
-		}
-	},
-	{
-		type = "function",
-		["function"] = {
 			name = "connect_file",
 			description =
 			"Adds a file's content to the conversation and keeps it updated. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
@@ -294,8 +270,22 @@ function M.read_file(file_path, range)
 	return numbered_content
 end
 
-function M.run_command(cmd)
+function M.check_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
+
+	local config = require("tai.config")
+	local allowed = config.get_allowed_commands()
+
+	-- Extract the base command (first word)
+	local base_cmd = cmd:match("^%s*(%w+)")
+	local is_allowed = base_cmd and allowed[base_cmd]
+
+	-- Return the base command and whether it's allowed
+	return base_cmd, is_allowed
+end
+
+function M.exec_command(cmd)
+	log.debug("Executing `" .. cmd .. "`")
 
 	local env = {}
 	for _, name in ipairs({ "PATH" }) do
@@ -306,7 +296,7 @@ function M.run_command(cmd)
 	for _, v in ipairs(env) do
 		local name, value = v:match("^([^=]+)=(.*)$")
 		if name and value then
-			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\''") .. "' "
+			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\\\'") .. "' "
 		end
 	end
 
@@ -328,19 +318,6 @@ function M.run_command(cmd)
 end
 
 function M.apply_patch(name, file, changes)
-	log.debug("Patching " .. #changes .. " changes in " .. file)
-
-	-- Check if file is already open in a buffer
-	local buf = nil
-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(b) then
-			local buf_name = vim.api.nvim_buf_get_name(b)
-			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
-				buf = b
-				break
-			end
-		end
-	end
 
 	local is_open = false
 	if buf then

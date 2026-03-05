@@ -128,6 +128,12 @@ function M.request(model_config, msgs, format, callback)
 			to_responses_tool(tools.defs["summarize"]),
 			to_responses_tool(tools.defs["send_image"]),
 		}
+
+		if config.provider_tools then
+			for _, tool in ipairs(config.provider_tools) do
+				table.insert(body.tools, { type = tool })
+			end
+		end
 	end
 
 	-- Best-effort: only enable strict JSON output if format was requested.

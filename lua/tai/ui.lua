@@ -152,26 +152,44 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
-			log.debug("Asking for confirmation")
-			local input = vim.fn.confirm("Run " .. args.command .. "?", "&Y\n&n\n&s (stop)", 1)
+			-- Check if command is in allowlist
+			local _, is_allowed = tools.check_command(args.command)
+
+			if is_allowed then
+				-- Allowed command: execute directly without confirmation
+				log.debug("Executing allowed command: " .. args.command)
+				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+				local out = tools.exec_command(args.command)
+				M.append_to_buffer((out or "") .. "\n")
+				M.append_to_buffer("}}}")
+				res.content = out
+				goto continue
+			end
+
+			-- Unknown command: ask for confirmation
+			log.debug("Asking for confirmation for: " .. args.command)
+			local input = vim.fn.confirm(
+				"Run `" .. args.command .. "`?",
+				"&Y\n&n\n&s (stop)",
+				1
+			)
 			if input == 1 then
 				log.debug("Confirmed")
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
-				local out = tools.run_command(args.command)
+				local out = tools.exec_command(args.command)
 				M.append_to_buffer((out or "") .. "\n")
-				M.append_to_buffer("}}}")
 				res.content = out
 			elseif input == 2 then
 				log.debug("Declined")
 				local comment = vim.fn.input("Comment (optional): ")
 				M.append_to_buffer("{{{ Declined " .. args.command .. "\n")
 				if comment and comment ~= "" then
-					res.content = "[sys] User declined running this command. Comment: " .. comment
+					res.content = "[sys] User declined running this command. Comment: " ..
+					    comment
 					M.append_to_buffer("Comment: " .. comment .. "\n")
 				else
 					res.content = "[sys] User declined running this command"
 				end
-				M.append_to_buffer("}}}")
 			else
 				local comment = vim.fn.input("Comment (optional): ")
 				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
@@ -181,21 +199,8 @@ local function run_tools(tool_calls)
 				else
 					res.content = "[sys] User stopped the task"
 				end
-				M.append_to_buffer("}}}")
 				stop = true
 			end
-		elseif name == "read_file" then
-			if not args.file then
-				M.append_to_buffer("{{{ Reading file failed: no file field.\n}}}")
-				res.content = "[sys] missing file field"
-				goto continue
-			end
-
-			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
-			res.content = tools.read_file(args.file, args.range)
-			res.file_path = args.file
-			res.file_range = args.range
-			M.append_to_buffer(res.content .. "\n")
 			M.append_to_buffer("}}}")
 		elseif name == "connect_file" then
 			if not args.file then
