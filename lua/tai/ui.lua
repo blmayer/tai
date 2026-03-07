@@ -260,7 +260,7 @@ local function run_tools(tool_calls)
 
 					res.content = summ.content
 					tai.clear_history()
-					tai.add_to_history(res)
+					tai.add_to_history({res})
 				end
 			)
 			return nil
@@ -333,9 +333,11 @@ local function process_response(fields)
 
 	vim.schedule(function()
 		local res, stop = run_tools(fields.tool_calls)
-		if not stop then
-			tai.task(res, process_response)
+		if stop then
+			tai.add_to_history(res)
+			return
 		end
+		tai.task(res, process_response)
 	end)
 end
 
