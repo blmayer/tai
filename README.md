@@ -42,41 +42,52 @@ Uses intuitive bindings that make it easy to query and interact with your code o
 
 ## Installation
 
+### Plugin Managers
+
+#### [lazy.nvim](https://github.com/folke/lazy.nvim)
+
+```lua
+return {
+  "blmayer/tai",
+  opts = {},
+  -- Optional: keybindings
+  keys = {
+    { "<leader>ti", "<cmd>Tai chat<cr>", desc = "Open Tai chat" },
+    { "<leader>tr", "<cmd>Tai clear<cr>", desc = "Clear Tai history" },
+    { "<C-w><C-t>", "<cmd>Tai toggle<cr>", desc = "Toggle Tai window" },
+  },
+}
+```
+
+#### [Packer.nvim](https://github.com/wbthomason/packer.nvim)
+
+```lua
+use("blmayer/tai")
+```
+
+#### [vim-plug](https://github.com/junegunn/vim-plug
+
+```vim
+Plug "blmayer/tai"
+```
+
+#### Manual Installation
+
 Place the plugin code at:
 
     ~/.config/nvim/lua/tai/
-
-A proper plugin is install method is underway.
 
 and load it in your `init.lua`:
 
     local tai = require("tai")
     tai.setup({})
 
-    _G.tai_operator_send = tai.operator_send
-    _G.tai_operator_send_with_prompt = tai.operator_send_with_prompt
-    
-    vim.keymap.set("n", "gT", function()
-      vim.cmd("set operatorfunc=v:lua.tai_operator_send")
-      vim.api.nvim_feedkeys("g@", "n", false)
-    end)
+The plugin also provides the `:Tai` command for common operations:
 
-    vim.keymap.set("n", "gP", function()
-      vim.cmd("set operatorfunc=v:lua.tai_operator_send_with_prompt")
-      vim.api.nvim_feedkeys("g@", "n", false)
-    end)
-
-    vim.keymap.set("n", "<leader>ti", function()
-      vim.schedule(tai.chat)
-    end, { noremap = true })
-
-    vim.keymap.set("n", "<leader>tr", function()
-      vim.schedule(tai.clear)
-    end, { noremap = true })
-
-    vim.keymap.set("n", "<C-w><C-t>", function()
-      vim.schedule(tai.toggle)
-    end, { noremap = true })
+- `:Tai chat` - Open the chat window
+- `:Tai toggle` - Toggle the chat window
+- `:Tai clear` - Clear conversation history
+- `:Tai reload` - Reload configuration
 
 ## Configuration
 
