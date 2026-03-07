@@ -1,5 +1,7 @@
 # tai.nvim
 
+![tai.nvim in action](www/screenshot.png)
+
 > This project contains a **simple Neovim plugin** to send text selections or prompts and receive responses, enabling **interactive workflows** from within Neovim.
 
 <a href="https://dotfyle.com/plugins/blmayer/tai">
@@ -29,6 +31,7 @@ for OpenAI, or:
        MINIMAX_API_KEY=your_api_key_here
 
 for Minimax, or configure a local Ollama server (localhost:11434).
+
 
 ## Integrated workflow
 
@@ -115,10 +118,11 @@ Example `.tai` file:
 	"allowed_commands": {
 		"git": true,
 		"npm": true,
-		"cargo": true
-	}
-}
-```
+<i>screenshots</i>
+
+- <a href="screenshot.png">tai.nvim in action</a>
+- <a href="2025-08-05-174307_1372x1415_scrot.png">side panel</a>
+- <a href="folding.png">side panel with folding</a>
 
 ## Requirements
 
