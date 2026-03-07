@@ -78,17 +78,29 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
 
 <b>configuring</b>
 
-tai reads configuration from a <i>.tai</i> JSON file in your project root. The following options are supported:
+tai reads configuration from a <i>.tai</i> JSON file
+in your project root. The following options are
+supported:
 
-<ul>
-<li><i>model</i>: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").</li>
-<li><i>provider</i>: The API provider - one of: groq, gemini, mistral, z_ai, openai, openrouter, stepfun, local, minimax.</li>
-<li><i>options</i>: Provider-specific options passed to the API (e.g., temperature, max_tokens). See your provider's API docs.</li>
-<li><i>provider_tools</i>: Array of provider-side tools (e.g., ["web_browser"] for OpenAI).</li>
-<li><i>use_tools</i>: Boolean to enable/disable agent tools. Default is true. When false, the agent will not have access to file read/write or shell command tools.</li>
-<li><i>think</i>: Enable extended thinking/reasoning for models that support it.</li>
-<li><i>allowed_commands</i>: Override the default list of allowed shell commands. By default, tai allows: cat, grep, ag, rg, ls, head, tail, wc, diff, sort, uniq, find, file, stat, date, echo, tree, pwd, which, type.</li>
-</ul>
+- <i>model</i>: The model used for chat completions
+  e.g., llama-3.1-70b-versatile, gemini-2.0-flash.
+- <i>provider</i>: One of: groq, gemini, mistral,
+  z_ai, openai, openrouter, stepfun, local, minimax.
+- <i>options</i>: Provider-specific options passed
+  to the API (e.g., temperature, max_tokens). See
+  the provider's API docs.
+- <i>provider_tools</i>: Array of provider-side
+  tools (e.g., ["web_browser"] for OpenAI).
+- <i>use_tools</i>: Boolean to enable/disable agent
+  tools. Default is true. If false, the agent won't
+  have access to file read/write or the shell tool.
+- <i>think</i>: Enable extended thinking/reasoning
+  for models that support it.
+- <i>allowed_commands</i>: Override the default
+  list of allowed shell commands. By default, tai
+  allows: cat, grep, ag, rg, ls, head, tail, wc,
+  diff, sort, uniq, find, file, stat, date, echo,
+  tree, pwd, which, type.
 
 Example .tai file:
 
