@@ -319,7 +319,9 @@ end
 
 function M.apply_patch(name, file, changes)
 
+	local buf = nil
 	local is_open = false
+
 	if buf then
 		for _, win in ipairs(vim.api.nvim_list_wins()) do
 			if vim.api.nvim_win_get_buf(win) == buf then

@@ -81,9 +81,8 @@ or referencing frequently throughout a task. The content will automatically
 refresh when you make changes to the file.
 
 ## patch
-To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
-write/edit files, so pay careful attention to these instructions. To use the
-`patch` tool, you should call the tool with the following structure:
+Use the `patch` tool when you need to make changes to a file. To use the `patch`
+tool, you should call the tool with the following structure:
 {
 	"name": "<name for the patch>",
 	"file": "<path/to/file>",
