@@ -45,6 +45,13 @@ Uses intuitive bindings that make it easy to query and interact with your code o
 
 ## Installation
 
+### Requirements
+
+- Neovim 0.10+
+- curl (for API calls)
+- An API key for your chosen provider
+
+
 ### Plugin Managers
 
 #### [lazy.nvim](https://github.com/folke/lazy.nvim)
@@ -68,7 +75,7 @@ return {
 use("blmayer/tai")
 ```
 
-#### [vim-plug](https://github.com/junegunn/vim-plug
+#### [vim-plug](https://github.com/junegunn/vim-plug)
 
 ```vim
 Plug "blmayer/tai"
@@ -118,17 +125,17 @@ Example `.tai` file:
 	"allowed_commands": {
 		"git": true,
 		"npm": true,
-<i>screenshots</i>
+        "make": true
+    }
+}
+```
 
-- <a href="screenshot.png">tai.nvim in action</a>
-- <a href="2025-08-05-174307_1372x1415_scrot.png">side panel</a>
-- <a href="folding.png">side panel with folding</a>
+## Screenshots
 
-## Requirements
+- [www/screenshot.png](tai.nvim in action)
+- [www/2025-08-05-174307_1372x1415_scrot.png](side panel)
+- [www/folding.png](side panel with folding)
 
-- Neovim 0.10+
-- curl (for API calls)
-- An API key for your chosen provider
 
 ## License
 
