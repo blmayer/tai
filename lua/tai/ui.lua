@@ -10,15 +10,8 @@ local input_bufname = "tai-chat-input"
 local chat_win
 local input_win
 
-function M.update_chat_name()
-	local name = bufname_prefix
-	if config and config.provider and config.model then
-		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
-	end
-	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
-		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
-	end
-end
+-- Global stop flag for hard stop command
+local hard_stop = false
 
 local function update_token_display(token_count)
 	local name = input_bufname
@@ -37,6 +30,16 @@ vim.bo[M.input_buffer_nr].bufhidden = "hide"
 vim.bo[M.input_buffer_nr].swapfile = false
 vim.bo[M.input_buffer_nr].filetype = "text"
 vim.bo[M.input_buffer_nr].modifiable = true
+
+function M.update_chat_name()
+	local name = bufname_prefix
+	if config and config.provider and config.model then
+		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
+	end
+	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
+		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
+	end
+end
 
 M.buffer_nr = vim.api.nvim_create_buf(false, true)
 M.update_chat_name()
@@ -98,6 +101,13 @@ function M.append_to_buffer(content)
 	end
 end
 
+function M.focus_input()
+       vim.schedule(function()
+               vim.api.nvim_set_current_win(input_win)
+               vim.cmd("startinsert")
+       end)
+end
+
 local function scroll_down()
 	vim.schedule(function()
 		if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
@@ -126,8 +136,10 @@ local function refresh_and_close_folds()
 	end
 
 	vim.api.nvim_win_call(chat_win, function()
-		pcall(vim.cmd, "silent! normal! zx")
-		pcall(vim.cmd, "silent! normal! zM")
+		-- Move to last line and close fold there (the fold we just added)
+		local last_line = vim.api.nvim_buf_line_count(M.buffer_nr)
+		vim.api.nvim_win_set_cursor(chat_win, { last_line, 0 })
+		pcall(vim.cmd, "silent! normal! zc")
 	end)
 end
 
@@ -144,15 +156,13 @@ local function run_tools(tool_calls)
 			name = name,
 			tool_call_id = call.id,
 		}
+		--
+		-- Check for hard stop before each tool
+		if hard_stop then
+			goto continue
+		end
 
 		if name == "shell" then
-			if not args.command then
-				M.append_to_buffer("{{{ Running command failed: no command field.\n}}}")
-				res.content = "[sys] missing command field"
-				goto continue
-			end
-
-			-- Check if command is in allowlist
 			local _, is_allowed = tools.check_command(args.command)
 
 			if is_allowed then
@@ -202,14 +212,14 @@ local function run_tools(tool_calls)
 				stop = true
 			end
 			M.append_to_buffer("}}}")
-		elseif name == "connect_file" then
+		elseif name == "track_file" then
 			if not args.file then
-				M.append_to_buffer("{{{ Connecting file failed: no file field.\n}}}")
+				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
 				res.content = "[sys] missing file field"
 				goto continue
 			end
 
-			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
+			M.append_to_buffer("{{{ Attaching " .. args.file .. "\n")
 			res.content = tools.read_file(args.file, args.range)
 			res.file_path = args.file
 			res.file_range = args.range
@@ -260,7 +270,7 @@ local function run_tools(tool_calls)
 
 					res.content = summ.content
 					tai.clear_history()
-					tai.add_to_history({res})
+					tai.add_to_history({ res })
 				end
 			)
 			return nil
@@ -324,8 +334,10 @@ local function process_response(fields)
 		vim.schedule(function() refresh_and_close_folds() end)
 	end
 
-	if fields.content and fields.content ~= "" then
-		M.append_to_buffer(fields.content .. "\n")
+	if fields.content then
+		if fields.content ~= vim.NIL and fields.content ~= "" then
+			M.append_to_buffer(fields.content .. "\n")
+		end
 	end
 	if not fields.tool_calls or #fields.tool_calls == 0 then
 		return
@@ -333,7 +345,7 @@ local function process_response(fields)
 
 	vim.schedule(function()
 		local res, stop = run_tools(fields.tool_calls)
-		if stop then
+		if stop or hard_stop then
 			tai.add_to_history(res)
 			return
 		end
@@ -342,6 +354,11 @@ local function process_response(fields)
 end
 
 local function send_input()
+	-- reset hard stop when user sends a message
+	if hard_stop then
+		hard_stop = false
+	end
+
 	vim.schedule(function()
 		scroll_down()
 		local input = table.concat(
@@ -364,29 +381,13 @@ local function send_input()
 	end)
 end
 
+function M.stop()
+	hard_stop = true
+	M.append_to_buffer("[tai] Stopped by user\n")
+end
+
 vim.keymap.set("n", "<CR>", send_input, { buffer = M.input_buffer_nr })
 vim.keymap.set("i", "<S-CR>", send_input, { buffer = M.input_buffer_nr })
-
-function M.toggle_chat_window()
-	local winid = vim.fn.bufwinnr(M.buffer_nr)
-	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
-	if winid ~= -1 then
-		-- Close the window
-		vim.api.nvim_win_close(chat_win, false)
-		if input_winid ~= -1 then
-			vim.api.nvim_win_close(input_win, false)
-		end
-	else
-		M.open()
-	end
-end
-
-function M.focus_input()
-	vim.schedule(function()
-		vim.api.nvim_set_current_win(input_win)
-		vim.cmd("startinsert")
-	end)
-end
 
 function M.open()
 	vim.schedule(function()
@@ -418,6 +419,20 @@ function M.open()
 			vim.wo[chat_win].foldlevel = 0
 		end
 	end)
+end
+
+function M.toggle_chat_window()
+	local winid = vim.fn.bufwinnr(M.buffer_nr)
+	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
+	if winid ~= -1 then
+		-- Close the window
+		vim.api.nvim_win_close(chat_win, false)
+		if input_winid ~= -1 then
+			vim.api.nvim_win_close(input_win, false)
+		end
+	else
+		M.open()
+	end
 end
 
 function M.clear()

@@ -12,13 +12,37 @@ while vim.fn.filereadable(M.root .. "/.tai") == 0 do
 	M.root = parent
 end
 
-if M.root then
-	log.debug("Root is " .. M.root)
-end
-
 if not M.root then
 	return M
 end
+log.debug("Root is " .. M.root)
+
+-- Provider-side tools (e.g., web_browser for OpenAI)
+M.provider_tools = nil
+
+-- Default allowed shell commands
+M.default_allowed_commands = {
+	cat = true,
+	grep = true,
+	ag = true,
+	rg = true,
+	ls = true,
+	head = true,
+	tail = true,
+	wc = true,
+	diff = true,
+	sort = true,
+	uniq = true,
+	find = true,
+	file = true,
+	stat = true,
+	date = true,
+	echo = true,
+	tree = true,
+	pwd = true,
+	which = true,
+	type = true,  -- bash built-in
+}
 
 function M.reload()
 	if not M.root then
@@ -50,35 +74,6 @@ function M.reload()
 	return true
 end
 
-M.reload()
-
--- Provider-side tools (e.g., web_browser for OpenAI)
-M.provider_tools = nil
-
--- Default allowed shell commands
-M.default_allowed_commands = {
-	cat = true,
-	grep = true,
-	ag = true,
-	rg = true,
-	ls = true,
-	head = true,
-	tail = true,
-	wc = true,
-	diff = true,
-	sort = true,
-	uniq = true,
-	find = true,
-	file = true,
-	stat = true,
-	date = true,
-	echo = true,
-	tree = true,
-	pwd = true,
-	which = true,
-	type = true,  -- bash built-in
-}
-
 -- Get effective allowed commands (user config or defaults)
 function M.get_allowed_commands()
 	if M.allowed_commands == nil then
@@ -87,5 +82,7 @@ function M.get_allowed_commands()
 	end
 	return M.allowed_commands
 end
+
+M.reload()
 
 return M

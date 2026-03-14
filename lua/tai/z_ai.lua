@@ -18,7 +18,7 @@ local history = nil
 
 function M.add_to_history(message)
 	if not history then
-		history = {message}
+		history = { message }
 		return
 	end
 	table.insert(history, message)
@@ -36,17 +36,17 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-    local agent_tools = provider_common.build_agent_tools(model_config)
+	local agent_tools = provider_common.build_request_tools("chat_completions")
 	local body = {
 		model = model_config.model,
-        messages = provider_common.filter_message(history) or {},
+		messages = provider_common.filter_message(history) or {},
 		tools = agent_tools,
 	}
 	if format then
 		body.format = format
 	end
-    if config.use_tools ~= false and #agent_tools > 0 then
-        body.tools = agent_tools
+	if config.use_tools ~= false and #agent_tools > 0 then
+		body.tools = agent_tools
 	end
 	if model_config.think ~= nil then
 		body.reasoning_effort = model_config.think
@@ -105,8 +105,8 @@ function M.request(model_config, msgs, format, callback)
 				end
 			end
 
-            fields.tool_calls = message.tool_calls
-            provider_common.decode_tool_call_arguments(fields.tool_calls)
+			fields.tool_calls = message.tool_calls
+			provider_common.decode_tool_call_arguments(fields.tool_calls)
 			callback(fields, nil)
 		end)
 end

@@ -31,4 +31,8 @@ function M.chat()
 	ui.focus_input()
 end
 
+function M.stop()
+	ui.stop()
+end
+
 return M

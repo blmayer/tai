@@ -18,9 +18,9 @@ M.defs = {
 	{
 		type = "function",
 		["function"] = {
-			name = "connect_file",
+			name = "track_file",
 			description =
-			"Adds a file's content to the conversation and keeps it updated. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
+			"Adds a file's content to the conversation and keeps it updated with the current state. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -97,7 +97,7 @@ M.defs = {
 		["function"] = {
 			name = "shell",
 			description =
-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Don't use this for reading or writing files, use read_file and patch tools respectively. Returns the otput of the command.",
+			"Runs commands in a shell in the current working folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Returns the otput of the command.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -318,19 +318,32 @@ function M.exec_command(cmd)
 end
 
 function M.apply_patch(name, file, changes)
-
+	-- First, check if the file is already open in a buffer
 	local buf = nil
-	local is_open = false
-
-	if buf then
-		for _, win in ipairs(vim.api.nvim_list_wins()) do
-			if vim.api.nvim_win_get_buf(win) == buf then
-				is_open = true
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(b) then
+			local buf_name = vim.api.nvim_buf_get_name(b)
+			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
+				buf = b
 				break
 			end
 		end
 	end
-	if not is_open or not buf then
+
+	-- Check if buffer is visible in any window
+	local win = nil
+	if buf then
+		for _, w in ipairs(vim.api.nvim_list_wins()) do
+			if vim.api.nvim_win_get_buf(w) == buf then
+				win = w
+				break
+			end
+		end
+	end
+
+	-- If buffer exists but not visible, we can still modify it directly
+	-- No need to open a new window
+	if not buf then
 		-- File not loaded yet, create new buffer and window
 		vim.cmd("topleft vnew " .. file)
 		buf = vim.api.nvim_get_current_buf()
@@ -367,12 +380,19 @@ function M.apply_patch(name, file, changes)
 		-- Parse line range
 		local start, end_line = parse_lines(lines_str)
 
+		-- Convert negative indexes (relative to end) to 0-based absolute indexes
+		if start < 0 then
+			start = total_lines + start
+		end
+		if end_line < 0 then
+			end_line = total_lines + end_line
+		end
+
 		-- Adjust for line shift from previous changes
 		local adjusted_start = start + line_shift
 		local adjusted_end = end_line + line_shift
 
 		-- Clamp to valid ranges
-		if end_line == -1 then adjusted_end = -1 end
 		if adjusted_start < 0 then adjusted_start = 0 end
 		if adjusted_end >= total_lines then adjusted_end = total_lines - 1 end
 
@@ -392,12 +412,14 @@ function M.apply_patch(name, file, changes)
 			local old_line_count = adjusted_end - adjusted_start + 1
 			local new_line_count = #new_lines
 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
+
 			-- Track the net change for subsequent changes
 			line_shift = line_shift + (new_line_count - old_line_count)
 		elseif operation == "delete" then
 			-- Remove lines
 			local old_line_count = adjusted_end - adjusted_start + 1
 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, {})
+
 			-- Track the deletion for subsequent changes
 			line_shift = line_shift - old_line_count
 		end
@@ -467,7 +489,7 @@ function M.refresh_connected_files(history)
 	local latest = {}
 	for i = #history, 1, -1 do
 		local msg = history[i]
-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
 			local key = msg.file_path .. "::" .. (msg.file_range or "")
 			if latest[key] then
 				msg.content = "[sys] content shown in newer call"
@@ -481,7 +503,7 @@ function M.refresh_connected_files(history)
 
 	-- Refresh remaining (latest) connect_file messages.
 	for _, msg in ipairs(history or {}) do
-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
 			msg.content = M.read_file(msg.file_path, msg.file_range or "")
 		end
 	end

@@ -35,7 +35,7 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-	local agent_tools = provider_common.build_agent_tools(model_config)
+	local agent_tools = provider_common.build_request_tools("chat_completions")
 
 	local body = {
 		model = model_config.model,

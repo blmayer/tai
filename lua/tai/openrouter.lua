@@ -46,9 +46,8 @@ function M.request(model_config, msgs, format, callback)
 	}
 
 	if config.use_tools ~= false then
-		body.tools = provider_common.build_agent_tools(model_config)
+		body.tools = provider_common.build_request_tools("chat_completions")
 	end
-
 	body.messages = provider_common.filter_messages(history)
 
 	if format == "json_object" then

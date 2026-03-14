@@ -48,6 +48,7 @@ Workflow:
   deliverables to ensure they run properly.
 - In the final response present a summary.
 ]]
+
 if config.use_tools == false then
 	M.system_prompt = M.system_prompt .. [[
 # Tools
@@ -62,19 +63,12 @@ else
 # Tools
 You have access to tools that runs in the project's root folder, their result
 is sent back to you. Choose the most appropriate tool based on the task and the
-tool descriptions provided. Use your native tool-calling mechanism. Do not
-confuse it with output text or your tool calls will not be executed.
+tool descriptions provided. Use your native tool-calling mechanism to emit the
+tool calls. Do not confuse it with output or reasoning text or your tool calls
+will not be executed.
 
-All file paths must be relative to the project's directory and don't start
-paths with `/` or `./`.
-
-Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
-Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
-lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
-last 5 lines: -5:$.",
-
-## connect_file
-Use `connect_file` to track files that are being actively worked on. It works
+## track_file
+Use `track_file` to track files that are being actively worked on. It works
 like `cat -n` but keeps the file connected so its content stays updated in
 the conversation as you make changes. This is useful for files you're editing
 or referencing frequently throughout a task. The content will automatically
@@ -97,7 +91,7 @@ tool, you should call the tool with the following structure:
 IMPORTANT:
 - ALWAYS generate the smallest possible patch, don't include unchanged
 (context) lines, only the new lines.
-- You can also send multiple patches in the same response, so you send many
+- You can also send multiple patches in the same response, so send many
   small changes.
 - Each change gets the files at the current state, so later changes or patches
   are affected by previous ones.
@@ -108,15 +102,14 @@ IMPORTANT:
 ## shell
 To run commands ALWAYS use the `shell` tool. You can use this tool to explore
 the codebase, read files, run builds, do file operations like renaming,
-changing permissions, etc. Don't use this tool to edit files.
-To use it call the `shell` tool with the parameters:
+changing permissions, etc. To use it call the `shell` tool with the parameters:
 {
 	"command": "shell pipeline"
 }
 
+- Don't use this tool to edit files. 
 - Each tool execution gives you a clean env and paths are set to the current
-  working folder: ]] .. vim.uv.cwd() .. [[ .
-- Don't use absolute paths.
+  working folder: ]] .. vim.uv.cwd() .. [[ 
 
 ## summarize
 Use the `summarize` tool when you think the conversation context is getting too

@@ -3,6 +3,7 @@ local M = {}
 local log = require("tai.log")
 local tools = require("tai.tools")
 local config = require("tai.config")
+local provider_common = require("tai.provider_common")
 
 local responses_url = "https://api.openai.com/v1/responses"
 
@@ -108,33 +109,10 @@ function M.request(model_config, msgs, format, callback)
 	}
 
 	if config.use_tools ~= false then
-		-- Responses API expects tools to include a top-level `name`.
-		-- Reuse our Chat Completions tool defs but add `name`.
-		local function to_responses_tool(def)
-			local t = vim.deepcopy(def)
-			if t and t["function"] then
-				t = t["function"]
-				t.type = "function"
-				t.strict = true
-				t.additionalProperties = false
-			end
-			return t
-		end
-
-		body.tools = {
-			to_responses_tool(tools.defs["read_file"]),
-			to_responses_tool(tools.defs["shell"]),
-			to_responses_tool(tools.defs["patch"]),
-			to_responses_tool(tools.defs["summarize"]),
-			to_responses_tool(tools.defs["send_image"]),
-		}
-
-		if config.provider_tools then
-			for _, tool in ipairs(config.provider_tools) do
-				table.insert(body.tools, { type = tool })
-			end
-		end
+		-- Use provider_common to build tools for Responses API format
+		body.tools = provider_common.build_request_tools("responses")
 	end
+
 
 	-- Best-effort: only enable strict JSON output if format was requested.
 	-- (This plugin historically uses `format` as a flag that content is JSON.)

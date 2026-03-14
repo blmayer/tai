@@ -1,11 +1,7 @@
 local M = {}
 
 local tools = require("tai.tools")
-
--- Build agent tools from model_config
-function M.build_agent_tools(model_config)
-	return tools.defs
-end
+local config = require("tai.config")
 
 -- Filter a single message to remove internal fields
 function M.filter_message(msg)
@@ -27,6 +23,48 @@ function M.filter_messages(messages)
 	return filtered
 end
 
+-- Build tools for request, including provider tools
+-- api_format: "responses" for OpenAI Responses API, "chat_completions" for Chat Completions API
+function M.build_request_tools(api_format)
+	local request_tools = {}
+
+	-- Add local tools based on API format
+	if api_format == "responses" then
+		-- OpenAI Responses API: tools need `name` at top level
+		local function to_responses_tool(def)
+			local t = vim.deepcopy(def)
+			if t and t["function"] then
+				t = t["function"]
+				t.type = "function"
+				t.strict = true
+				t.additionalProperties = false
+			end
+			return t
+		end
+
+		request_tools = {
+			to_responses_tool(tools.defs["read_file"]),
+			to_responses_tool(tools.defs["shell"]),
+			to_responses_tool(tools.defs["patch"]),
+			to_responses_tool(tools.defs["summarize"]),
+			to_responses_tool(tools.defs["send_image"]),
+		}
+	else
+		-- Chat Completions API: use standard tool format
+		request_tools = vim.deepcopy(tools.defs)
+	end
+
+	-- Add provider-side tools (e.g., web_search)
+	if config.provider_tools then
+		for _, tool in ipairs(config.provider_tools) do
+			table.insert(request_tools, { type = tool })
+		end
+	end
+
+	return request_tools
+end
+
+-- Make HTTP request using curl.
 -- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
 -- callback receives (parsed, error)
 function M.make_http_call(url, api_key, body_json, callback)
@@ -107,7 +145,6 @@ function M.extract_fields(parsed, format)
 		if message.reasoning_details then
 			fields.reasoning_details = message.reasoning_details
 		end
-
 	end
 
 	if message.tool_calls and message.tool_calls ~= vim.NIL then

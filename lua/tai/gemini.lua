@@ -41,8 +41,7 @@ function M.request(model_config, msgs, format, callback)
 	}
 
 	if config.use_tools ~= false then
-		local agent_tools = provider_common.build_agent_tools(model_config)
-		body.tools = agent_tools
+		body.tools = provider_common.build_request_tools("chat_completions")
 	end
 
 	if format then
