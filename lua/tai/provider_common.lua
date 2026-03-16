@@ -121,7 +121,10 @@ function M.extract_fields(parsed, format)
 	local content = message.content
 	if content and content ~= "" then
 		if format ~= nil then
-			local decoded = vim.json.decode(content)
+			local ok_decode, decoded = pcall(vim.json.decode, content)
+			if not ok_decode then
+				return nil, "Failed to decode message content as JSON: " .. tostring(decoded)
+			end
 			if not decoded then
 				return nil, "Failed to decode message content as JSON"
 			end
@@ -140,20 +143,21 @@ function M.extract_fields(parsed, format)
 		if reasoning_text and reasoning_text ~= "" then
 			fields.reasoning_details = { { text = reasoning_text } }
 		end
-
-		-- Some providers offer a more detailed reasoning response
-		if message.reasoning_details then
-			fields.reasoning_details = message.reasoning_details
-		end
 	end
 
+	-- Some providers (e.g., MiniMax) return reasoning_details directly
+	if message.reasoning_details and #message.reasoning_details > 0 then
+		fields.reasoning_details = message.reasoning_details
+	end
+
+	-- Some providers offer a more detailed reasoning response
 	if message.tool_calls and message.tool_calls ~= vim.NIL then
 		fields.tool_calls = message.tool_calls
 		for _, call in ipairs(fields.tool_calls) do
 			local args = call["function"].arguments
 			if type(args) == "string" then
-				local decoded = vim.json.decode(args)
-				if decoded then
+				local ok_decode, decoded = pcall(vim.json.decode, args)
+				if ok_decode and decoded then
 					call["function"].arguments = decoded
 				end
 			end
