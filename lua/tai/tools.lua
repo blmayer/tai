@@ -20,13 +20,13 @@ M.defs = {
 		["function"] = {
 			name = "track_file",
 			description =
-			"Adds a file's content to the conversation and keeps it updated with the current state. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
+			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made.",
 			parameters = {
 				type = "object",
 				properties = {
 					file = {
 						type = "string",
-						description = "The path to the file to read."
+						description = "The path to the file to read. Relative to the project's folder."
 					},
 					range = {
 						type = "string",
@@ -44,7 +44,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Edits files using line-based operations. All 'lines' values are 1-based and reference the current file state. So a patch is affected by previous ones. All changes in a patch the the same file state.",
+			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -61,25 +61,25 @@ M.defs = {
 					changes = {
 						type = "array",
 						description =
-						"List of changes to be made. All changes will use the ORIGINAL state of the file.",
+						"List of changes to be made. All changes will use the ORIGINAL state of the file. Create ONLY the smallest necessary patch.",
 						items = {
 							type = "object",
 							properties = {
 								operation = {
 									type = "string",
 									description =
-									"Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
+									"Operation of this change: add will append new content after the line or interval; change will substitute the range with the new content; delete will erase the lines in range.",
 									enum = { "add", "change", "delete" }
 								},
 								lines = {
 									type = "string",
 									description =
-									"1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first)",
+									"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
 								},
 								content = {
 									type = "string",
 									description =
-									"New content (empty for delete operation)",
+									"New content (empty for delete operation). NEVER include unchanged lines.",
 								}
 							},
 							additionalProperties = false,
@@ -97,14 +97,14 @@ M.defs = {
 		["function"] = {
 			name = "shell",
 			description =
-			"Runs commands in a shell in the current working folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&) and chaining (;)  are allowed. Returns the otput of the command.",
+			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&), and chaining (;) are allowed. Redirects (>, >>, <, <<, 2>&1 etc.) are NOT allowed. Returns the stdout and stderr of the command.",
 			parameters = {
 				type = "object",
 				properties = {
 					command = {
 						type = "string",
 						description =
-						"The pipeline to be interpreted by the shell in the user's machine, usually bash."
+						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder."
 					}
 				},
 				additionalProperties = false,
@@ -130,13 +130,13 @@ M.defs = {
 		["function"] = {
 			name = "send_image",
 			description =
-			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content.",
+			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content. Make sure you select the correct image file.",
 			parameters = {
 				type = "object",
 				properties = {
 					file = {
 						type = "string",
-						description = "The path to the image file to send."
+						description = "The path to the image file to send. Relative to the project's folder."
 					},
 					prompt = {
 						type = "string",
@@ -286,6 +286,12 @@ end
 
 function M.exec_command(cmd)
 	log.debug("Executing `" .. cmd .. "`")
+	-- Check for disallowed redirect operators
+	if cmd:match('[><]') then
+		log.debug("Command contains redirects, which are not allowed: " .. cmd)
+		return "[sys] Redirects (>, <, >>, <<, etc.) are not allowed."
+	end
+
 
 	local env = {}
 	for _, name in ipairs({ "PATH" }) do
@@ -458,6 +464,9 @@ function M.image_data_url(image_path)
 
 	-- Detect MIME type from extension
 	local ext = image_path:match("%.(%w+)$")
+	if not ext then
+		return nil, "File has no extension, cannot determine image type"
+	end
 	local mime_types = {
 		png = "image/png",
 		jpg = "image/jpeg",
@@ -466,7 +475,10 @@ function M.image_data_url(image_path)
 		webp = "image/webp",
 		bmp = "image/bmp",
 	}
-	local mime = mime_types[ext:lower()] or "image/png"
+	local mime = mime_types[ext:lower()]
+	if not mime then
+		return nil, "Unsupported image format: " .. ext .. ". Supported formats: png, jpg, jpeg, gif, webp, bmp."
+	end
 
 	-- Read file and encode to base64 using curl
 	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)

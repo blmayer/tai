@@ -146,6 +146,7 @@ end
 local function run_tools(tool_calls)
 	local results = {}
 	local stop = false
+	local inputs = {}
 
 	for _, call in ipairs(tool_calls or {}) do
 		local name = call["function"].name
@@ -281,8 +282,31 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
+			local image_url, err = tools.image_data_url(args.file)
+			if not image_url then
+				M.append_to_buffer("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
+				res.content = "[sys] Error: " .. err
+				goto continue
+			end
 			res.content = "[sys] Image " .. args.file .. " added."
 			M.append_to_buffer("{{{ Adding image " .. args.file .. "\n}}}")
+
+			if args.prompt then
+				table.insert(inputs, {
+					role = "user",
+					content = {
+						type = "text",
+						text = args.prompt
+					}
+				})
+			end
+			table.insert(inputs, {
+				role = "user",
+				content = {
+					type = "image_url",
+					image_url = { url = image_url }
+				}
+			})
 		else
 			local err_msg = "[sys] Invalid tool name: " .. name
 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
@@ -296,22 +320,9 @@ local function run_tools(tool_calls)
 
 
 	-- Second pass is needed for image inputs
-	for _, call in ipairs(tool_calls or {}) do
-		local name = call["function"].name
-		local args = call["function"].arguments
-
-		local res = {
-			role = "user",
-		}
-		if name == "send_image" then
-			local image_url = tools.image_data_url(args.file)
-			res.content = {
-				{
-					type = "image_url",
-					image_url = { url = image_url }
-				}
-			}
-			table.insert(results, res)
+	if #inputs > 0 then
+		for _, i in ipairs(inputs) do
+			table.insert(results, i)
 		end
 	end
 	return results, stop
@@ -404,19 +415,24 @@ function M.open()
 			input_win = vim.api.nvim_get_current_win()
 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
 			vim.api.nvim_win_set_height(input_win, 8)
+
+			-- Folding is window-local; configure it here so tool output/details can be collapsed.
+			if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+				vim.wo[chat_win].foldmethod = "marker"
+				vim.wo[chat_win].foldenable = true
+				vim.wo[chat_win].foldlevel = 0
+			end
 		else
 			chat_win = vim.fn.win_getid(chat_window_nr)
 			local input_window_nr = vim.fn.bufwinnr(M.input_buffer_nr)
 			if input_window_nr ~= -1 then
 				input_win = vim.fn.win_getid(input_window_nr)
 			end
-		end
-
-		-- Folding is window-local; configure it here so tool output/details can be collapsed.
-		if chat_win and vim.api.nvim_win_is_valid(chat_win) then
-			vim.wo[chat_win].foldmethod = "marker"
-			vim.wo[chat_win].foldenable = true
-			vim.wo[chat_win].foldlevel = 0
+			-- Ensure foldmethod and foldenable are set (but don't reset foldlevel)
+			if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+				vim.wo[chat_win].foldmethod = "marker"
+				vim.wo[chat_win].foldenable = true
+			end
 		end
 	end)
 end
