@@ -1,4 +1,4 @@
-# tai.nvim
+# 泰.nvim
 
 ![tai.nvim in action](www/screenshot.png)
 

@@ -44,7 +44,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state.",
+			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state. After applying a patch you should check the affected files. For best results make the smallest possible changes.",
 			parameters = {
 				type = "object",
 				properties = {

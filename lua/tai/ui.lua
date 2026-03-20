@@ -171,8 +171,7 @@ local function run_tools(tool_calls)
 				log.debug("Executing allowed command: " .. args.command)
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
-				M.append_to_buffer((out or "") .. "\n")
-				M.append_to_buffer("}}}")
+				M.append_to_buffer((out or "") .. "\n}}}")
 				res.content = out
 				goto continue
 			end
@@ -188,7 +187,7 @@ local function run_tools(tool_calls)
 				log.debug("Confirmed")
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
-				M.append_to_buffer((out or "") .. "\n")
+				M.append_to_buffer((out or ""))
 				res.content = out
 			elseif input == 2 then
 				log.debug("Declined")
@@ -197,22 +196,22 @@ local function run_tools(tool_calls)
 				if comment and comment ~= "" then
 					res.content = "[sys] User declined running this command. Comment: " ..
 					    comment
-					M.append_to_buffer("Comment: " .. comment .. "\n")
+					M.append_to_buffer("Comment: " .. comment)
 				else
 					res.content = "[sys] User declined running this command"
 				end
 			else
 				local comment = vim.fn.input("Comment (optional): ")
-				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
+				M.append_to_buffer("{{{ Stopped at " .. args.command)
 				if comment and comment ~= "" then
 					res.content = "[sys] User stopped the task. Comment: " .. comment
-					M.append_to_buffer("Comment: " .. comment .. "\n")
+					M.append_to_buffer("Comment: " .. comment)
 				else
 					res.content = "[sys] User stopped the task"
 				end
 				stop = true
 			end
-			M.append_to_buffer("}}}")
+			M.append_to_buffer("\n}}}")
 		elseif name == "track_file" then
 			if not args.file then
 				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
@@ -220,12 +219,11 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
-			M.append_to_buffer("{{{ Attaching " .. args.file .. "\n")
+			M.append_to_buffer("{{{ Attaching " .. args.file)
 			res.content = tools.read_file(args.file, args.range)
 			res.file_path = args.file
 			res.file_range = args.range
-			M.append_to_buffer(res.content .. "\n")
-			M.append_to_buffer("}}}")
+			M.append_to_buffer(res.content .. "\n}}}")
 		elseif name == "patch" then
 			if not args.file then
 				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
@@ -238,7 +236,7 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
-			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
+			M.append_to_buffer("{{{ Patching " .. args.file)
 			for _, change in ipairs(args.changes or {}) do
 				if not change.lines or not change.operation then
 					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
@@ -257,8 +255,7 @@ local function run_tools(tool_calls)
 
 			local out = tools.apply_patch(args.name, args.file, args.changes)
 			res.content = out
-			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
-			M.append_to_buffer("}}}")
+			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}")
 		elseif name == "summarize" then
 			M.append_to_buffer("{{{ Summarizing chat\n}}}")
 			tai.task(
@@ -341,7 +338,7 @@ local function process_response(fields)
 
 	-- Display reasoning details (interleaved thinking) folded
 	if fields.reasoning_details and #fields.reasoning_details > 0 then
-		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "\n}}}")
+		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "}}}")
 		vim.schedule(function() refresh_and_close_folds() end)
 	end
 
