@@ -77,7 +77,12 @@ function M.request(model_config, msgs, format, callback)
 		log.debug("Request response: " .. vim.inspect(parsed))
 
 		if parsed.error then
-			return callback(nil, parsed.error.message)
+			local error = parsed.error
+			local msg = error.message
+			if error.metadata and error.metadata.raw then
+				msg = msg .. ": " .. error.metadata.raw
+			end
+			return callback(nil, msg)
 		end
 
 		local fields, extract_err = provider_common.extract_fields(parsed, format)

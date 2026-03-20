@@ -311,9 +311,8 @@ local function run_tools(tool_calls)
 				}
 			})
 		else
-			local err_msg = "[sys] Invalid tool name: " .. name
+			res.content = "[sys] Invalid tool name: " .. name
 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
-			res.content = err_msg
 		end
 
 		::continue::
@@ -338,7 +337,7 @@ local function process_response(fields)
 		vim.schedule(function() update_token_display(fields.token_usage) end)
 	end
 	if fields.error then
-		M.append_to_buffer("[tai] " .. fields.error .. "\n")
+		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
 		return
 	end
 

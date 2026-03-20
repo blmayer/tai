@@ -109,6 +109,8 @@ tai reads configuration from a `.tai` JSON file in your project root. The follow
 - `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
 - `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
 - `think`: Enable extended thinking/reasoning for models that support it.
+- `system_prompt`: Custom system prompt to override the default agent instructions.
+- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
 - `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
 
 Example `.tai` file:
@@ -122,6 +124,8 @@ Example `.tai` file:
 		"max_tokens": 4096
 	},
 	"use_tools": true,
+	"system_prompt": "You are a senior python programmer. Always write tests.",
+	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
 	"allowed_commands": {
 		"git": true,
 		"npm": true,
