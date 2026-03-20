@@ -10,14 +10,21 @@ local provider = require('tai.' .. config.provider)
 
 local host = vim.uv.os_uname()
 
-M.system_prompt = [[
+local default_system_prompt = [[
 You are a coding agent working in a project. You have read/write access to the
 project's codebase in the current folder: ]] .. config.root .. [[
 
 Please work on the tasks given by the user.
 ]]
 
+M.system_prompt = config.system_prompt or default_system_prompt
+if config.custom_prompt and config.custom_prompt ~= "" then
+	M.system_prompt = M.system_prompt .. "\n" .. config.custom_prompt
+end
+
 provider.add_to_history({ role = "system", content = M.system_prompt })
+
+
 
 function M.task(msgs, callback)
 	log.info("Agent executing task")

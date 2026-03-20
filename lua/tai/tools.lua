@@ -1,6 +1,7 @@
 local M = {}
 
 local log = require('tai.log')
+local config = require("tai.config")
 
 M.summary_msg = {
 	role = "user",
@@ -26,7 +27,8 @@ M.defs = {
 				properties = {
 					file = {
 						type = "string",
-						description = "The path to the file to read. Relative to the project's folder."
+						description =
+						"The path to the file to read. Relative to the project's folder."
 					},
 					range = {
 						type = "string",
@@ -68,8 +70,8 @@ M.defs = {
 								operation = {
 									type = "string",
 									description =
-									"Operation of this change: add will append new content after the line or interval; change will substitute the range with the new content; delete will erase the lines in range.",
-									enum = { "add", "change", "delete" }
+									"Operation of this change: add will append new content after the line or interval; update will substitute the range with the new content; delete will erase the lines in range.",
+									enum = { "add", "update", "delete" }
 								},
 								lines = {
 									type = "string",
@@ -104,7 +106,7 @@ M.defs = {
 					command = {
 						type = "string",
 						description =
-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder."
+						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc."
 					}
 				},
 				additionalProperties = false,
@@ -136,7 +138,8 @@ M.defs = {
 				properties = {
 					file = {
 						type = "string",
-						description = "The path to the image file to send. Relative to the project's folder."
+						description =
+						"The path to the image file to send. Relative to the project's folder."
 					},
 					prompt = {
 						type = "string",
@@ -270,28 +273,28 @@ function M.read_file(file_path, range)
 	return numbered_content
 end
 
-function M.check_command(cmd)
+function M.unsafe_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
 
-	local config = require("tai.config")
-	local allowed = config.get_allowed_commands()
-
-	-- Extract the base command (first word)
-	local base_cmd = cmd:match("^%s*(%w+)")
-	local is_allowed = base_cmd and allowed[base_cmd]
-
-	-- Return the base command and whether it's allowed
-	return base_cmd, is_allowed
-end
-
-function M.exec_command(cmd)
-	log.debug("Executing `" .. cmd .. "`")
 	-- Check for disallowed redirect operators
 	if cmd:match('[><]') then
 		log.debug("Command contains redirects, which are not allowed: " .. cmd)
 		return "[sys] Redirects (>, <, >>, <<, etc.) are not allowed."
 	end
 
+	local allowed = config.get_allowed_commands()
+
+	-- Extract the base command (first word)
+	local base_cmd = cmd:match("^%s*(%w+)")
+	if not base_cmd and allowed[base_cmd] then
+		return "[sys] Command " .. base_cmd .. " is not allowed."
+	end
+
+	return false
+end
+
+function M.exec_command(cmd)
+	log.debug("Executing `" .. cmd .. "`")
 
 	local env = {}
 	for _, name in ipairs({ "PATH" }) do
@@ -412,9 +415,9 @@ function M.apply_patch(name, file, changes)
 			vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
 			-- Track the addition for subsequent changes
 			line_shift = line_shift + #new_lines
-		elseif operation == "change" then
+		elseif operation == "update" then
 			-- Replace lines with new content
-			local new_lines = vim.split(content, '\n')
+			local new_lines = vim.split(content or "", '\n')
 			local old_line_count = adjusted_end - adjusted_start + 1
 			local new_line_count = #new_lines
 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
@@ -438,28 +441,9 @@ end
 
 -- Convert image file to base64 data URL
 function M.image_data_url(image_path)
-	local full_path = image_path
-
-	-- Handle relative paths (relative to project root or CWD)
-	if image_path:sub(1, 1) ~= "/" then
-		-- Try project root first
-		local config = require("tai.config")
-		if config.root then
-			local try_path = config.root .. "/" .. image_path
-			if vim.fn.filereadable(try_path) == 1 then
-				full_path = try_path
-			end
-		end
-	end
-
 	-- Check if file exists
-	if vim.fn.filereadable(full_path) ~= 1 then
-		-- Try as absolute path
-		if vim.fn.filereadable(image_path) == 1 then
-			full_path = image_path
-		else
-			return nil, "Image file not found: " .. image_path
-		end
+	if vim.fn.filereadable(image_path) ~= 1 then
+		return nil, "Image file not found: " .. image_path
 	end
 
 	-- Detect MIME type from extension
@@ -481,7 +465,7 @@ function M.image_data_url(image_path)
 	end
 
 	-- Read file and encode to base64 using curl
-	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)
+	local cmd = string.format("base64 -i '%s' | tr -d '\n'", image_path)
 	local handle = io.popen(cmd, "r")
 	if not handle then
 		return nil, "Failed to read image file"

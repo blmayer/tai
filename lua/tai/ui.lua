@@ -102,10 +102,10 @@ function M.append_to_buffer(content)
 end
 
 function M.focus_input()
-       vim.schedule(function()
-               vim.api.nvim_set_current_win(input_win)
-               vim.cmd("startinsert")
-       end)
+	vim.schedule(function()
+		vim.api.nvim_set_current_win(input_win)
+		vim.cmd("startinsert")
+	end)
 end
 
 local function scroll_down()
@@ -164,9 +164,8 @@ local function run_tools(tool_calls)
 		end
 
 		if name == "shell" then
-			local _, is_allowed = tools.check_command(args.command)
 
-			if is_allowed then
+			if not tools.unsafe_command(args.command) then
 				-- Allowed command: execute directly without confirmation
 				log.debug("Executing allowed command: " .. args.command)
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
@@ -218,6 +217,12 @@ local function run_tools(tool_calls)
 				res.content = "[sys] missing file field"
 				goto continue
 			end
+            if vim.fn.filereadable(args.file) ~= 1 then
+                M.append_to_buffer("{{{ Attaching file failed: file does not exist or is not readable: " .. args.file .. "\n}}}")
+                res.content = "[sys] file does not exist or is not readable"
+                goto continue
+            end
+
 
 			M.append_to_buffer("{{{ Attaching " .. args.file)
 			res.content = tools.read_file(args.file, args.range)
@@ -230,9 +235,10 @@ local function run_tools(tool_calls)
 				res.content = "[sys] missing file field"
 				goto continue
 			end
-			if not args.changes or #args.changes == 0 then
-				M.append_to_buffer("{{{ Patching file failed: empty changes field.\n}}}")
-				res.content = "[sys] missing empty changes field"
+			if not args.changes or type(args.changes) ~= "table" or #args.changes == 0 then
+				M.append_to_buffer(
+				"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
+				res.content = "[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
 				goto continue
 			end
 
