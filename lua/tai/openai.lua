@@ -233,4 +233,154 @@ function M.request(model_config, msgs, format, callback)
 	end
 end
 
+-- Streaming request function
+function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	-- Preserve existing chat history behavior but translate to Responses API.
+	for _, msg in ipairs(msgs) do
+		add_history_message(vim.deepcopy(msg))
+	end
+
+	local input = {}
+	for _, msg in ipairs(history or {}) do
+		local new_msg = {}
+		for k, v in pairs(msg) do
+			if k ~= "file_path" and k ~= "file_range" then
+				new_msg[k] = v
+			end
+		end
+		local inputs = to_responses_input(new_msg)
+		for _, inp in ipairs(inputs) do
+			table.insert(input, inp)
+		end
+	end
+
+	local body = {
+		model = model_config.model,
+		input = input,
+		store = false,
+		stream = true,
+	}
+
+	if config.use_tools ~= false then
+		body.tools = provider_common.build_request_tools("responses")
+	end
+
+	if format ~= nil then
+		body.text = { format = { type = "json_object" } }
+	end
+
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
+
+	local request_body = vim.json.encode(body)
+
+	log.debug("Streaming Requesting " .. responses_url)
+
+	local tmp = vim.fn.tempname()
+	local ok_write = pcall(vim.fn.writefile, { request_body }, tmp)
+	if not ok_write then
+		return on_complete(nil, "Failed to write request body")
+	end
+
+	local function cleanup()
+		pcall(vim.fn.delete, tmp)
+	end
+
+	local buffer = ""
+	local accumulated_content = ""
+	local tool_calls = {}
+	local full_response = {}
+
+	local process = vim.uv.spawn({
+		cmd = "curl",
+		args = {
+			"-s",
+			"-X", "POST", responses_url,
+			"-H", "Authorization: Bearer " .. api_key,
+			"-H", "Content-Type: application/json",
+			"--data-binary", "@" .. tmp,
+		},
+		stdout = true,
+		stderr = true,
+	})
+
+	if not process then
+		cleanup()
+		return on_complete(nil, "Failed to create process")
+	end
+
+	process:read_start("stdout", function(err, data)
+		if err then
+			log.error("Stream read error: " .. tostring(err))
+			process:read_stop()
+			process:close()
+			cleanup()
+			return
+		end
+
+		if data and #data > 0 then
+			buffer = buffer .. data
+
+			for line in buffer:gmatch("[^ ]+ ") do
+				buffer = buffer:gsub("[^ ]+\n", "")
+
+				if line:sub(1, 5) == "data: " then
+					local chunk_data = line:sub(6)
+
+					if chunk_data == "[DONE]" then
+						local fields = {
+							content = accumulated_content,
+							tool_calls = #tool_calls > 0 and tool_calls or nil,
+							reasoning_details = #reasoning_details > 0 and reasoning_details or
+							nil,
+							full_response = full_response,
+						}
+
+						process:read_stop()
+						process:close()
+						cleanup()
+						on_complete(fields, nil)
+						return
+					end
+
+					local chunk = vim.json.decode(chunk_data)
+					if chunk and chunk.output and #chunk.output > 0 then
+						local text = chunk.output[1].content
+						if text and text ~= vim.NIL and text ~= "" then
+							accumulated_content = accumulated_content .. text
+							on_chunk({ content = text }, nil)
+						end
+					end
+
+					if chunk and chunk.tool_calls and #chunk.tool_calls > 0 then
+						for _, call in ipairs(chunk.tool_calls) do
+							table.insert(tool_calls, call)
+						end
+					end
+
+					if chunk and chunk.reasoning_details and #chunk.reasoning_details > 0 then
+						for _, reason in ipairs(chunk.reasoning_details) do
+							table.insert(reasoning_details, reason)
+						end
+					end
+
+					full_response = chunk
+				end
+			end
+		end
+	end)
+
+	process:on("exit", function(code, signal)
+		if code ~= 0 then
+			process:read_stop()
+			process:close()
+			cleanup()
+			on_complete(nil, "curl returned code " .. tostring(code))
+		end
+	end)
+end
+
 return M

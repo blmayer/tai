@@ -1,6 +1,6 @@
 local M = {}
 
-local provider_common = require("tai.provider_common")
+local common = require("tai.provider_common")
 local tools = require("tai.tools")
 local config = require("tai.config")
 local log = require("tai.log")
@@ -33,7 +33,7 @@ function M.clear_history()
 	history = nil
 end
 
-function M.request(model_config, msgs, format, callback)
+local function build_body(model_config, msgs, format)
 	for _, msg in ipairs(msgs) do
 		M.add_to_history(msg)
 	end
@@ -41,11 +41,11 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-	local agent_tools = provider_common.build_request_tools("chat_completions")
+	local agent_tools = common.build_request_tools("chat_completions")
 
 	local body = {
 		model = model_config.model,
-		messages = provider_common.filter_messages(history),
+		messages = common.filter_messages(history),
 	}
 
 	if config.use_tools ~= false and #agent_tools > 0 then
@@ -62,10 +62,16 @@ function M.request(model_config, msgs, format, callback)
 		end
 	end
 
+	return body
+end
+
+function M.request(model_config, msgs, format, callback)
+	local body = build_body(model_config, msgs, format)
+
 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
-	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+	common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
 			return callback(nil, err)
 		end
@@ -76,12 +82,57 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, parsed.error.message or "Unknown Minimax API error")
 		end
 
-		local fields, extract_err = provider_common.extract_fields(parsed, format)
+		if not parsed.choices or #parsed.choices == 0 then
+			return callback(nil, "Received no choices")
+		end
+
+		local message = parsed.choices[1].message
+		local fields, extract_err = common.extract_fields(message, format)
 		if extract_err then
 			return callback(nil, extract_err)
 		end
 
+		-- Extract token usage if available
+		if parsed.usage and parsed.usage.total_tokens then
+			fields.token_usage = parsed.usage.total_tokens
+		end
+
 		callback(fields, nil)
+	end)
+end
+
+-- Streaming request function
+function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	local body = build_body(model_config, msgs, format)
+	body.stream = true
+
+	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
+	local request_body = vim.json.encode(body)
+
+	local fields = {
+		content = "",
+		tool_calls = {},
+		reasoning_details = { { text = "" } },
+	}
+
+	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+		local chunk_data, err = common.parse_chunk(chunk)
+		if err then
+			on_chunk(chunk_data, err)
+			return
+		end
+		on_chunk(chunk_data, nil)
+
+		-- accumulate
+		fields = common.update_fields(fields, chunk_data)
+	end, function(_, err)
+		-- on_complete: flatten tool_calls map to array and decode arguments
+		if err then
+			on_complete(nil, err)
+			return
+		end
+		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+		on_complete(fields, nil)
 	end)
 end
 

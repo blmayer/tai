@@ -1,8 +1,9 @@
 local M = {}
 local log = require("tai.log")
-local tai = require("tai.agent")
 local tools = require("tai.tools")
 local config = require("tai.config")
+local agent = require("tai.agent")
+local provider = require("tai." .. config.provider)
 
 local bufname_prefix = "tai-chat"
 local input_bufname = "tai-chat-input"
@@ -12,6 +13,57 @@ local input_win
 
 -- Global stop flag for hard stop command
 local hard_stop = false
+
+function M.init()
+	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+	vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+	vim.bo[M.input_buffer_nr].buftype = "nofile"
+	vim.bo[M.input_buffer_nr].bufhidden = "hide"
+	vim.bo[M.input_buffer_nr].swapfile = false
+	vim.bo[M.input_buffer_nr].filetype = "text"
+	vim.bo[M.input_buffer_nr].modifiable = true
+
+	M.buffer_nr = vim.api.nvim_create_buf(false, true)
+	vim.bo[M.buffer_nr].buftype = "nofile"
+	vim.bo[M.buffer_nr].bufhidden = "hide" -- keep content when hidden
+	vim.bo[M.buffer_nr].swapfile = false
+	vim.bo[M.buffer_nr].modifiable = true
+	vim.bo[M.buffer_nr].filetype = "text"
+
+	-- When typing fold end marker in the chat buffer, refresh/close fold immediately.
+	if not config.stream then
+		vim.keymap.set("i", "}", function()
+			if vim.wo.foldmethod ~= "marker" then
+				return "}"
+			end
+
+			local line = vim.fn.getline(".")
+			local c = vim.fn.col(".")
+			local new_line = line:sub(1, c - 1) .. "}" .. line:sub(c)
+
+			if new_line:match("}}}%s*$") then
+				local tc = vim.api.nvim_replace_termcodes
+				return "}" .. tc("<C-o>zx<C-o>zc", true, false, true)
+			end
+			return "}"
+		end, { buffer = M.buffer_nr, expr = true, noremap = true })
+	end
+
+	-- Autoclose TAI UI buffers on Neovim exit
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
+		callback = function()
+			if vim.api.nvim_buf_is_valid(M.buffer_nr) then
+				vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
+			end
+			if vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+				vim.api.nvim_buf_delete(M.input_buffer_nr, { force = true })
+			end
+		end,
+	})
+	M.clear()
+	M.update_chat_name()
+end
 
 local function update_token_display(token_count)
 	local name = input_bufname
@@ -23,14 +75,6 @@ local function update_token_display(token_count)
 	end
 end
 
-M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
-vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
-vim.bo[M.input_buffer_nr].buftype = "nofile"
-vim.bo[M.input_buffer_nr].bufhidden = "hide"
-vim.bo[M.input_buffer_nr].swapfile = false
-vim.bo[M.input_buffer_nr].filetype = "text"
-vim.bo[M.input_buffer_nr].modifiable = true
-
 function M.update_chat_name()
 	local name = bufname_prefix
 	if config and config.provider and config.model then
@@ -40,44 +84,6 @@ function M.update_chat_name()
 		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
 	end
 end
-
-M.buffer_nr = vim.api.nvim_create_buf(false, true)
-M.update_chat_name()
-vim.bo[M.buffer_nr].buftype = "nofile"
-vim.bo[M.buffer_nr].bufhidden = "hide" -- keep content when hidden
-vim.bo[M.buffer_nr].swapfile = false
-vim.bo[M.buffer_nr].modifiable = true
-vim.bo[M.buffer_nr].filetype = "text"
-
--- When typing fold end marker in the chat buffer, refresh/close fold immediately.
-vim.keymap.set("i", "}", function()
-	if vim.wo.foldmethod ~= "marker" then
-		return "}"
-	end
-
-	local line = vim.fn.getline(".")
-	local c = vim.fn.col(".")
-	local new_line = line:sub(1, c - 1) .. "}" .. line:sub(c)
-
-	if new_line:match("}}}%s*$") then
-		local tc = vim.api.nvim_replace_termcodes
-		return "}" .. tc("<C-o>zx<C-o>zc", true, false, true)
-	end
-	return "}"
-end, { buffer = M.buffer_nr, expr = true, noremap = true })
-
--- Autoclose TAI UI buffers on Neovim exit
-vim.api.nvim_create_autocmd("VimLeavePre", {
-	group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
-	callback = function()
-		if vim.api.nvim_buf_is_valid(M.buffer_nr) then
-			vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
-		end
-		if vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
-			vim.api.nvim_buf_delete(M.input_buffer_nr, { force = true })
-		end
-	end,
-})
 
 function M.append_to_buffer(content)
 	local new_lines = vim.split(content, "\n")
@@ -91,6 +97,28 @@ function M.append_to_buffer(content)
 			-- Append to existing content
 			vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false,
 				new_lines)
+		end
+	end
+
+	if vim.in_fast_event() then
+		vim.schedule(do_append)
+	else
+		do_append()
+	end
+end
+
+local function append_streaming(content)
+	local new_lines = vim.split(content, "\n")
+
+	local function do_append()
+		local line_num = vim.api.nvim_buf_line_count(M.buffer_nr)
+		local cur_content = vim.api.nvim_buf_get_lines(M.buffer_nr, -2, -1, false)
+
+		if line_num == 1 and cur_content[1] == "" then
+			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+		else
+			content = cur_content[1] .. content
+			vim.api.nvim_buf_set_lines(M.buffer_nr, line_num - 1, line_num, false, vim.split(content, "\n"))
 		end
 	end
 
@@ -149,6 +177,8 @@ local function run_tools(tool_calls)
 	local inputs = {}
 
 	for _, call in ipairs(tool_calls or {}) do
+		log.debug("[UI] running tool: " .. vim.inspect(call)
+		)
 		local name = call["function"].name
 		local args = call["function"].arguments
 
@@ -164,13 +194,12 @@ local function run_tools(tool_calls)
 		end
 
 		if name == "shell" then
-
 			if not tools.unsafe_command(args.command) then
 				-- Allowed command: execute directly without confirmation
 				log.debug("Executing allowed command: " .. args.command)
 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
-				M.append_to_buffer((out or "") .. "\n}}}")
+				M.append_to_buffer((out or "") .. "\n}}}\n")
 				res.content = out
 				goto continue
 			end
@@ -210,25 +239,25 @@ local function run_tools(tool_calls)
 				end
 				stop = true
 			end
-			M.append_to_buffer("\n}}}")
+			M.append_to_buffer("\n}}}\n")
 		elseif name == "track_file" then
 			if not args.file then
 				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
 				res.content = "[sys] missing file field"
 				goto continue
 			end
-            if vim.fn.filereadable(args.file) ~= 1 then
-                M.append_to_buffer("{{{ Attaching file failed: file does not exist or is not readable: " .. args.file .. "\n}}}")
-                res.content = "[sys] file does not exist or is not readable"
-                goto continue
-            end
-
+			if vim.fn.filereadable(args.file) ~= 1 then
+				M.append_to_buffer("{{{ Attaching file failed: file does not exist or is not readable: " ..
+					args.file .. "\n}}}\n")
+				res.content = "[sys] file does not exist or is not readable"
+				goto continue
+			end
 
 			M.append_to_buffer("{{{ Attaching " .. args.file)
 			res.content = tools.read_file(args.file, args.range)
 			res.file_path = args.file
 			res.file_range = args.range
-			M.append_to_buffer(res.content .. "\n}}}")
+			M.append_to_buffer(res.content .. "\n}}}\n")
 		elseif name == "patch" then
 			if not args.file then
 				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
@@ -237,8 +266,9 @@ local function run_tools(tool_calls)
 			end
 			if not args.changes or type(args.changes) ~= "table" or #args.changes == 0 then
 				M.append_to_buffer(
-				"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
-				res.content = "[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
+					"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
+				res.content =
+				"[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
 				goto continue
 			end
 
@@ -261,10 +291,10 @@ local function run_tools(tool_calls)
 
 			local out = tools.apply_patch(args.name, args.file, args.changes)
 			res.content = out
-			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}")
+			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}\n")
 		elseif name == "summarize" then
 			M.append_to_buffer("{{{ Summarizing chat\n}}}")
-			tai.task(
+			M.task(
 				{ tools.summary_msg },
 				function(summ)
 					if summ.error then
@@ -273,8 +303,8 @@ local function run_tools(tool_calls)
 					end
 
 					res.content = summ.content
-					tai.clear_history()
-					tai.add_to_history({ res })
+					M.clear_history()
+					M.add_to_history({ res })
 				end
 			)
 			return nil
@@ -311,8 +341,8 @@ local function run_tools(tool_calls)
 				}
 			})
 		else
-			res.content = "[sys] Invalid tool name: " .. name
-			M.append_to_buffer("{{{ Invalid tool call\n}}}")
+			res.content = "[sys] Invalid tool name: " .. (name or "")
+			M.append_to_buffer("{{{ Invalid tool name\n}}}\n")
 		end
 
 		::continue::
@@ -331,6 +361,7 @@ local function run_tools(tool_calls)
 end
 
 local function process_response(fields)
+	log.debug("[UI] processing response")
 	M.open()
 
 	if fields.token_usage then
@@ -338,31 +369,40 @@ local function process_response(fields)
 	end
 	if fields.error then
 		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
-		return
 	end
 
-	-- Display reasoning details (interleaved thinking) folded
-	if fields.reasoning_details and #fields.reasoning_details > 0 then
-		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "}}}")
-		vim.schedule(function() refresh_and_close_folds() end)
-	end
+	if not config.stream then
+		-- Display reasoning details (interleaved thinking) folded
+		-- TODO: check if we can omit [1].text
+		if fields.reasoning_details and #fields.reasoning_details > 0 then
+			M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details .. "}}}")
+			vim.schedule(function() refresh_and_close_folds() end)
+		end
 
-	if fields.content then
-		if fields.content ~= vim.NIL and fields.content ~= "" then
-			M.append_to_buffer(fields.content .. "\n")
+		-- For non-streaming responses, append the content to the buffer
+		if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+			if not config.stream then
+				M.append_to_buffer(fields.content .. "\n")
+			end
 		end
 	end
+
 	if not fields.tool_calls or #fields.tool_calls == 0 then
 		return
 	end
 
 	vim.schedule(function()
+		log.debug("[UI] running tools")
 		local res, stop = run_tools(fields.tool_calls)
 		if stop or hard_stop then
-			tai.add_to_history(res)
+			provider.add_to_history(res)
 			return
 		end
-		tai.task(res, process_response)
+		if is_streaming then
+			M.task_stream(res, process_response)
+			return
+		end
+		M.task(res, process_response)
 	end)
 end
 
@@ -390,7 +430,11 @@ local function send_input()
 		end)
 
 		log.debug("got input: " .. input)
-		tai.task({ { role = "user", content = input } }, process_response)
+		if config.stream then
+			M.task_stream({ { role = "user", content = input } }, process_response)
+		else
+			M.task({ { role = "user", content = input } }, process_response)
+		end
 	end)
 end
 
@@ -455,7 +499,95 @@ end
 
 function M.clear()
 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
-	tai.clear_history()
+	provider.clear_history()
+	provider.add_to_history({ role = "system", content = agent.system_prompt })
+end
+
+function M.task(msgs, callback)
+	log.info("Agent executing task")
+	provider.request(
+		config,
+		msgs,
+		nil,
+		function(data, err)
+			local response = { role = "assistant" }
+			if err then
+				return callback({ error = err })
+			end
+			response.content = data.content
+			response.tool_calls = data.tool_calls
+			response.reasoning_details = data.reasoning_details
+			provider.add_to_history(response)
+			callback(data, false) -- Pass non-streaming flag
+		end
+	)
+end
+
+-- Streaming task execution
+function M.task_stream(msgs)
+	log.info("Agent executing streaming task")
+
+	local think_start = true
+	local content_start = true
+	provider.request_stream(
+		config,
+		msgs,
+		nil,
+		function(chunk, err)
+			if err then
+				append_streaming("{{{ Chunk error\n" .. err .. "\n}}}\n")
+				return
+			end
+
+			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+			if chunk.reasoning_details and #chunk.reasoning_details > 0 then
+				if think_start then
+					append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
+					think_start = false
+				else
+					append_streaming(chunk.reasoning_details[1].text)
+				end
+			end
+
+			if chunk.content and chunk.content ~= "" then
+				if content_start then
+					append_streaming("\n}}}\n")
+					refresh_and_close_folds()
+					content_start = false
+				end
+
+				append_streaming(chunk.content)
+			end
+			log.debug("[UI] updated chat")
+		end,
+		function(data, err)
+			log.debug("[UI] got message completed: " .. vim.inspect(data))
+			local response = { role = "assistant" }
+			for k, v in pairs(data) do
+				response[k] = v
+			end
+			provider.add_to_history(response)
+
+			if not think_start and content_start then
+				append_streaming("\n}}}\n")
+			end
+			if err then
+				M.append_to_buffer("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+			end
+
+			if not data.tool_calls or #data.tool_calls == 0 then
+				return
+			end
+
+			log.debug("[UI] running tools")
+			local res, stop = run_tools(data.tool_calls)
+			if stop or hard_stop then
+				provider.add_to_history(res)
+				return
+			end
+			M.task_stream(res)
+		end
+	)
 end
 
 return M

@@ -1,6 +1,7 @@
 local M = {}
 
 local tools = require("tai.tools")
+local log = require("tai.log")
 local config = require("tai.config")
 
 -- Filter a single message to remove internal fields
@@ -108,18 +109,14 @@ end
 
 -- Extract fields (content, tool_calls) from a standard OpenAI-style response
 -- format is the requested format (e.g., "json_object")
-function M.extract_fields(parsed, format)
+function M.extract_fields(message, format)
 	local fields = {}
-	if not parsed.choices or #parsed.choices == 0 then
-		return nil, "No choices received"
-	end
-	local message = parsed.choices[1].message
 	if not message then
 		return nil, "No message in response"
 	end
 
 	local content = message.content
-	if content and content ~= "" then
+	if content and content ~= "" and content ~= vim.NIL then
 		if format ~= nil then
 			local ok_decode, decoded = pcall(vim.json.decode, content)
 			if not ok_decode then
@@ -164,11 +161,6 @@ function M.extract_fields(parsed, format)
 		end
 	end
 
-	-- Extract token usage if available
-	if parsed.usage and parsed.usage.total_tokens then
-		fields.token_usage = parsed.usage.total_tokens
-	end
-
 	return fields, nil
 end
 
@@ -184,6 +176,136 @@ function M.decode_tool_call_arguments(calls)
 			end
 		end
 	end
+end
+
+-- Streaming HTTP client using vim.uv process
+-- Reads curl output line-by-line for true streaming support
+function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_complete)
+	local tmp = vim.fn.tempname()
+	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
+	if not ok_write then
+		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
+	end
+
+	local function cleanup()
+		pcall(vim.fn.delete, tmp)
+	end
+
+	local job_id = vim.fn.jobstart({
+		"curl",
+		"-s",
+		"-N",
+		"-X", "POST", url,
+		"-H", "Authorization: Bearer " .. api_key,
+		"-H", "Content-Type: application/json",
+		"--data-binary", "@" .. tmp,
+	}, {
+		stdout_buffered = false,
+		stderr_buffered = false,
+		on_stdout = function(_, data)
+			if not data then return end
+			log.debug("received data: " .. vim.inspect(data))
+
+			for _, chunk in ipairs(data) do
+				if chunk ~= "" then
+					on_chunk(chunk)
+				end
+			end
+		end,
+
+		on_stderr = function(_, data)
+			if data then
+				for _, line in ipairs(data) do
+					if line ~= "" then
+						log.err("[API] curl error:", line)
+					end
+				end
+			end
+		end,
+
+		on_exit = function(_, code)
+			cleanup()
+			if code ~= 0 then
+				log.debug("[API] command returned code " .. tostring(code))
+				on_complete("curl returned code " .. tostring(code))
+				return
+			end
+			on_complete(nil)
+		end,
+	})
+
+	if job_id <= 0 then
+		cleanup()
+		on_complete("Failed to start job")
+	end
+end
+
+function M.parse_chunk(chunk)
+	if chunk:sub(1, 6) == "data: " then
+		chunk = chunk:sub(7)
+	end
+
+	local ok, decoded = pcall(vim.json.decode, chunk)
+	if not ok then
+		return nil, "failed to decode JSON"
+	end
+	log.debug("parsed chunk: " .. vim.inspect(decoded))
+
+	local message = decoded.choices[1].delta
+	local fields, err = M.extract_fields(message, nil)
+	if err then
+		return fields, err
+	end
+
+	return fields
+end
+
+function M.update_fields(fields, chunk)
+	if chunk.content then
+		fields.content = fields.content .. chunk.content
+	end
+
+	if chunk.reasoning_details and #chunk.reasoning_details > 0 then
+		fields.reasoning_details[1].text = fields.reasoning_details[1].text ..
+		    chunk.reasoning_details[1].text
+	end
+
+	if chunk.tool_calls then
+		for _, call in ipairs(chunk.tool_calls) do
+			local idx = call.index
+			local fn = call["function"]
+			local saved_call = fields.tool_calls[idx]
+
+			if not saved_call then
+				fields.tool_calls[idx] = call
+			else
+				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
+				fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+				    (fn.arguments or "")
+			end
+		end
+	end
+	return fields
+end
+
+function M.merge_tool_calls(calls)
+	local new_calls = {}
+	for _, call in pairs(calls) do
+		if type(call["function"].arguments) == "string" then
+			local ok_decode, decoded = pcall(vim.json.decode, call["function"].arguments)
+			if ok_decode then
+				call["function"].arguments = decoded
+			else
+				call["function"].arguments = ""
+			end
+		end
+
+		if not call.id then
+			call.id = "call_" .. tostring(vim.uv.hrtime())
+		end
+		table.insert(new_calls, call)
+	end
+	return new_calls
 end
 
 return M
