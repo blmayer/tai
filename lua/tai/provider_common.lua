@@ -137,7 +137,7 @@ function M.extract_fields(message, format)
 	-- Extract reasoning details from response
 	if message.reasoning or message.reasoning_content then
 		local reasoning_text = message.reasoning or message.reasoning_content
-		if reasoning_text and reasoning_text ~= "" then
+		if reasoning_text and reasoning_text ~= "" and reasoning_text ~= vim.NIL then
 			fields.reasoning_details = { { text = reasoning_text } }
 		end
 	end
@@ -241,8 +241,14 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 end
 
 function M.parse_chunk(chunk)
-	if chunk:sub(1, 6) == "data: " then
-		chunk = chunk:sub(7)
+	if chunk:sub(1, 6) ~= "data: " then
+		log.debug("chunk is not data, ignoring: " .. chunk)
+		return {}, nil
+	end
+	chunk = chunk:sub(7)
+
+	if chunk == "[DONE]" then
+		return {}, nil
 	end
 
 	local ok, decoded = pcall(vim.json.decode, chunk)
@@ -266,12 +272,14 @@ function M.update_fields(fields, chunk)
 	end
 
 	if chunk.reasoning_details and #chunk.reasoning_details > 0 then
-		fields.reasoning_details[1].text = fields.reasoning_details[1].text ..
-		    chunk.reasoning_details[1].text
+		local text = chunk.reasoning_details[1].text
+		fields.reasoning_details[1].text = fields.reasoning_details[1].text .. text
 	end
 
 	if chunk.tool_calls then
 		for _, call in ipairs(chunk.tool_calls) do
+			log.debug("[API] updating tool call: " .. vim.inspect(call))
+
 			local idx = call.index
 			local fn = call["function"]
 			local saved_call = fields.tool_calls[idx]
@@ -280,8 +288,12 @@ function M.update_fields(fields, chunk)
 				fields.tool_calls[idx] = call
 			else
 				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
-				fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
-				    (fn.arguments or "")
+				if type(fn.arguments) == "string" then
+					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+					    fn.arguments
+				else
+					fields.tool_calls[idx]["function"].arguments = fn.arguments
+				end
 			end
 		end
 	end

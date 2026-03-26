@@ -1,7 +1,7 @@
 local M = {}
 
 local tools = require("tai.tools")
-local provider_common = require("tai.provider_common")
+local common = require("tai.provider_common")
 local config = require("tai.config")
 local log = require("tai.log")
 local url = "https://openrouter.ai/api/v1/chat/completions"
@@ -32,6 +32,38 @@ function M.clear_history()
 	history = nil
 end
 
+local function build_body(model_config, msgs, format)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
+
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
+
+	local agent_tools = common.build_request_tools("chat_completions")
+
+	local body = {
+		model = model_config.model,
+		messages = common.filter_messages(history),
+	}
+
+	if config.use_tools ~= false and #agent_tools > 0 then
+		body.tools = agent_tools
+	end
+
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
+
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
+
+	return body
+end
+
 function M.request(model_config, msgs, format, callback)
 	for _, msg in ipairs(msgs) do
 		M.add_to_history(msg)
@@ -46,9 +78,9 @@ function M.request(model_config, msgs, format, callback)
 	}
 
 	if config.use_tools ~= false then
-		body.tools = provider_common.build_request_tools("chat_completions")
+		body.tools = common.build_request_tools("chat_completions")
 	end
-	body.messages = provider_common.filter_messages(history)
+	body.messages = common.filter_messages(history)
 
 	if format == "json_object" then
 		body.response_format = { type = "json_object" }
@@ -68,7 +100,7 @@ function M.request(model_config, msgs, format, callback)
 
 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
 
-	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+	common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
 			callback(nil, err)
 			return
@@ -85,12 +117,48 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, msg)
 		end
 
-		local fields, extract_err = provider_common.extract_fields(parsed, format)
+		local fields, extract_err = common.extract_fields(parsed, format)
 		if extract_err then
 			return callback(nil, extract_err)
 		end
 
 		callback(fields, nil)
+	end)
+end
+
+-- Streaming request function
+function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	local body = build_body(model_config, msgs, format)
+	body.stream = true
+
+	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
+	local request_body = vim.json.encode(body)
+
+	local fields = {
+		content = "",
+		tool_calls = {},
+		reasoning_details = { { text = "" } },
+	}
+
+	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+		local chunk_data, err = common.parse_chunk(chunk)
+		if err then
+			on_chunk(chunk_data, err)
+			return
+		end
+
+		-- accumulate
+		fields = common.update_fields(fields, chunk_data)
+
+		on_chunk(chunk_data, nil)
+	end, function(_, err)
+		-- on_complete: flatten tool_calls map to array and decode arguments
+		if err then
+			on_complete(nil, err)
+			return
+		end
+		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+		on_complete(fields, nil)
 	end)
 end
 

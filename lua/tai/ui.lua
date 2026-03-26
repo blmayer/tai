@@ -170,6 +170,8 @@ local function refresh_and_close_folds()
 		pcall(vim.cmd, "silent! normal! zc")
 	end)
 end
+test
+
 
 local function run_tools(tool_calls)
 	local results = {}
@@ -398,10 +400,6 @@ local function process_response(fields)
 			provider.add_to_history(res)
 			return
 		end
-		if is_streaming then
-			M.task_stream(res, process_response)
-			return
-		end
 		M.task(res, process_response)
 	end)
 end
@@ -431,7 +429,7 @@ local function send_input()
 
 		log.debug("got input: " .. input)
 		if config.stream then
-			M.task_stream({ { role = "user", content = input } }, process_response)
+			M.task_stream({ { role = "user", content = input } })
 		else
 			M.task({ { role = "user", content = input } }, process_response)
 		end
@@ -541,9 +539,32 @@ function M.task_stream(msgs)
 
 			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
 			if chunk.reasoning_details and #chunk.reasoning_details > 0 then
-				if think_start then
-					append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
-					think_start = false
+			if think_start then
+				append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
+				think_start = false
+				-- Open the thinking fold for streaming responses
+				vim.schedule(function()
+					if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+						return
+					end
+					vim.api.nvim_win_call(chat_win, function()
+						local bufnr = M.buffer_nr
+						local last_line = vim.api.nvim_buf_line_count(bufnr)
+						-- Search backward for the line containing "{{{ Thinking"
+						for l = last_line, 1, -1 do
+							local line = vim.api.nvim_buf_get_lines(bufnr, l-1, l, false)[1]
+							if line and line:find("{{{ Thinking", 1, true) then
+								local cur_pos = vim.api.nvim_win_get_cursor(chat_win)
+								vim.api.nvim_win_set_cursor(chat_win, { l, 0 })
+								vim.cmd("normal! zx")
+								vim.api.nvim_win_set_cursor(chat_win, cur_pos)
+								break
+							end
+						end
+					end)
+				end)
+
+
 				else
 					append_streaming(chunk.reasoning_details[1].text)
 				end
@@ -562,6 +583,10 @@ function M.task_stream(msgs)
 		end,
 		function(data, err)
 			log.debug("[UI] got message completed: " .. vim.inspect(data))
+			if err then
+				append_streaming("{{{ Received error\n" .. err .. "\n}}}\n")
+				return
+			end
 			local response = { role = "assistant" }
 			for k, v in pairs(data) do
 				response[k] = v
