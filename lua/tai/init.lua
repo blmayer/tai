@@ -6,6 +6,10 @@ local ui = require("tai.ui")
 
 function M.setup(opts)
 	log.set_level(opts.log_level or log.DEBUG)
+
+	if not config.provider then
+		return
+	end
 	ui.init()
 end
 

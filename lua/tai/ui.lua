@@ -3,6 +3,10 @@ local log = require("tai.log")
 local tools = require("tai.tools")
 local config = require("tai.config")
 local agent = require("tai.agent")
+
+if not config.provider then
+	return M
+end
 local provider = require("tai." .. config.provider)
 
 local bufname_prefix = "tai-chat"
@@ -170,8 +174,6 @@ local function refresh_and_close_folds()
 		pcall(vim.cmd, "silent! normal! zc")
 	end)
 end
-test
-
 
 local function run_tools(tool_calls)
 	local results = {}
@@ -376,7 +378,7 @@ local function process_response(fields)
 	if not config.stream then
 		-- Display reasoning details (interleaved thinking) folded
 		-- TODO: check if we can omit [1].text
-		if fields.reasoning_details and #fields.reasoning_details > 0 then
+		if fields.reasoning_details then
 			M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details .. "}}}")
 			vim.schedule(function() refresh_and_close_folds() end)
 		end
@@ -539,39 +541,39 @@ function M.task_stream(msgs)
 
 			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
 			if chunk.reasoning_details and #chunk.reasoning_details > 0 then
-			if think_start then
-				append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
-				think_start = false
-				-- Open the thinking fold for streaming responses
-				vim.schedule(function()
-					if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
-						return
-					end
-					vim.api.nvim_win_call(chat_win, function()
-						local bufnr = M.buffer_nr
-						local last_line = vim.api.nvim_buf_line_count(bufnr)
-						-- Search backward for the line containing "{{{ Thinking"
-						for l = last_line, 1, -1 do
-							local line = vim.api.nvim_buf_get_lines(bufnr, l-1, l, false)[1]
-							if line and line:find("{{{ Thinking", 1, true) then
-								local cur_pos = vim.api.nvim_win_get_cursor(chat_win)
-								vim.api.nvim_win_set_cursor(chat_win, { l, 0 })
-								vim.cmd("normal! zx")
-								vim.api.nvim_win_set_cursor(chat_win, cur_pos)
-								break
-							end
+				if think_start then
+					append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
+					think_start = false
+					-- Open the thinking fold for streaming responses
+					vim.schedule(function()
+						if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+							return
 						end
+						vim.api.nvim_win_call(chat_win, function()
+							local bufnr = M.buffer_nr
+							local last_line = vim.api.nvim_buf_line_count(bufnr)
+							-- Search backward for the line containing "{{{ Thinking"
+							for l = last_line, 1, -1 do
+								local line = vim.api.nvim_buf_get_lines(bufnr, l - 1, l,
+									false)[1]
+								if line and line:find("{{{ Thinking", 1, true) then
+									local cur_pos = vim.api.nvim_win_get_cursor(
+									chat_win)
+									vim.api.nvim_win_set_cursor(chat_win, { l, 0 })
+									vim.cmd("normal! zx")
+									vim.api.nvim_win_set_cursor(chat_win, cur_pos)
+									break
+								end
+							end
+						end)
 					end)
-				end)
-
-
 				else
 					append_streaming(chunk.reasoning_details[1].text)
 				end
 			end
 
 			if chunk.content and chunk.content ~= "" then
-				if content_start then
+				if content_start and not think_start then
 					append_streaming("\n}}}\n")
 					refresh_and_close_folds()
 					content_start = false

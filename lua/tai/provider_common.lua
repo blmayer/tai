@@ -144,7 +144,7 @@ function M.extract_fields(message, format)
 
 	-- Some providers (e.g., MiniMax) return reasoning_details directly
 	if message.reasoning_details and #message.reasoning_details > 0 then
-		fields.reasoning_details = message.reasoning_details
+		fields.reasoning_details = message.reasoning_details[1].text
 	end
 
 	-- Some providers offer a more detailed reasoning response
