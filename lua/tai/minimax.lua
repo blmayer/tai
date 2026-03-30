@@ -22,7 +22,7 @@ function M.add_to_history(message)
 		local args = call["function"].arguments
 		call["function"].arguments = vim.json.encode(args)
 	end
-	if msg.reasoning_details then
+	if msg.reasoning then
 		msg.reasoning_details = { {
 			text = msg.reasoning_details
 		}}

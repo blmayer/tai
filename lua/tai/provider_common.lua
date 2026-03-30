@@ -138,13 +138,13 @@ function M.extract_fields(message, format)
 	if message.reasoning or message.reasoning_content then
 		local reasoning_text = message.reasoning or message.reasoning_content
 		if reasoning_text and reasoning_text ~= "" and reasoning_text ~= vim.NIL then
-			fields.reasoning_details = { { text = reasoning_text } }
+			fields.reasoning = reasoning_text
 		end
 	end
 
 	-- Some providers (e.g., MiniMax) return reasoning_details directly
 	if message.reasoning_details and #message.reasoning_details > 0 then
-		fields.reasoning_details = message.reasoning_details[1].text
+		fields.reasoning = message.reasoning_details[1].text
 	end
 
 	-- Some providers offer a more detailed reasoning response
@@ -255,7 +255,7 @@ function M.parse_chunk(chunk)
 	if not ok then
 		return nil, "failed to decode JSON"
 	end
-	log.debug("parsed chunk: " .. vim.inspect(decoded))
+	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
 
 	local message = decoded.choices[1].delta
 	local fields, err = M.extract_fields(message, nil)
@@ -273,7 +273,7 @@ function M.update_fields(fields, chunk)
 
 	if chunk.reasoning_details and #chunk.reasoning_details > 0 then
 		local text = chunk.reasoning_details[1].text
-		fields.reasoning_details[1].text = fields.reasoning_details[1].text .. text
+		fields.reasoning = fields.reasoning_details[1].text .. text
 	end
 
 	if chunk.tool_calls then
@@ -286,14 +286,16 @@ function M.update_fields(fields, chunk)
 
 			if not saved_call then
 				fields.tool_calls[idx] = call
+				log.debug("[API] created new tool call")
 			else
 				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
-				if type(fn.arguments) == "string" then
-					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
-					    fn.arguments
-				else
+				if type(fn.arguments) == "table" then
 					fields.tool_calls[idx]["function"].arguments = fn.arguments
+				else
+					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+					    tostring(fn.arguments)
 				end
+				log.debug("[API] updated tool call: " .. vim.inspect(fields.tool_calls[idx]))
 			end
 		end
 	end

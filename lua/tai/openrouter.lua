@@ -98,7 +98,7 @@ function M.request(model_config, msgs, format, callback)
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
 
 	common.make_http_call(url, api_key, request_body, function(parsed, err)
 		if err then
@@ -106,7 +106,7 @@ function M.request(model_config, msgs, format, callback)
 			return
 		end
 
-		log.debug("Request response: " .. vim.inspect(parsed))
+		log.debug("[API] request response: " .. vim.inspect(parsed))
 
 		if parsed.error then
 			local error = parsed.error
@@ -131,7 +131,7 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
 	local body = build_body(model_config, msgs, format)
 	body.stream = true
 
-	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
+	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
 	local fields = {

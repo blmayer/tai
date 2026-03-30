@@ -375,19 +375,15 @@ local function process_response(fields)
 		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
 	end
 
-	if not config.stream then
-		-- Display reasoning details (interleaved thinking) folded
-		-- TODO: check if we can omit [1].text
-		if fields.reasoning_details then
-			M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details .. "}}}")
-			vim.schedule(function() refresh_and_close_folds() end)
-		end
+	if fields.reasoning then
+		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning .. "\n}}}\n")
+		vim.schedule(function() refresh_and_close_folds() end)
+	end
 
-		-- For non-streaming responses, append the content to the buffer
-		if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
-			if not config.stream then
-				M.append_to_buffer(fields.content .. "\n")
-			end
+	-- For non-streaming responses, append the content to the buffer
+	if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+		if not config.stream then
+			M.append_to_buffer(fields.content .. "\n")
 		end
 	end
 
@@ -399,7 +395,10 @@ local function process_response(fields)
 		log.debug("[UI] running tools")
 		local res, stop = run_tools(fields.tool_calls)
 		if stop or hard_stop then
-			provider.add_to_history(res)
+			for _, msg in ipairs(res) do
+				provider.add_to_history(msg)
+			end
+			log.debug("[UI] stopped")
 			return
 		end
 		M.task(res, process_response)
@@ -429,7 +428,7 @@ local function send_input()
 			M.append_to_buffer(input .. "\n---\n")
 		end)
 
-		log.debug("got input: " .. input)
+		log.debug("[UI] got user input: " .. input)
 		if config.stream then
 			M.task_stream({ { role = "user", content = input } })
 		else
@@ -516,7 +515,7 @@ function M.task(msgs, callback)
 			end
 			response.content = data.content
 			response.tool_calls = data.tool_calls
-			response.reasoning_details = data.reasoning_details
+			response.reasoning = data.reasoning
 			provider.add_to_history(response)
 			callback(data, false) -- Pass non-streaming flag
 		end
@@ -540,35 +539,12 @@ function M.task_stream(msgs)
 			end
 
 			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
-			if chunk.reasoning_details and #chunk.reasoning_details > 0 then
+			if chunk.reasoning and #chunk.reasoning > 0 then
 				if think_start then
-					append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
+					append_streaming("{{{ Thinking \n" .. chunk.reasoning)
 					think_start = false
-					-- Open the thinking fold for streaming responses
-					vim.schedule(function()
-						if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
-							return
-						end
-						vim.api.nvim_win_call(chat_win, function()
-							local bufnr = M.buffer_nr
-							local last_line = vim.api.nvim_buf_line_count(bufnr)
-							-- Search backward for the line containing "{{{ Thinking"
-							for l = last_line, 1, -1 do
-								local line = vim.api.nvim_buf_get_lines(bufnr, l - 1, l,
-									false)[1]
-								if line and line:find("{{{ Thinking", 1, true) then
-									local cur_pos = vim.api.nvim_win_get_cursor(
-									chat_win)
-									vim.api.nvim_win_set_cursor(chat_win, { l, 0 })
-									vim.cmd("normal! zx")
-									vim.api.nvim_win_set_cursor(chat_win, cur_pos)
-									break
-								end
-							end
-						end)
-					end)
 				else
-					append_streaming(chunk.reasoning_details[1].text)
+					append_streaming(chunk.reasoning)
 				end
 			end
 
@@ -609,7 +585,10 @@ function M.task_stream(msgs)
 			log.debug("[UI] running tools")
 			local res, stop = run_tools(data.tool_calls)
 			if stop or hard_stop then
-				provider.add_to_history(res)
+				for _, msg in ipairs(res) do
+					provider.add_to_history(msg)
+				end
+				log.debug("[UI] stopped")
 				return
 			end
 			M.task_stream(res)
