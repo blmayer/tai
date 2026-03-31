@@ -181,17 +181,16 @@ local function run_tools(tool_calls)
 	local inputs = {}
 
 	for _, call in ipairs(tool_calls or {}) do
-		log.debug("[UI] running tool: " .. vim.inspect(call)
-		)
+		log.debug("[UI] running tool: " .. vim.inspect(call))
 		local name = call["function"].name
-		local args = call["function"].arguments
+		local args = vim.json.decode(call["function"].arguments)
 
 		local res = {
 			role = "tool",
 			name = name,
 			tool_call_id = call.id,
 		}
-		--
+
 		-- Check for hard stop before each tool
 		if hard_stop then
 			goto continue
@@ -534,7 +533,7 @@ function M.task_stream(msgs)
 		nil,
 		function(chunk, err)
 			if err then
-				append_streaming("{{{ Chunk error\n" .. err .. "\n}}}\n")
+				append_streaming("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
 				return
 			end
 

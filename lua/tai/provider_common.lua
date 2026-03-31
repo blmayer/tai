@@ -115,6 +115,10 @@ function M.extract_fields(message, format)
 		return nil, "No message in response"
 	end
 
+	if message.error then
+		fields.error = message.error.message
+	end
+
 	local content = message.content
 	if content and content ~= "" and content ~= vim.NIL then
 		if format ~= nil then
@@ -147,18 +151,8 @@ function M.extract_fields(message, format)
 		fields.reasoning = message.reasoning_details[1].text
 	end
 
-	-- Some providers offer a more detailed reasoning response
 	if message.tool_calls and message.tool_calls ~= vim.NIL then
 		fields.tool_calls = message.tool_calls
-		for _, call in ipairs(fields.tool_calls) do
-			local args = call["function"].arguments
-			if type(args) == "string" then
-				local ok_decode, decoded = pcall(vim.json.decode, args)
-				if ok_decode and decoded then
-					call["function"].arguments = decoded
-				end
-			end
-		end
 	end
 
 	return fields, nil
@@ -241,26 +235,38 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 end
 
 function M.parse_chunk(chunk)
-	if chunk:sub(1, 6) ~= "data: " then
-		log.debug("chunk is not data, ignoring: " .. chunk)
-		return {}, nil
+	local ok, decoded = pcall(vim.json.decode, chunk)
+	if not ok then
+		if chunk:sub(1, 6) ~= "data: " then
+			log.debug("chunk is not data, ignoring: " .. chunk)
+			return {}, nil
+		end
+		chunk = chunk:sub(7)
 	end
-	chunk = chunk:sub(7)
 
 	if chunk == "[DONE]" then
 		return {}, nil
 	end
 
-	local ok, decoded = pcall(vim.json.decode, chunk)
+	-- try again
 	if not ok then
-		return nil, "failed to decode JSON"
+		ok, decoded = pcall(vim.json.decode, chunk)
+		if not ok then
+			return nil, "failed to decode JSON: " .. chunk
+		end
 	end
 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
 
+	if decoded.error then
+		return { error = decoded.error.message }
+	end
 	local message = decoded.choices[1].delta
 	local fields, err = M.extract_fields(message, nil)
 	if err then
 		return fields, err
+	end
+	if decoded.usage and decoded.usage.total_tokens then
+		fields.token_usage = decoded.usage.total_tokens
 	end
 
 	return fields
@@ -271,9 +277,8 @@ function M.update_fields(fields, chunk)
 		fields.content = fields.content .. chunk.content
 	end
 
-	if chunk.reasoning_details and #chunk.reasoning_details > 0 then
-		local text = chunk.reasoning_details[1].text
-		fields.reasoning = fields.reasoning_details[1].text .. text
+	if chunk.reasoning then
+		fields.reasoning = (fields.reasoning or "") .. chunk.reasoning
 	end
 
 	if chunk.tool_calls then
@@ -289,15 +294,15 @@ function M.update_fields(fields, chunk)
 				log.debug("[API] created new tool call")
 			else
 				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
-				if type(fn.arguments) == "table" then
-					fields.tool_calls[idx]["function"].arguments = fn.arguments
-				else
-					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
-					    tostring(fn.arguments)
-				end
+				fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+				    tostring(fn.arguments)
 				log.debug("[API] updated tool call: " .. vim.inspect(fields.tool_calls[idx]))
 			end
 		end
+	end
+
+	if chunk.token_usage then
+		fields.token_usage = (fields.token_usage or 0) + chunk.token_usage
 	end
 	return fields
 end
@@ -305,15 +310,6 @@ end
 function M.merge_tool_calls(calls)
 	local new_calls = {}
 	for _, call in pairs(calls) do
-		if type(call["function"].arguments) == "string" then
-			local ok_decode, decoded = pcall(vim.json.decode, call["function"].arguments)
-			if ok_decode then
-				call["function"].arguments = decoded
-			else
-				call["function"].arguments = ""
-			end
-		end
-
 		if not call.id then
 			call.id = "call_" .. tostring(vim.uv.hrtime())
 		end
