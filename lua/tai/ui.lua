@@ -363,47 +363,6 @@ local function run_tools(tool_calls)
 	return results, stop
 end
 
-local function process_response(fields)
-	log.debug("[UI] processing response")
-	M.open()
-
-	if fields.token_usage then
-		vim.schedule(function() update_token_display(fields.token_usage) end)
-	end
-	if fields.error then
-		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
-	end
-
-	if fields.reasoning then
-		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning .. "\n}}}\n")
-		vim.schedule(function() refresh_and_close_folds() end)
-	end
-
-	-- For non-streaming responses, append the content to the buffer
-	if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
-		if not config.stream then
-			M.append_to_buffer(fields.content .. "\n")
-		end
-	end
-
-	if not fields.tool_calls or #fields.tool_calls == 0 then
-		return
-	end
-
-	vim.schedule(function()
-		log.debug("[UI] running tools")
-		local res, stop = run_tools(fields.tool_calls)
-		if stop or hard_stop then
-			for _, msg in ipairs(res) do
-				provider.add_to_history(msg)
-			end
-			log.debug("[UI] stopped")
-			return
-		end
-		M.task(res, process_response)
-	end)
-end
-
 local function send_input()
 	-- reset hard stop when user sends a message
 	if hard_stop then
@@ -422,16 +381,14 @@ local function send_input()
 			return
 		end
 
-		vim.schedule(function()
-			add_sep()
-			M.append_to_buffer(input .. "\n---\n")
-		end)
+		add_sep()
+		M.append_to_buffer(input .. "\n---\n")
 
 		log.debug("[UI] got user input: " .. input)
 		if config.stream then
 			M.task_stream({ { role = "user", content = input } })
 		else
-			M.task({ { role = "user", content = input } }, process_response)
+			M.task({ { role = "user", content = input } })
 		end
 	end)
 end
@@ -501,22 +458,60 @@ function M.clear()
 	provider.add_to_history({ role = "system", content = agent.system_prompt })
 end
 
-function M.task(msgs, callback)
+function M.task(msgs)
 	log.info("Agent executing task")
 	provider.request(
 		config,
 		msgs,
 		nil,
-		function(data, err)
-			local response = { role = "assistant" }
+		function(fields, err)
 			if err then
-				return callback({ error = err })
+				M.append_to_buffer("{{{ Error\n" .. err .. "\n}}}")
 			end
-			response.content = data.content
-			response.tool_calls = data.tool_calls
-			response.reasoning = data.reasoning
+			local response = { role = "assistant" }
+			for k, v in pairs(fields) do
+				response[k] = v
+			end
 			provider.add_to_history(response)
-			callback(data, false) -- Pass non-streaming flag
+
+			log.debug("[UI] processing response: " .. vim.inspect(fields))
+			M.open()
+
+			if fields.token_usage then
+				update_token_display(fields.token_usage)
+			end
+			if fields.error then
+				M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+			end
+
+			if fields.reasoning then
+				M.append_to_buffer("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
+				refresh_and_close_folds()
+			end
+
+			-- For non-streaming responses, append the content to the buffer
+			if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+				if not config.stream then
+					M.append_to_buffer(fields.content .. "\n")
+				end
+			end
+
+			if not fields.tool_calls or #fields.tool_calls == 0 then
+				return
+			end
+
+			vim.schedule(function()
+				log.debug("[UI] running tools")
+				local res, stop = run_tools(fields.tool_calls)
+				if stop or hard_stop then
+					for _, msg in ipairs(res) do
+						provider.add_to_history(msg)
+					end
+					log.debug("[UI] stopped")
+					return
+				end
+				M.task(res)
+			end)
 		end
 	)
 end

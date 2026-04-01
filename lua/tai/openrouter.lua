@@ -116,12 +116,8 @@ function M.request(model_config, msgs, format, callback)
 			return callback(nil, msg)
 		end
 
-		local fields, extract_err = common.extract_fields(parsed, format)
-		if extract_err then
-			return callback(nil, extract_err)
-		end
-
-		callback(fields, nil)
+		local fields, err = common.parse_response(parsed, format)
+		callback(fields, err)
 	end)
 end
 

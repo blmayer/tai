@@ -65,45 +65,72 @@ function M.build_request_tools(api_format)
 	return request_tools
 end
 
--- Make HTTP request using curl.
--- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
--- callback receives (parsed, error)
-function M.make_http_call(url, api_key, body_json, callback)
+-- Streaming HTTP client using vim.uv process
+-- Reads curl output line-by-line for true streaming support
+function M.make_http_call(url, api_key, body_json, on_complete)
 	local tmp = vim.fn.tempname()
 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
 	if not ok_write then
-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
 	end
+
 	local function cleanup()
 		pcall(vim.fn.delete, tmp)
 	end
-	local ok_system, system_err = pcall(vim.system, {
-		"curl", "-s", "-X", "POST", url,
+
+	local response = ""
+
+	local job_id = vim.fn.jobstart({
+		"curl",
+		"-s",
+		"-X", "POST", url,
 		"-H", "Authorization: Bearer " .. api_key,
 		"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
 		"-H", "X-Title: tai.nvim",
 		"-H", "Content-Type: application/json",
 		"--data-binary", "@" .. tmp,
-	}, { text = true }, function(obj)
+	}, {
+		stdout_buffered = true,
+		on_stdout = function(_, data)
+			if not data then
+				on_complete(nil, nil)
+				return
+			end
+			log.debug("[API] received data: " .. vim.inspect(data))
+				for _, line in ipairs(data) do
+					response = response .. line
+				end
+		end,
+
+		on_stderr = function(_, data)
+			if data then
+				for _, line in ipairs(data) do
+					if line ~= "" then
+						log.error("[API] curl error:" .. line)
+					end
+				end
+			end
+		end,
+
+		on_exit = function(_, code)
+			cleanup()
+			if code ~= 0 then
+				log.debug("[API] command returned code " .. tostring(code))
+				on_complete("curl returned code " .. tostring(code))
+				return
+			end
+			local parsed = vim.json.decode(response)
+			if not parsed then
+				on_complete(nil, "Failed to decode JSON response")
+				return
+			end
+			on_complete(parsed, nil)
+		end,
+	})
+
+	if job_id <= 0 then
 		cleanup()
-		if obj.code ~= 0 then
-			callback(nil, "curl returned code " .. obj.code)
-			return
-		end
-		if not obj.stdout or obj.stdout == "" then
-			callback(nil, "Received empty response")
-			return
-		end
-		local parsed = vim.json.decode(obj.stdout)
-		if not parsed then
-			callback(nil, "Failed to decode JSON response")
-			return
-		end
-		callback(parsed, nil)
-	end)
-	if not ok_system then
-		cleanup()
-		callback(nil, tostring(system_err))
+		on_complete("Failed to start job")
 	end
 end
 
@@ -191,6 +218,8 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 		"-N",
 		"-X", "POST", url,
 		"-H", "Authorization: Bearer " .. api_key,
+		"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
+		"-H", "X-Title: tai.nvim",
 		"-H", "Content-Type: application/json",
 		"--data-binary", "@" .. tmp,
 	}, {
@@ -232,6 +261,22 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 		cleanup()
 		on_complete("Failed to start job")
 	end
+end
+
+function M.parse_response(res, format)
+	if #res.choices == 0 or not res.choices[1].message then
+		return nil, "no choices received"
+	end
+
+	local fields, extract_err = M.extract_fields(res.choices[1].message, format)
+	if extract_err then
+		return nil, extract_err
+	end
+	if res.usage and res.usage.total_tokens then
+		fields.token_usage = res.usage.total_tokens
+	end
+
+	return fields
 end
 
 function M.parse_chunk(chunk)
