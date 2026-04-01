@@ -573,10 +573,12 @@ function M.task_stream(msgs)
 			if not think_start and content_start then
 				append_streaming("\n}}}\n")
 			end
-			if err then
+			if data.token_usage then
+				update_token_display(data.token_usage)
+			end
+			if data.error then
 				M.append_to_buffer("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 			end
-
 			if not data.tool_calls or #data.tool_calls == 0 then
 				return
 			end

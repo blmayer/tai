@@ -200,33 +200,16 @@ function M.read_file(file_path, range)
 		return "[sys] Paths cannot start from root (/). Use relative."
 	end
 
-	-- Check if file is already open in a buffer
-	local buf = nil
-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(b) then
-			local buf_name = vim.api.nvim_buf_get_name(b)
-			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
-				buf = b
-				break
-			end
-		end
+	-- Always read from disk to ensure fresh content (buffers can be stale).
+	log.debug("reading from file")
+	local file = io.open(file_path, "r")
+	if not file then
+		return "[sys] File `" ..
+		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
 	end
-
-	local lines
-	if buf then
-		log.debug("reading from buffer")
-		lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-	else
-		log.debug("reading from file")
-		local file = io.open(file_path, "r")
-		if not file then
-			return "[sys] File `" ..
-			    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
-		end
-		local content = file:read("*all")
-		file:close()
-		lines = vim.split(content, '\n', { plain = true })
-	end
+	local content = file:read("*all")
+	file:close()
+	local lines = vim.split(content, '\n', { plain = true })
 
 	local numbered_lines = {}
 	if not range or range == "" then

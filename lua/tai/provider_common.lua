@@ -273,8 +273,12 @@ function M.parse_chunk(chunk)
 end
 
 function M.update_fields(fields, chunk)
+	if chunk.error then
+		fields.error = chunk.error
+	end
+
 	if chunk.content then
-		fields.content = fields.content .. chunk.content
+		fields.content = (fields.content or "") .. chunk.content
 	end
 
 	if chunk.reasoning then
@@ -282,6 +286,9 @@ function M.update_fields(fields, chunk)
 	end
 
 	if chunk.tool_calls then
+		if not fields.tool_calls then
+			fields.tool_calls = {}
+		end
 		for _, call in ipairs(chunk.tool_calls) do
 			log.debug("[API] updating tool call: " .. vim.inspect(call))
 

@@ -22,7 +22,7 @@ function M.add_to_history(message)
 		return
 	end
 	if msg.reasoning then
-		msg.reasoning_details = {{ text = msg.reasoning }}
+		msg.reasoning_details = { { text = msg.reasoning } }
 	end
 	table.insert(history, msg)
 end
@@ -133,11 +133,7 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
 	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
-	local fields = {
-		content = "",
-		tool_calls = {},
-		reasoning_details = { { text = "" } },
-	}
+	local fields = {}
 
 	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
 		local chunk_data, err = common.parse_chunk(chunk)
@@ -156,7 +152,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
 			on_complete(nil, err)
 			return
 		end
-		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+
+		if fields.tool_calls then
+			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+		end
 		on_complete(fields, nil)
 	end)
 end
