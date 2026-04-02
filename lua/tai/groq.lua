@@ -1,7 +1,10 @@
 local M = {}
+
+local tools = require("tai.tools")
+local common = require("tai.provider_common")
+local config = require("tai.config")
 local log = require("tai.log")
-local json = vim.json
-local uv = vim.uv -- or vim.loop for Neovim < 0.10
+local url = "https://api.groq.com/openai/v1/chat/completions"
 
 local api_key = os.getenv("GROQ_API_KEY")
 if not api_key then
@@ -10,245 +13,138 @@ if not api_key then
 	end)
 end
 
-local groq_url = "https://api.groq.com/openai/v1/chat/completions"
+local history = nil
 
-M.response_format = {
-	type = "json_schema", 
-	json_schema = {
-		name = "tai_response", 
-		description = "The only response format for Tai.",
-		schema = {
-			type = "object",
-			additionalProperties = false,
-			required = {"text"},
-			properties = {
-				text = {
-					type = "string",
-					description = "Textual part of answer, intended for the user",
-				},
-				patch = {
-					type = "string",
-					description = "Patch part of answer, a valid diff text containing the changes requested.",
-				},
-				commands = {
-					type = "array",
-					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
-					items = {
-						type = "string"
-					}
-				},
-				plan = {
-					type = "array",
-					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
-					items = {
-						type = "string"
-					}
-				},
+function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
+	if not history then
+		history = { msg }
+		return
+	end
+	if msg.reasoning then
+		msg.reasoning_details = { { text = msg.reasoning } }
+	end
+	table.insert(history, msg)
+end
 
-			}
-		}
+function M.clear_history()
+	history = nil
+end
+
+local function build_body(model_config, msgs, format)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
+
+	tools.refresh_connected_files(history)
+
+	local agent_tools = common.build_request_tools("chat_completions")
+
+	local body = {
+		model = model_config.model,
+		messages = common.filter_messages(history),
 	}
-}
 
-function M.send_raw_async(model, messages, callback)
-	local req_body = {
-		model = model,
-		messages = messages,
+	if config.use_tools ~= false and #agent_tools > 0 then
+		body.tools = agent_tools
+	end
+
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
+
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
+
+	return body
+end
+
+function M.request(model_config, msgs, format, callback)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
+
+	tools.refresh_connected_files(history)
+
+	local body = {
+		model = model_config.model,
+		messages = {},
 	}
-	local json_data = json.encode(req_body)
 
-	local stdout = uv.new_pipe(false)
-	local stderr = uv.new_pipe(false)
-	local result, err_data = {}, {}
+	if config.use_tools ~= false then
+		body.tools = common.build_request_tools("chat_completions")
+	end
+	body.messages = common.filter_messages(history)
 
-	local handle
-	handle = uv.spawn("curl", {
-		args = {
-			"-s", "-X", "POST",
-			groq_url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", json_data,
-		},
-		stdio = { nil, stdout, stderr },
-	}, function(code, _)
-		stdout:close()
-		stderr:close()
-		handle:close()
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
 
-		vim.schedule(function()
-			if code ~= 0 then
-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
-				callback(nil)
-				return
-			end
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
+	if model_config.think ~= nil then
+		body.reasoning_effort = model_config.think
+	end
 
-			if #err_data > 0 then
-				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
-				callback(nil)
-				return
-			end
+	local request_body = vim.json.encode(body)
 
-			local ok, parsed = pcall(json.decode, table.concat(result))
-			if not ok or not parsed.choices or #parsed.choices == 0 then
-				vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
-				callback(nil)
-				return
-			end
+	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
 
-			callback(parsed.choices[1].message.content)
-		end)
-	end)
+	common.make_http_call(url, api_key, request_body, function(parsed, err)
+		if err then
+			callback(nil, err)
+			return
+		end
 
-	uv.read_start(stdout, function(_, chunk)
-		if chunk then table.insert(result, chunk) end
-	end)
+		log.debug("[API] request response: " .. vim.inspect(parsed))
 
-	uv.read_start(stderr, function(_, chunk)
-		if chunk then table.insert(err_data, chunk) end
+		if parsed.error then
+			return callback(nil, parsed.error.message)
+		end
+
+		local fields, err = common.parse_response(parsed, format)
+		callback(fields, err)
 	end)
 end
 
-function M.send_raw(model, messages)
-	local req_body = {
-		model = model,
-		messages = vim.tbl_map(
-			function(m) return { role = m.role, content = m.content } end,
-			messages
-		)
-	}
+-- Streaming request function
+function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	local body = build_body(model_config, msgs, format)
+	body.stream = true
 
-	local json_data = json.encode(req_body)
-	local stdout = uv.new_pipe(false)
-	local stderr = uv.new_pipe(false)
-	local result = {}
-	local err_data = {}
-	local handle
+	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+	local request_body = vim.json.encode(body)
 
-	handle = uv.spawn("curl", {
-		args = {
-			"-s", "-X", "POST",
-			groq_url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", json_data
-		},
-		stdio = { nil, stdout, stderr },
-	}, function(code, _)
-		stdout:close()
-		stderr:close()
-		handle:close()
-		if code ~= 0 then
-			vim.schedule(function()
-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
-			end)
+	local fields = {}
+
+	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+		local chunk_data, err = common.parse_chunk(chunk)
+		if err then
+			on_chunk(chunk_data, err)
+			return
 		end
-	end)
 
-	uv.read_start(stdout, function(_, chunk)
-		if chunk then
-			table.insert(result, chunk)
+		fields = common.update_fields(fields, chunk_data)
+
+		on_chunk(chunk_data, nil)
+	end, function(_, err)
+		if err then
+			on_complete(nil, err)
+			return
 		end
-	end)
-	vim.wait(60000, function()
-		return not uv.is_active(handle)
-	end, 10)
 
-	local response = table.concat(result)
-	if #err_data > 0 then
-		vim.schedule(function()
-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
-		end)
-		return nil
-	end
-
-	local ok, parsed = pcall(json.decode, response)
-	if not ok then
-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
-		return nil
-	end
-
-	if not parsed.choices or #parsed.choices == 0 then
-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
-		return nil
-	end
-
-	return parsed.choices[1].message.content
-end
-
-function M.send(model, messages)
-	local req_body = {
-		model = model,
-		messages = vim.tbl_map(
-			function(m) return { role = m.role, content = m.content } end,
-			messages
-		),
-		response_format = M.response_format
-	}
-
-	local json_data = json.encode(req_body)
-	vim.notify("[tai] sending to grok" .. json_data, vim.log.levels.INFO)
-	local stdout = uv.new_pipe(false)
-	local stderr = uv.new_pipe(false)
-	local result = {}
-	local err_data = {}
-	local handle
-
-	handle = uv.spawn("curl", {
-		args = {
-			"-s", "-X", "POST",
-			groq_url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", json_data
-		},
-		stdio = { nil, stdout, stderr },
-	}, function(code, _)
-		stdout:close()
-		stderr:close()
-		handle:close()
-		if code ~= 0 then
-			vim.schedule(function()
-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
-			end)
+		if fields.tool_calls then
+			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
 		end
+		on_complete(fields, nil)
 	end)
-
-	uv.read_start(stdout, function(_, chunk)
-		if chunk then
-			table.insert(result, chunk)
-		end
-	end)
-	vim.wait(60000, function()
-		return not uv.is_active(handle)
-	end, 10)
-
-	local response = table.concat(result)
-	if #err_data > 0 then
-		vim.schedule(function()
-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
-		end)
-		return nil
-	end
-
-	local ok, parsed = pcall(json.decode, response)
-	if not ok then
-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
-		return nil
-	end
-
-	if not parsed.choices or #parsed.choices == 0 then
-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
-		return nil
-	end
-
-	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
-	if not ok then
-		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
-		return nil
-	end
-
-	return fields
 end
 
 return M
+

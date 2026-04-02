@@ -17,15 +17,55 @@ end
 local history = nil
 
 function M.add_to_history(message)
+	local msg = vim.deepcopy(message)
 	if not history then
-		history = { message }
+		history = { msg }
 		return
 	end
-	table.insert(history, message)
+	if msg.reasoning then
+		msg.reasoning_details = { { text = msg.reasoning } }
+	end
+	table.insert(history, msg)
 end
 
 function M.clear_history()
 	history = nil
+end
+
+local function build_body(model_config, msgs, format)
+	for _, msg in ipairs(msgs) do
+		M.add_to_history(msg)
+	end
+
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
+
+	local agent_tools = provider_common.build_request_tools("chat_completions")
+
+	local body = {
+		model = model_config.model,
+		messages = provider_common.filter_messages(history),
+	}
+
+	if config.use_tools ~= false and #agent_tools > 0 then
+		body.tools = agent_tools
+	end
+
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
+
+	if model_config.think ~= nil then
+		body.reasoning_effort = model_config.think
+	end
+
+	if model_config.options then
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
+	end
+
+	return body
 end
 
 function M.request(model_config, msgs, format, callback)
@@ -36,79 +76,90 @@ function M.request(model_config, msgs, format, callback)
 	-- Keep connected files up to date in history before sending.
 	tools.refresh_connected_files(history)
 
-	local agent_tools = provider_common.build_request_tools("chat_completions")
 	local body = {
 		model = model_config.model,
-		messages = provider_common.filter_message(history) or {},
-		tools = agent_tools,
+		messages = {},
 	}
-	if format then
-		body.format = format
+
+	if config.use_tools ~= false then
+		body.tools = provider_common.build_request_tools("chat_completions")
 	end
-	if config.use_tools ~= false and #agent_tools > 0 then
-		body.tools = agent_tools
+	body.messages = provider_common.filter_messages(history)
+
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
 	end
+
 	if model_config.think ~= nil then
 		body.reasoning_effort = model_config.think
 	end
+
 	if model_config.options then
-		body.extra_body = model_config.options
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
 	end
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. vim.inspect(request_body))
-	vim.system(
-		{
-			"curl", "-s", "-X", "POST", url,
-			"-H", "Authorization: Bearer " .. api_key,
-			"-H", "Content-Type: application/json",
-			"-d", request_body,
-		}, { text = true }, function(obj)
-			if obj.code ~= 0 then
-				local err_msg = "curl returned code " .. obj.code
-				callback(nil, err_msg)
-				return
-			end
+	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
 
-			if not obj.stdout or obj.stdout == "" then
-				return callback(nil, "Received empty response from Gemini")
-			end
+	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+		if err then
+			callback(nil, err)
+			return
+		end
 
-			local parsed = vim.json.decode(obj.stdout)
-			if not parsed then
-				return callback(nil, "Failed to decode JSON: " .. parsed)
-			end
-			log.debug("Request response: " .. vim.inspect(parsed))
+		log.debug("[API] request response: " .. vim.inspect(parsed))
 
-			if parsed and parsed.error then
-				return callback(nil, "Received error: " .. parsed.error.message)
+		if parsed.error then
+			local error = parsed.error
+			local msg = error.message
+			if error.metadata and error.metadata.raw then
+				msg = msg .. ": " .. error.metadata.raw
 			end
+			return callback(nil, msg)
+		end
 
-			if parsed.error then
-				return callback(nil, parsed.error.message)
-			end
+		local fields, err = provider_common.parse_response(parsed, format)
+		callback(fields, err)
+	end)
+end
 
-			local message = parsed.choices[1].message
-			local content = message.content
-			local fields = {}
-			if content and content ~= "" then
-				log.debug("response content: " .. content)
-				if format ~= nil then
-					log.debug("parsing JSON content")
-					fields.content = vim.json.decode(content)
-					if not fields.content then
-						return callback(nil, "Failed to decode message")
-					end
-				else
-					fields.content = content
-				end
-			end
+-- Streaming request function
+function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	local body = build_body(model_config, msgs, format)
+	body.stream = true
 
-			fields.tool_calls = message.tool_calls
-			provider_common.decode_tool_call_arguments(fields.tool_calls)
-			callback(fields, nil)
-		end)
+	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+	local request_body = vim.json.encode(body)
+
+	local fields = {}
+
+	provider_common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+		local chunk_data, err = provider_common.parse_chunk(chunk)
+		if err then
+			on_chunk(chunk_data, err)
+			return
+		end
+
+		-- accumulate
+		fields = provider_common.update_fields(fields, chunk_data)
+
+		on_chunk(chunk_data, nil)
+	end, function(_, err)
+		-- on_complete: flatten tool_calls map to array and decode arguments
+		if err then
+			on_complete(nil, err)
+			return
+		end
+
+		if fields.tool_calls then
+			fields.tool_calls = provider_common.merge_tool_calls(fields.tool_calls)
+		end
+		on_complete(fields, nil)
+	end)
 end
 
 return M
+

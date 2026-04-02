@@ -9,7 +9,6 @@ local url = 'http://localhost:11434/v1/chat/completions'
 local history = nil
 
 function M.add_to_history(message)
-	log.debug("adding message to history")
 	local msg = vim.deepcopy(message)
 	for _, call in ipairs(msg.tool_calls or {}) do
 		local args = call["function"].arguments
@@ -17,11 +16,9 @@ function M.add_to_history(message)
 	end
 
 	if not history then
-		log.debug("new history")
 		history = { msg }
 		return
 	end
-	log.debug("insert into history")
 	table.insert(history, msg)
 end
 
@@ -52,6 +49,10 @@ local function build_body(model_config, msgs, format)
 		body.response_format = { type = "json_object" }
 	end
 
+	if model_config.think ~= nil then
+		body.reasoning_effort = model_config.think
+	end
+
 	if model_config.options then
 		for k, v in pairs(model_config.options) do
 			body[k] = v
@@ -66,42 +67,51 @@ function M.request(model_config, msgs, format, callback)
 		M.add_to_history(msg)
 	end
 
-	local agent_tools = common.build_agent_tools(model_config)
+	-- Keep connected files up to date in history before sending.
+	tools.refresh_connected_files(history)
+
 	local body = {
 		model = model_config.model,
-		messages = history,
-		stream = false,
-		tools = agent_tools,
+		messages = {},
 	}
-	if format then
-		body.format = format
+
+	if config.use_tools ~= false then
+		body.tools = common.build_request_tools("chat_completions")
 	end
+	body.messages = common.filter_messages(history)
+
+	if format == "json_object" then
+		body.response_format = { type = "json_object" }
+	end
+
 	if model_config.think ~= nil then
-		body.think = model_config.think
+		body.reasoning_effort = model_config.think
 	end
+
 	if model_config.options then
-		body.options = model_config.options
+		for k, v in pairs(model_config.options) do
+			body[k] = v
+		end
 	end
 
 	local request_body = vim.json.encode(body)
 
-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
+
 	common.make_http_call(url, "", request_body, function(parsed, err)
 		if err then
-			return callback(nil, err)
+			callback(nil, err)
+			return
 		end
 
-		log.debug("Request response: " .. vim.inspect(parsed))
+		log.debug("[API] request response: " .. vim.inspect(parsed))
 
 		if parsed.error then
-			return callback(nil, "Received error: " .. parsed.error.message)
+			return callback(nil, parsed.error.message)
 		end
 
-		local fields, extract_err = common.extract_fields(parsed, format)
-		if extract_err then
-			return callback(nil, extract_err)
-		end
-		callback(fields, nil)
+		local fields, err = common.parse_response(parsed, format)
+		callback(fields, err)
 	end)
 end
 
@@ -110,14 +120,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
 	local body = build_body(model_config, msgs, format)
 	body.stream = true
 
-	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
+	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
 	local request_body = vim.json.encode(body)
 
-	local fields = {
-		content = "",
-		tool_calls = {},
-		reasoning_details = { { text = "" } },
-	}
+	local fields = {}
 
 	common.make_streaming_http_call(url, "", request_body, function(chunk)
 		local chunk_data, err = common.parse_chunk(chunk)
@@ -136,7 +142,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
 			on_complete(nil, err)
 			return
 		end
-		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+
+		if fields.tool_calls then
+			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+		end
 		on_complete(fields, nil)
 	end)
 end
