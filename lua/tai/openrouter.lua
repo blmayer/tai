@@ -17,6 +17,10 @@ local history = nil
 
 function M.add_to_history(message)
 	local msg = vim.deepcopy(message)
+	if msg.error then
+		msg.content = msg.error
+		msg.error = nil
+	end
 	if not history then
 		history = { msg }
 		return

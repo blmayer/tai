@@ -267,32 +267,31 @@ local function run_tools(tool_calls)
 				res.content = "[sys] missing file field"
 				goto continue
 			end
-			if not args.changes or type(args.changes) ~= "table" or #args.changes == 0 then
+			if not args.operation then
 				M.append_to_buffer(
-					"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
+					"{{{ Patching file failed: no operation field.\n}}}")
 				res.content =
-				"[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
+				"[sys] invalid operation field (must be one of 'add', 'update' or 'delete') check the tool definition to know the correct fields."
+				goto continue
+			end
+			if not args.range then
+				M.append_to_buffer(
+					"{{{ Patching file failed: no range field.\n}}}")
+				res.content =
+				"[sys] invalid lines range (must be a no-empty string) check the tool definition to know the correct fields."
 				goto continue
 			end
 
 			M.append_to_buffer("{{{ Patching " .. args.file)
-			for _, change in ipairs(args.changes or {}) do
-				if not change.lines or not change.operation then
-					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
-					res.content = "[sys] patch needs lines and operation fields"
-					goto continue
-				end
+			M.append_to_buffer(string.format(
+				"File: %s\nOperation: %s\nRange: %s\nContent:\n%s\n",
+				args.file,
+				args.operation,
+				args.range,
+				args.content
+			))
 
-				M.append_to_buffer(string.format(
-					"File: %s\nOperation: %s\nLines: %s\nContent:\n%s\n",
-					args.file,
-					change.operation,
-					change.lines,
-					change.content
-				))
-			end
-
-			local out = tools.apply_patch(args.name, args.file, args.changes)
+			local out = tools.apply_patch(args.name, args.file, args.operation, args.range, args.content)
 			res.content = out
 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}\n")
 		elseif name == "summarize" then

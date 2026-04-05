@@ -10,11 +10,6 @@ local history = nil
 
 function M.add_to_history(message)
 	local msg = vim.deepcopy(message)
-	for _, call in ipairs(msg.tool_calls or {}) do
-		local args = call["function"].arguments
-		call["function"].arguments = vim.json.encode(args)
-	end
-
 	if not history then
 		history = { msg }
 		return

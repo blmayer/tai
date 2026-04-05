@@ -46,7 +46,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state. After applying a patch you should check the affected files. For best results make the smallest possible changes.",
+			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -58,39 +58,27 @@ M.defs = {
 					file = {
 						type = "string",
 						description =
-						"File name for these changes. Relative to the project's folder (don't start with /)."
+						"File name for this change. Relative to the project's folder (don't start with /)."
 					},
-					changes = {
-						type = "array",
+					operation = {
+						type = "string",
 						description =
-						"List of changes to be made. All changes will use the ORIGINAL state of the file. Create ONLY the smallest necessary patch.",
-						items = {
-							type = "object",
-							properties = {
-								operation = {
-									type = "string",
-									description =
-									"Operation of this change: add will append new content after the line or interval; update will substitute the range with the new content; delete will erase the lines in range.",
-									enum = { "add", "update", "delete" }
-								},
-								lines = {
-									type = "string",
-									description =
-									"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
-								},
-								content = {
-									type = "string",
-									description =
-									"New content (empty for delete operation). NEVER include unchanged lines.",
-								}
-							},
-							additionalProperties = false,
-							required = { "operation", "lines", "content" }
-						}
+						"Operation of this change: add will append the content after the line or interval; update will substitute the whole range with the content; delete will erase the lines in range.",
+						enum = { "add", "update", "delete" }
+					},
+					range = {
+						type = "string",
+						description =
+						"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+					},
+					content = {
+						type = "string",
+						description =
+						"New content (empty for delete operation). NEVER include unchanged lines nor line numbers.",
 					}
 				},
 				additionalProperties = false,
-				required = { "file", "changes", "name" }
+				required = { "file", "operation", "range" }
 			}
 		}
 	},
@@ -309,7 +297,7 @@ function M.exec_command(cmd)
 	return output
 end
 
-function M.apply_patch(name, file, changes)
+function M.apply_patch(name, file, operation, lines, content)
 	-- First, check if the file is already open in a buffer
 	local buf = nil
 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
@@ -351,70 +339,40 @@ function M.apply_patch(name, file, changes)
 		end
 	end
 
-	-- If buffer already exists (visible or not), reuse it directly.
-	-- No need to open a window since we modify via nvim_buf_set_lines API.
+	-- Get current state of buffer
+	local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+	local total_lines = #current_lines
 
-	-- Apply changes to new buffer
-	-- vim.api.nvim_buf_set_lines is 0 indexed
-	local line_shift = 0
-	if type(changes) ~= "table" then
-		return "changes must be an array, got " .. type(changes)
+	-- Parse line range
+	local start, end_line = parse_lines(lines)
+
+	-- Convert negative indexes (relative to end) to 0-based absolute indexes
+	if start < 0 then
+		start = total_lines + start
 	end
-	for _, hunk in ipairs(changes) do
-		local operation = hunk.operation
-		local lines_str = hunk.lines
-		local content = hunk.content
+	if end_line < 0 then
+		end_line = total_lines + end_line
+	end
 
-		-- Get current state of buffer
-		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		local total_lines = #current_lines
+	-- Clamp to valid ranges
+	if start < 0 then start = 0 end
+	if end_line >= total_lines then end_line = total_lines - 1 end
 
-		-- Parse line range
-		local start, end_line = parse_lines(lines_str)
-
-		-- Convert negative indexes (relative to end) to 0-based absolute indexes
-		if start < 0 then
-			start = total_lines + start
+	if operation == "add" then
+		-- Insert content after the specified line
+		local new_lines = vim.split(content, '\n')
+		local insert_pos = end_line + 1
+		if lines == "0" then
+			insert_pos = 0
 		end
-		if end_line < 0 then
-			end_line = total_lines + end_line
-		end
-
-		-- Adjust for line shift from previous changes
-		local adjusted_start = start + line_shift
-		local adjusted_end = end_line + line_shift
-
-		-- Clamp to valid ranges
-		if adjusted_start < 0 then adjusted_start = 0 end
-		if adjusted_end >= total_lines then adjusted_end = total_lines - 1 end
-
-		if operation == "add" then
-			-- Insert content after the specified line
-			local new_lines = vim.split(content, '\n')
-			local insert_pos = adjusted_end + 1
-			if lines_str == "0" then
-				insert_pos = 0
-			end
-			vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
-			-- Track the addition for subsequent changes
-			line_shift = line_shift + #new_lines
-		elseif operation == "update" then
-			-- Replace lines with new content
-			local new_lines = vim.split(content or "", '\n')
-			local old_line_count = adjusted_end - adjusted_start + 1
-			local new_line_count = #new_lines
-			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
-
-			-- Track the net change for subsequent changes
-			line_shift = line_shift + (new_line_count - old_line_count)
-		elseif operation == "delete" then
-			-- Remove lines
-			local old_line_count = adjusted_end - adjusted_start + 1
-			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, {})
-
-			-- Track the deletion for subsequent changes
-			line_shift = line_shift - old_line_count
-		end
+		vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
+	elseif operation == "update" then
+		-- Replace lines with new content
+		local new_lines = vim.split(content or "", '\n')
+		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
+	elseif operation == "delete" then
+		-- Remove lines
+		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
 	end
 
 	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
