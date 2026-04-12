@@ -466,6 +466,8 @@ function M.task(msgs)
 		function(fields, err)
 			if err then
 				M.append_to_buffer("{{{ Error\n" .. err .. "\n}}}")
+				provider.add_to_history({ role = "assistant", content = err })
+				return
 			end
 			local response = { role = "assistant" }
 			for k, v in pairs(fields) do
