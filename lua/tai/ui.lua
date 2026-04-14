@@ -1,4 +1,5 @@
 local M = {}
+local pending_tool_call = nil
 local log = require("tai.log")
 local tools = require("tai.tools")
 local config = require("tai.config")
@@ -558,6 +559,7 @@ function M.task_stream(msgs)
 			log.debug("[UI] got message completed: " .. vim.inspect(data))
 			if err then
 				append_streaming("{{{ Received error\n" .. err .. "\n}}}\n")
+				provider.add_to_history({ role = "assistant", content = err })
 				return
 			end
 			local response = { role = "assistant" }

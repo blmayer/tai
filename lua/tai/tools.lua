@@ -206,7 +206,6 @@ function M.read_file(file_path, range)
 			table.insert(numbered_lines, string.format("%d: %s", i, line))
 		end
 		local numbered_content = table.concat(numbered_lines, "\n")
-		log.debug("read_file output: " .. numbered_content)
 		return numbered_content
 	end
 
@@ -240,7 +239,6 @@ function M.read_file(file_path, range)
 	end
 
 	local numbered_content = table.concat(numbered_lines, "\n")
-	log.debug("read_file output: " .. numbered_content)
 	return numbered_content
 end
 
@@ -292,7 +290,6 @@ function M.exec_command(cmd)
 	if not output then
 		output = "[sys] `" .. cmd .. "` returned null"
 	end
-	log.debug("command output: " .. output)
 
 	return output
 end
