@@ -69,7 +69,6 @@ function M.reload()
 	M.options = data.options
 	M.stream = data.stream or false
 	M.allowed_commands = data.allowed_commands
-	M.options = data.options
 	M.think = data.think or nil
 	M.provider_tools = data.provider_tools
 	M.system_prompt = data.system_prompt or nil

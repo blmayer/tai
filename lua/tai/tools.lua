@@ -33,7 +33,7 @@ M.defs = {
 					range = {
 						type = "string",
 						description =
-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+						"Optional range of lines to read, starts at 1, colon separated. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
 					}
 				},
 				additionalProperties = false,
@@ -69,7 +69,7 @@ M.defs = {
 					range = {
 						type = "string",
 						description =
-						"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
 					},
 					content = {
 						type = "string",
@@ -145,13 +145,13 @@ M.defs = {
 local function parse_lines(range)
 	-- Handle "$" (last line)
 	if range == "$" then
-		return -1, -1
+		return {-1, -1}, true
 	end
 
 	-- Handle negative ranges (e.g., -5:$ for last 5 lines)
 	local start, end_line = range:match("^(-%d+):%$")
 	if start and end_line then
-		return tonumber(start), -1
+		return {tonumber(start), -1}, true
 	end
 
 	-- Handle positive-to-$ ranges (e.g., 10:$ for tenth to last line)
@@ -159,26 +159,26 @@ local function parse_lines(range)
 	if dollar_pos and dollar_pos > 1 then
 		local start_num = tonumber(range:sub(1, dollar_pos - 1))
 		if start_num then
-			return start_num - 1, -1
+			return {start_num - 1, -1}, true
 		end
 	end
 
 	-- Handle range (e.g., "2:5")
 	start, end_line = range:match("^(%d+):(%d+)$")
 	if start and end_line then
-		return tonumber(start) - 1, tonumber(end_line) - 1
+		return {tonumber(start) - 1, tonumber(end_line) - 1}, true
 	end
 
 	-- Handle single line (e.g., "3")
 	local line = tonumber(range)
 	if line == 0 then
-		return 0, 0
+		return {0, 0}, true
 	end
 	if line then
-		return line - 1, line - 1
+		return {line - 1, line - 1}, true
 	end
 
-	return 0, 0
+	return {}, false
 end
 
 function M.read_file(file_path, range)
@@ -210,7 +210,13 @@ function M.read_file(file_path, range)
 	end
 
 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
-	local start0, end0 = parse_lines(range)
+	local int, ok = parse_lines(range)
+	if not ok then
+		return "[sys] Error: Invalid range " .. range
+	end
+
+	local start0 = int[1]
+	local end0 = int[2]
 	local nlines = #lines
 
 	-- Convert negative indexes (relative to end) to 0-based absolute indexes
@@ -231,7 +237,7 @@ function M.read_file(file_path, range)
 	end
 
 	if start1 < 1 or end1 < 0 or start1 > nlines or start1 > end1 then
-		return "[sys] Invalid range: " .. range
+		return "[sys] Error: Invalid range " .. range
 	end
 
 	for i = start1, end1 do
@@ -341,7 +347,13 @@ function M.apply_patch(name, file, operation, lines, content)
 	local total_lines = #current_lines
 
 	-- Parse line range
-	local start, end_line = parse_lines(lines)
+	local int, ok = parse_lines(lines)
+	if not ok then
+		return "[sys] Error: Invalid range " .. lines
+	end
+
+	local start = int[1]
+	local end_line = int[2]
 
 	-- Convert negative indexes (relative to end) to 0-based absolute indexes
 	if start < 0 then
