@@ -8,7 +8,7 @@ local config = require("tai.config")
 function M.filter_message(msg)
 	local new_msg = {}
 	for k, v in pairs(msg) do
-		if k ~= "file_path" and k ~= "file_range" then
+		if k ~= "file_path" and k ~= "file_range" and k ~= "token_usage" then
 			new_msg[k] = v
 		end
 	end
@@ -134,7 +134,7 @@ end
 
 -- Extract fields (content, tool_calls) from a standard OpenAI-style response
 -- format is the requested format (e.g., "json_object")
-function M.extract_fields(message, format)
+function M.extract_fields(message)
 	local fields = {}
 	if not message then
 		return nil, "No message in response"
@@ -145,19 +145,8 @@ function M.extract_fields(message, format)
 	end
 
 	local content = message.content
-	if content and content ~= "" and content ~= vim.NIL then
-		if format ~= nil then
-			local ok_decode, decoded = pcall(vim.json.decode, content)
-			if not ok_decode then
-				return nil, "Failed to decode message content as JSON: " .. tostring(decoded)
-			end
-			if not decoded then
-				return nil, "Failed to decode message content as JSON"
-			end
-			fields.content = decoded
-		else
-			fields.content = content
-		end
+	if content and content ~= vim.NIL then
+		fields.content = content
 	else
 		-- Some providers fail if you send them a message without content
 		fields.content = ""
@@ -261,12 +250,12 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 	end
 end
 
-function M.parse_response(res, format)
+function M.parse_response(res)
 	if #res.choices == 0 or not res.choices[1].message then
 		return nil, "no choices received"
 	end
 
-	local fields, extract_err = M.extract_fields(res.choices[1].message, format)
+	local fields, extract_err = M.extract_fields(res.choices[1].message)
 	if extract_err then
 		return nil, extract_err
 	end
@@ -304,7 +293,7 @@ function M.parse_chunk(chunk)
 		return { error = decoded.error.message }
 	end
 	local message = decoded.choices[1].delta
-	local fields, err = M.extract_fields(message, nil)
+	local fields, err = M.extract_fields(message)
 	if err then
 		return fields, err
 	end

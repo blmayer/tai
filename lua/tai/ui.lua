@@ -126,7 +126,6 @@ function M.update_chat_name()
 	end
 end
 
-
 function M.focus_input()
 	vim.schedule(function()
 		vim.api.nvim_set_current_win(input_win)
@@ -141,7 +140,7 @@ local function scroll_down()
 		end
 		local original_win = vim.api.nvim_get_current_win()
 		vim.api.nvim_set_current_win(chat_win)
-		
+
 		-- Check if input window exists and get its height
 		local scroll_cmd = "normal! zz"
 		if input_win and vim.api.nvim_win_is_valid(input_win) then
@@ -151,7 +150,7 @@ local function scroll_down()
 				scroll_cmd = "normal! z-"
 			end
 		end
-		
+
 		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
 		vim.cmd(scroll_cmd)
 		vim.api.nvim_set_current_win(original_win)
@@ -195,7 +194,7 @@ local function run_tools(tool_calls)
 			role = "tool",
 			name = name,
 			tool_call_id = call.id,
-               }
+		}
 
 		if hard_stop then
 			goto continue
@@ -211,9 +210,9 @@ local function run_tools(tool_calls)
 				goto continue
 			else
 				local input = vim.fn.confirm(
-						"Run `" .. args.command .. "`?",
-						"&Y\n&n\n&s (stop)",
-						1
+					"Run `" .. args.command .. "`?",
+					"&Y\n&n\n&s (stop)",
+					1
 				)
 				if input == 1 then
 					log.debug("Confirmed")
@@ -226,7 +225,8 @@ local function run_tools(tool_calls)
 					local comment = vim.fn.input("Comment (optional): ")
 					M.append("{{{ Declined " .. args.command .. "\n")
 					if comment and comment ~= "" then
-						res.content = "[sys] User declined running this command. Comment: " .. comment
+						res.content = "[sys] User declined running this command. Comment: " ..
+						comment
 						M.append("Comment: " .. comment)
 					else
 						res.content = "[sys] User declined running this command"
@@ -245,21 +245,21 @@ local function run_tools(tool_calls)
 			end
 			M.append("\n}}}\n")
 		elseif name == "track_file" then
-                       if not args.file then
-                               M.append("{{{ Attaching file failed: no file field.\n}}}")
-                               res.content = "[sys] missing file field"
-                               goto continue
-                       end
-                       if vim.fn.filereadable(args.file) ~= 1 then
+			if not args.file then
+				M.append("{{{ Attaching file failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
+				goto continue
+			end
+			if vim.fn.filereadable(args.file) ~= 1 then
 				M.append("{{{ Attaching " .. args.file .. "\n")
-                               res.content = "[sys] file does not exist or is not readable"
-                               goto continue
-                       end
+				res.content = "[sys] file does not exist or is not readable"
+				goto continue
+			end
 
-                       M.append("{{{ Attaching " .. args.file .. "\n")
-                       res.content = tools.read_file(args.file, args.range)
-				res.file_range = args.range
-				M.append(res.content .. "\n}}}\n")
+			M.append("{{{ Attaching " .. args.file .. "\n")
+			res.content = tools.read_file(args.file, args.range)
+			res.file_range = args.range
+			M.append(res.content .. "\n}}}\n")
 		elseif name == "patch" then
 			if not args.file then
 				M.append("{{{ Patching file failed: no file field.\n}}}")
@@ -300,9 +300,9 @@ local function run_tools(tool_calls)
 			-- TODO: improve getting last message
 			res.content = "[sys] coder has started, its response will be sent later"
 			stop = true
-			coder_history = { 
+			coder_history = {
 				{ role = "system", content = agent.coder_system_prompt },
-				{ role = "user", content = args.prompt } 
+				{ role = "user",   content = args.prompt }
 			}
 
 			add_sep("___ CODER AGENT ")
@@ -465,7 +465,6 @@ function M.task()
 		provider.request_stream(
 			planner_config,
 			planner_history,
-			nil,
 			function(chunk, err)
 				if err then
 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
@@ -536,7 +535,6 @@ function M.task()
 		provider.request(
 			planner_config,
 			planner_history,
-			nil,
 			function(fields, err)
 				if err then
 					M.append("{{{ Error\n" .. err .. "\n}}}")
@@ -600,7 +598,6 @@ function M.code()
 		provider.request_stream(
 			coder_config,
 			coder_history,
-			nil,
 			function(chunk, err)
 				if err then
 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
@@ -679,7 +676,6 @@ function M.code()
 		provider.request(
 			coder_config,
 			coder_history,
-			nil,
 			function(fields, err)
 				if err then
 					M.append("{{{ Error\n" .. err .. "\n}}}")

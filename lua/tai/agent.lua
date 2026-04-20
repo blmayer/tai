@@ -90,9 +90,10 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - If tests are avaliable run the necessary ones, be clever to not take too long.
 - When you finish all tasks tell which files and lines you changed, what you
   changed in the functions, be detailed.
-- Your last output is sent to the software architect so please include your
-  failures, things that need improvement, and your difficulties so it can 
-  re-evaluate the problem if needed. 
+- Your job is considered finished when you don't send any tool calls, then the
+  last output is sent to the software architect.
+- When you're done please include your failures, things that need improvement,
+  and your difficulties so it can re-evaluate the problem if needed.
 
 ### Patch Creation
 
