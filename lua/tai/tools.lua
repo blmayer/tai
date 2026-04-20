@@ -3,20 +3,8 @@ local M = {}
 local log = require('tai.log')
 local config = require("tai.config")
 
-M.summary_msg = {
-	role = "user",
-	content = [[
-Summarize all our prompts so far, don't include any file content. Follow this:
-- Retain any important info about the project, file structure etc
-- Make a brief summary of the chat.
-- if there is an ongoing operation also include:
-  - important file content.
-  - the task definition, progress and the next steps.
-]]
-}
-
 M.defs = {
-	{
+	track_file = {
 		type = "function",
 		["function"] = {
 			name = "track_file",
@@ -41,7 +29,7 @@ M.defs = {
 			}
 		}
 	},
-	{
+	patch = {
 		type = "function",
 		["function"] = {
 			name = "patch",
@@ -63,13 +51,13 @@ M.defs = {
 					operation = {
 						type = "string",
 						description =
-						"Operation of this change: add will append the content after the line or interval; update will substitute the whole range with the content; delete will erase the lines in range.",
+						"Operation of this change: add will insert the content after the line in 'range' parameter; update will substitute the range with the content; delete will erase the lines in range.",
 						enum = { "add", "update", "delete" }
 					},
 					range = {
 						type = "string",
 						description =
-						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add). For 'add' operation only a single line is valid.",
 					},
 					content = {
 						type = "string",
@@ -82,7 +70,7 @@ M.defs = {
 			}
 		}
 	},
-	{
+	shell = {
 		type = "function",
 		["function"] = {
 			name = "shell",
@@ -102,20 +90,26 @@ M.defs = {
 			}
 		}
 	},
-	{
+	coder_agent = {
 		type = "function",
 		["function"] = {
-			name = "summarize",
+			name = "coder_agent",
 			description =
-			"Summarizes the chat history to reduce context size. This should be used when the conversation is getting too long and the context is becoming too large. Calling this function will replace the history.",
+			"This tool calls the coder agent to start working on the tasks sent. It will return a summary of the actions taken during the course of the implementation.",
 			parameters = {
 				type = "object",
-				properties = vim.empty_dict(),
-				additionalProperties = false
+				properties = {
+					prompt = {
+						type = "string",
+						description = "Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
+					}
+				},
+				additionalProperties = false,
+				required = { "prompt" }
 			}
 		}
 	},
-	{
+	send_image = {
 		type = "function",
 		["function"] = {
 			name = "send_image",

@@ -26,7 +26,7 @@ end
 
 -- Build tools for request, including provider tools
 -- api_format: "responses" for OpenAI Responses API, "chat_completions" for Chat Completions API
-function M.build_request_tools(api_format)
+function M.build_request_tools(api_format, tool_list)
 	local request_tools = {}
 
 	-- Add local tools based on API format
@@ -43,16 +43,14 @@ function M.build_request_tools(api_format)
 			return t
 		end
 
-		request_tools = {
-			to_responses_tool(tools.defs["read_file"]),
-			to_responses_tool(tools.defs["shell"]),
-			to_responses_tool(tools.defs["patch"]),
-			to_responses_tool(tools.defs["summarize"]),
-			to_responses_tool(tools.defs["send_image"]),
-		}
+		for _, tool in ipairs(tool_list) do
+			table.insert(request_tools, to_responses_tool(tools.defs[tool]))
+		end
 	else
 		-- Chat Completions API: use standard tool format
-		request_tools = vim.deepcopy(tools.defs)
+		for _, tool in ipairs(tool_list) do
+			table.insert(request_tools, tools.defs[tool])
+		end
 	end
 
 	-- Add provider-side tools (e.g., web_search)

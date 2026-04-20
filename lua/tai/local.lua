@@ -6,34 +6,15 @@ local tools = require("tai.tools")
 local config = require("tai.config")
 local url = 'http://localhost:11434/v1/chat/completions'
 
-local history = nil
-
-function M.add_to_history(message)
-	local msg = vim.deepcopy(message)
-	if not history then
-		history = { msg }
-		return
-	end
-	table.insert(history, msg)
-end
-
-function M.clear_history()
-	history = nil
-end
-
 local function build_body(model_config, msgs, format)
-	for _, msg in ipairs(msgs) do
-		M.add_to_history(msg)
-	end
-
 	-- Keep connected files up to date in history before sending.
-	tools.refresh_connected_files(history)
+	tools.refresh_connected_files(msgs)
 
-	local agent_tools = common.build_request_tools("chat_completions")
+	local agent_tools = common.build_request_tools("chat_completions", model_config.tools)
 
 	local body = {
 		model = model_config.model,
-		messages = common.filter_messages(history),
+		messages = common.filter_messages(msgs),
 	}
 
 	if config.use_tools ~= false and #agent_tools > 0 then
@@ -58,12 +39,8 @@ local function build_body(model_config, msgs, format)
 end
 
 function M.request(model_config, msgs, format, callback)
-	for _, msg in ipairs(msgs) do
-		M.add_to_history(msg)
-	end
-
 	-- Keep connected files up to date in history before sending.
-	tools.refresh_connected_files(history)
+	tools.refresh_connected_files(msgs)
 
 	local body = {
 		model = model_config.model,
@@ -71,9 +48,9 @@ function M.request(model_config, msgs, format, callback)
 	}
 
 	if config.use_tools ~= false then
-		body.tools = common.build_request_tools("chat_completions")
+		body.tools = common.build_request_tools("chat_completions", model_config.tools)
 	end
-	body.messages = common.filter_messages(history)
+	body.messages = common.filter_messages(msgs)
 
 	if format == "json_object" then
 		body.response_format = { type = "json_object" }
@@ -112,6 +89,8 @@ end
 
 -- Streaming request function
 function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+	log.debug("[PROV] stream request " .. vim.inspect(model_config))
+
 	local body = build_body(model_config, msgs, format)
 	body.stream = true
 
