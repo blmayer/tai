@@ -242,7 +242,6 @@ local function run_tools(tool_calls)
                        end
                        if vim.fn.filereadable(args.file) ~= 1 then
 				M.append("{{{ Attaching " .. args.file .. "\n")
-				args.file .. "\n}}}\n")
                                res.content = "[sys] file does not exist or is not readable"
                                goto continue
                        end
