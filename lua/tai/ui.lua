@@ -141,8 +141,19 @@ local function scroll_down()
 		end
 		local original_win = vim.api.nvim_get_current_win()
 		vim.api.nvim_set_current_win(chat_win)
+		
+		-- Check if input window exists and get its height
+		local scroll_cmd = "normal! zz"
+		if input_win and vim.api.nvim_win_is_valid(input_win) then
+			local input_height = vim.api.nvim_win_get_height(input_win)
+			if input_height > 0 then
+				-- Use z- command to position last line at bottom, accounting for input window space
+				scroll_cmd = "normal! z-"
+			end
+		end
+		
 		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
-		vim.cmd("normal! zt")
+		vim.cmd(scroll_cmd)
 		vim.api.nvim_set_current_win(original_win)
 	end)
 end
@@ -155,7 +166,6 @@ local function add_sep(title)
 	end
 	M.append("\n" .. result .. "\n")
 end
-
 local function refresh_and_close_folds()
 	if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
 		return
@@ -641,7 +651,7 @@ function M.code()
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 				end
 				if not data.tool_calls or #data.tool_calls == 0 then
-					log.debug("coder finished")
+					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
 					table.insert(
 						planner_history,
@@ -703,7 +713,7 @@ function M.code()
 				end
 
 				if not fields.tool_calls or #fields.tool_calls == 0 then
-					log.debug("coder finished")
+					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
 					table.insert(
 						planner_history,

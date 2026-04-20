@@ -51,12 +51,13 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
      needed go to 6.
   3. Show the plan and request authorization and in positive case call the
      `coder_agent` tool with the detailed list to start the implementation.
-  4. Verify if the solution implemented works and satisfies the user's request.
-  5. If it does show a summary of what changed and how the solution works. If
-     it doesn't generate a new plan based on the current state, with the fixes
-     needed and call the `coder_agent` tool with the new plan.
-  6. When the task is finished get the response from the coder agent (if any)
-     and summarize it to the user.
+  4. When the coder finishes the task get the response from the coder agent
+     (if any) and do a decent code review of the changes: consider coding best
+     practices, check for syntax errors, failing tests (if any), verify if the
+     solution implemented works and satisfies the user's request.
+  5. If it passes go to 6. Else generate a new plan based on the current state,
+     with the fixes needed and call the `coder_agent` tool with the new plan.
+  6. Write a summary of what changed and how the solution works to the user.
 - Each call to the coder agent starts with a clean context, so if you want the
   agent to consider past interactions include the content in the prompt.
 
@@ -82,7 +83,11 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - Systematicaly implement each item of the task requested.
 - Avoid changing anything not extrictly asked for.
 - ALWAYS use line ranges if given to you instead of reading the whole file.
+- Respect the existing code style, including tabs vs spaces, identation etc.
 - Call the `patch` tool with the proper arguments to actualy write the changes.
+- Check if your changes are correct by reading the affected parts, building the
+  project or checking linter etc.
+- If tests are avaliable run the necessary ones, be clever to not take too long.
 - When you finish all tasks tell which files and lines you changed, what you
   changed in the functions, be detailed.
 - Your last output is sent to the software architect so please include your
@@ -102,8 +107,6 @@ to ensure patches are correct and minimal:
   file's current state by calling the `track_file` or `shell` tools. Beware that
   a patch is affected by previous ones, so account for line number changes and
   adjust the numbers.
-- **Respect existing style:** Follow the existing coding style, indentation,
-  and naming conventions of the file.
 - **Valid path verification:** Ensure needed folders exist before creating a
   new file.
 
