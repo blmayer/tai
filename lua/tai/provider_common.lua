@@ -266,36 +266,40 @@ function M.parse_response(res)
 	return fields
 end
 
+local temp_data = ""
+
 function M.parse_chunk(chunk)
-	local ok, decoded = pcall(vim.json.decode, chunk)
-	if not ok then
-		if chunk:sub(1, 6) ~= "data: " then
-			log.debug("chunk is not data, ignoring: " .. chunk)
-			return {}, nil
-		end
+	if chunk:sub(1, 6) == "data: " then
 		chunk = chunk:sub(7)
 	end
-
 	if chunk == "[DONE]" then
 		return {}, nil
 	end
 
-	-- try again
+	local ok, decoded = pcall(vim.json.decode, chunk)
 	if not ok then
-		ok, decoded = pcall(vim.json.decode, chunk)
-		if not ok then
-			return nil, "failed to decode JSON: " .. chunk
-		end
+		log.debug("chunk is not valid JSON trying with temp_data")
+		temp_data = temp_data .. chunk
+		ok, decoded = pcall(vim.json.decode, temp_data)
 	end
+	if ok then
+		temp_data = ""
+	end
+
+	-- try again
 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
 
 	if decoded.error then
 		return { error = decoded.error.message }
 	end
-	local message = decoded.choices[1].delta
-	local fields, err = M.extract_fields(message)
-	if err then
-		return fields, err
+
+	local fields = {}
+	if decoded.choices and #decoded.choices > 0 then
+		local message = decoded.choices[1].delta
+		fields, err = M.extract_fields(message)
+		if err then
+			return fields, err
+		end
 	end
 	if decoded.usage and decoded.usage.total_tokens then
 		fields.token_usage = decoded.usage.total_tokens

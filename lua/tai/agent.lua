@@ -52,9 +52,9 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
   3. Show the plan and request authorization and in positive case call the
      `coder_agent` tool with the detailed list to start the implementation.
   4. When the coder finishes the task get the response from the coder agent
-     (if any) and do a decent code review of the changes: consider coding best
-     practices, check for syntax errors, failing tests (if any), verify if the
-     solution implemented works and satisfies the user's request.
+     (if any) and do a decent code review of the affected files: consider
+     coding best practices, check for syntax errors, failing tests (if any),
+     verify if the solution implemented works and satisfies the user's request.
   5. If it passes go to 6. Else generate a new plan based on the current state,
      with the fixes needed and call the `coder_agent` tool with the new plan.
   6. Write a summary of what changed and how the solution works to the user.

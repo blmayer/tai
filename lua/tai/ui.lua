@@ -8,13 +8,14 @@ local agent = require("tai.agent")
 if not config.provider then
 	return M
 end
-local provider = require("tai." .. config.provider)
-
-local bufname_prefix = "tai-chat"
-local input_bufname = "tai-chat-input"
+-- Use the new providers factory to get the provider module
+local providers_factory = require("tai.providers")
+local provider = providers_factory.get_provider(config.provider)
 
 local chat_win
 local input_win
+local bufname_prefix = "tai-chat"
+local input_bufname = "tai-chat-input"
 
 local planner_history = { { role = "system", content = agent.planner_system_prompt } }
 local coder_history = { { role = "system", content = agent.coder_system_prompt } }
@@ -226,7 +227,7 @@ local function run_tools(tool_calls)
 					M.append("{{{ Declined " .. args.command .. "\n")
 					if comment and comment ~= "" then
 						res.content = "[sys] User declined running this command. Comment: " ..
-						comment
+						    comment
 						M.append("Comment: " .. comment)
 					else
 						res.content = "[sys] User declined running this command"
@@ -251,7 +252,7 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 			if vim.fn.filereadable(args.file) ~= 1 then
-				M.append("{{{ Attaching " .. args.file .. "\n")
+				M.append("{{{ Attaching " .. args.file .. " failed\nFile not readable.}}}\n")
 				res.content = "[sys] file does not exist or is not readable"
 				goto continue
 			end
