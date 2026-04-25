@@ -22,6 +22,7 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
 
 local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
+local coder_call = {}
 planner_config.tools = { "track_file", "shell", "send_image", "coder_agent" }
 coder_config.tools = { "track_file", "shell", "send_image", "patch" }
 
@@ -206,9 +207,8 @@ local function run_tools(tool_calls)
 				log.debug("Executing allowed command: " .. args.command)
 				M.append("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
-				M.append((out or "") .. "\n}}}")
+				M.append(out or "")
 				res.content = out
-				goto continue
 			else
 				local input = vim.fn.confirm(
 					"Run `" .. args.command .. "`?",
@@ -296,18 +296,18 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
-			M.append("{{{ Calling coder agent.\nPrompt:\n" .. args.prompt .. "\n}}}\n")
+			M.append("{{{ Calling coder agent\nPrompt:\n" .. args.prompt .. "\n}}}\n")
+			add_sep("___ CODER AGENT ")
 
-			-- TODO: improve getting last message
-			res.content = "[sys] coder has started, its response will be sent later"
 			stop = true
+			coder_call = res
 			coder_history = {
 				{ role = "system", content = agent.coder_system_prompt },
 				{ role = "user",   content = args.prompt }
 			}
 
-			add_sep("___ CODER AGENT ")
 			M.code()
+			goto next
 			-- res.content = coder_history[-1].content
 		elseif name == "send_image" then
 			if not args.file then
@@ -346,10 +346,14 @@ local function run_tools(tool_calls)
 			M.append("{{{ Invalid tool name\n}}}\n")
 		end
 
+		-- add response to history
 		::continue::
+
 		-- table.remove(pending_tool_calls, 1)
 		refresh_and_close_folds()
 		table.insert(results, res)
+
+		::next::
 	end
 
 	-- Second pass is needed for image inputs
@@ -651,10 +655,8 @@ function M.code()
 				if not data.tool_calls or #data.tool_calls == 0 then
 					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
-					table.insert(
-						planner_history,
-						{ role = "user", content = coder_history[#coder_history].content }
-					)
+					coder_call.content = coder_history[#coder_history].content
+					table.insert(planner_history, coder_call)
 					add_sep("___ PLANNER AGENT ")
 					M.task()
 					return

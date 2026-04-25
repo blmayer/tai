@@ -60,8 +60,13 @@ local providers_config = {
 	},
 	-- Ollama/local provider
 	ollama = {
-		url = function() return config.options.ollama_url or 'http://localhost:11434/v1/chat/completions' end,
-		api_key_env = nil,
+		url = "http://localhost:11434/v1/chat/completions",
+		api_key_env = "",
+		api_format = "chat_completions",
+	},
+	llama_cpp = {
+		url = "http://localhost:8080/v1/chat/completions",
+		api_key_env = "",
 		api_format = "chat_completions",
 	},
 }
@@ -529,15 +534,7 @@ local function create_provider_module(provider_name)
 		end
 	else
 		-- Standard cloud provider logic
-		local api_key = os.getenv(provider_config.api_key_env)
-		if not api_key then
-			vim.schedule(function()
-				vim.notify("[tai] ❌ Missing " .. provider_config.api_key_env .. " environment variable.",
-					vim.log.levels.ERROR)
-			end)
-		end
-
-		-- Non-streaming request
+		local api_key = os.getenv(provider_config.api_key_env) or ""
 		function M_module.request(model_config, msgs, callback)
 			tools.refresh_connected_files(msgs)
 
@@ -564,12 +561,6 @@ local function create_provider_module(provider_name)
 			local request_body = vim.json.encode(body)
 
 			log.debug("[API] requesting " .. provider_config.url .. " with " .. vim.inspect(body))
-
-			if not api_key then
-				return callback(nil,
-					"Missing API key environment variable: " .. provider_config.api_key_env)
-			end
-
 			common.make_http_call(provider_config.url, api_key, request_body, function(parsed, err)
 				if err then
 					callback(nil, err)
@@ -596,18 +587,6 @@ local function create_provider_module(provider_name)
 			local request_body = vim.json.encode(body)
 
 			local fields = {}
-
-			local api_key = os.getenv(provider_config.api_key_env)
-			if not api_key then
-				vim.schedule(function()
-					vim.notify(
-						"[tai] ❌ Missing " ..
-						provider_config.api_key_env .. " environment variable.",
-						vim.log.levels.ERROR)
-				end)
-				on_complete(nil, "Missing API key environment variable: " .. provider_config.api_key_env)
-				return
-			end
 
 			common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
 				local chunk_data, err = common.parse_chunk(chunk)

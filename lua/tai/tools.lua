@@ -9,7 +9,7 @@ M.defs = {
 		["function"] = {
 			name = "track_file",
 			description =
-			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made.",
+			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made. Use this instead of cat.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -82,7 +82,7 @@ M.defs = {
 					command = {
 						type = "string",
 						description =
-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc."
+						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc. 2>&1 is added to the end of the command."
 					}
 				},
 				additionalProperties = false,
@@ -355,6 +355,9 @@ function M.apply_patch(name, file, operation, lines, content)
 	end
 	if end_line < 0 then
 		end_line = total_lines + end_line
+	end
+	if start > 0 and end_line > 0 and start > end_line then
+		return "[sys] Error: Invalid range: start is bigger than end"
 	end
 
 	-- Clamp to valid ranges
