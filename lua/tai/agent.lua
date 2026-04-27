@@ -51,8 +51,9 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
      like a dependency graph. Be file/class/function oriented. You can also give
      any other information that can help the agent to correcty implement the
      task. If changes are not needed go to 6.
-  3. Show the plan and REQUEST AUTHORIZATION and in positive case call the
-     `coder_agent` tool with the detailed list to start the implementation.
+  3. Show the plan and REQUEST AUTHORIZATION.
+     - In positive case call the `coder_agent` tool with the detailed list to
+     start the implementation.
   4. When the coder finishes the task you MUST do a code review of the affected
      files, including:
      - Consider coding best practices, check for syntax errors, failing tests
