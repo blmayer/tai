@@ -185,7 +185,6 @@ local function run_tools(tool_calls)
 	-- pending_tool_calls = tool_calls
 	local results = {}
 	local stop = false
-	local inputs = {}
 
 	for _, call in ipairs(tool_calls or {}) do
 		log.debug("[UI] running tool: " .. vim.inspect(call))
@@ -308,7 +307,6 @@ local function run_tools(tool_calls)
 
 			M.code()
 			goto next
-			-- res.content = coder_history[-1].content
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Addind image failed: no file field.\n}}}")
@@ -325,22 +323,18 @@ local function run_tools(tool_calls)
 			res.content = "[sys] Image " .. args.file .. " added."
 			M.append("{{{ Adding image " .. args.file .. "\n}}}")
 
+			local content = { }
 			if args.prompt then
-				table.insert(inputs, {
-					role = "user",
-					content = {
-						type = "text",
-						text = args.prompt
-					}
+				table.insert(content, {
+					type = "text",
+					text = args.prompt
 				})
 			end
-			table.insert(inputs, {
-				role = "user",
-				content = {
-					type = "image_url",
-					image_url = { url = image_url }
-				}
+			table.insert(content, {
+				type = "image_url",
+				image_url = { url = image_url }
 			})
+			res.content = content
 		else
 			res.content = "[sys] Invalid tool name: " .. (name or "")
 			M.append("{{{ Invalid tool name\n}}}\n")
@@ -356,12 +350,6 @@ local function run_tools(tool_calls)
 		::next::
 	end
 
-	-- Second pass is needed for image inputs
-	if #inputs > 0 then
-		for _, i in ipairs(inputs) do
-			table.insert(results, i)
-		end
-	end
 	return results, stop
 end
 

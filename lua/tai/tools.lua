@@ -175,11 +175,38 @@ local function parse_lines(range)
 	return {}, false
 end
 
+local function is_binary_file(file_path)
+	local file = io.open(file_path, "rb")
+	if not file then return false end
+
+	local content = file:read(8192) -- Read first 8KB
+	file:close()
+
+	-- Check for null bytes (strong indicator of binary)
+	if not content then
+		return false
+	end
+
+	for i = 1, #content do
+		local byte = content:byte(i)
+		if (byte < 9) then
+			return true
+		end
+	end
+
+	return false
+end
+
 function M.read_file(file_path, range)
 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
 
 	if file_path:sub(1, 1) == "/" then
 		return "[sys] Paths cannot start from root (/). Use relative."
+	end
+
+	-- Check if file is binary before attempting to read
+	if is_binary_file(file_path) then
+		return "[sys] Binary file detected. Use send_image for images or other binary formats."
 	end
 
 	-- Always read from disk to ensure fresh content (buffers can be stale).

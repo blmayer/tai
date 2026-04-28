@@ -11,7 +11,8 @@ local host = vim.uv.os_uname()
 local tool_usage = [[
 You can use tools to help on your task.
 
-- Don't use `cat` for just reading files instead use `track_file`.
+- Don't use `cat` for just reading files instead use `track_file`. Binary files
+  are not supported, for images use the `send_image` tool.
 - Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
   file is useless.
 - Do NOT guess file paths — verify they exist with directory listing or `find`
@@ -24,6 +25,8 @@ You can use tools to help on your task.
 - The output of tool calls are sent to you, so you can keep iterating on the
   task, if you need input from the user or when you are done, don't emit tool
   calls.
+- Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
+  previous to yours.
 ]]
 
 M.planner_system_prompt = [[
