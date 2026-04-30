@@ -34,7 +34,7 @@ M.defs = {
 		["function"] = {
 			name = "patch",
 			description =
-			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls.",
+			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls. Returns the line number changes.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -95,14 +95,19 @@ M.defs = {
 		["function"] = {
 			name = "coder_agent",
 			description =
-			"This tool calls the coder agent to start working on the tasks sent. It will return a summary of the actions taken during the course of the implementation.",
+			"This tool calls the coder agent to start working on the tasks sent. The return is the last response sent by the coder agent.",
 			parameters = {
 				type = "object",
 				properties = {
 					prompt = {
 						type = "string",
 						description = "Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
-					}
+					},
+					clean_env = {
+						type = "boolean",
+						description = "If the coder agent should start with a clean context or remember a previous interaction. Use this if you want to iterate on a past task.",
+					},
+
 				},
 				additionalProperties = false,
 				required = { "prompt" }
@@ -391,6 +396,7 @@ function M.apply_patch(name, file, operation, lines, content)
 	if start < 0 then start = 0 end
 	if end_line >= total_lines then end_line = total_lines - 1 end
 
+	local delta = 0
 	if operation == "add" then
 		-- Insert content after the specified line
 		local new_lines = vim.split(content, '\n')
@@ -399,18 +405,22 @@ function M.apply_patch(name, file, operation, lines, content)
 			insert_pos = 0
 		end
 		vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
+		delta = #new_lines
 	elseif operation == "update" then
 		-- Replace lines with new content
 		local new_lines = vim.split(content or "", '\n')
 		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
+		delta = end_line - start + #new_lines
 	elseif operation == "delete" then
 		-- Remove lines
 		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
+		delta = end_line - start
 	end
 
 	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
-	return "[sys] Patched " .. file
+
+	return "[sys] Patched " .. file .. "\nLine number delta: " .. delta
 end
 
 -- Convert image file to base64 data URL

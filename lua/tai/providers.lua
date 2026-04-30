@@ -48,8 +48,8 @@ local providers_config = {
 	},
 	-- Generic/custom provider
 	custom = {
-		url = function() return config.options.url end,
-		api_key_env = nil,
+		url = config.options.url,
+		api_key_env = "",
 		api_format = "chat_completions",
 	},
 	-- OpenAI Responses API provider
@@ -110,109 +110,7 @@ local function create_provider_module(provider_name)
 		return body
 	end
 
-	-- Provider-specific implementations
-	if provider_name == "custom" then
-		-- Generic provider using config.options.url
-		local history = nil
-
-		function M_module.add_to_history(message)
-			local msg = vim.deepcopy(message)
-			if not history then
-				history = { msg }
-				return
-			end
-			table.insert(history, msg)
-		end
-
-		function M_module.clear_history()
-			history = nil
-		end
-
-		-- Non-streaming request
-		function M_module.request(model_config, msgs, callback)
-			for _, msg in ipairs(msgs) do
-				M_module.add_to_history(msg)
-			end
-
-			-- Keep connected files up to date in history before sending
-			tools.refresh_connected_files(history)
-
-			local body = {
-				model = model_config.model,
-				messages = {},
-			}
-
-			if config.use_tools ~= false then
-				body.tools = common.build_request_tools("chat_completions")
-			end
-			body.messages = common.filter_messages(history)
-
-			if model_config.think ~= nil then
-				body.reasoning_effort = model_config.think
-			end
-
-			if model_config.options then
-				for k, v in pairs(model_config.options) do
-					body[k] = v
-				end
-			end
-
-			local request_body = vim.json.encode(body)
-
-			log.debug("[API] requesting " .. provider_config.url() .. " with " .. vim.inspect(body))
-
-			common.make_http_call(provider_config.url(), "", request_body, function(parsed, err)
-				if err then
-					callback(nil, err)
-					return
-				end
-
-				log.debug("[API] request response: " .. vim.inspect(parsed))
-
-				if parsed.error then
-					return callback(nil, parsed.error.message)
-				end
-
-				local fields, err = common.parse_response(parsed)
-				callback(fields, err)
-			end)
-		end
-
-		-- Streaming request
-		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
-			local body = build_body(model_config, msgs)
-			body.stream = true
-
-			log.debug("[API] requesting stream " .. provider_config.url() .. " with " .. vim.inspect(body))
-			local request_body = vim.json.encode(body)
-
-			local fields = {}
-
-			common.make_streaming_http_call(provider_config.url(), "", request_body, function(chunk)
-				local chunk_data, err = common.parse_chunk(chunk)
-				if err then
-					on_chunk(chunk_data, err)
-					return
-				end
-
-				-- accumulate
-				fields = common.update_fields(fields, chunk_data)
-
-				on_chunk(chunk_data, nil)
-			end, function(_, err)
-				-- on_complete: flatten tool_calls map to array and decode arguments
-				if err then
-					on_complete(nil, err)
-					return
-				end
-
-				if fields.tool_calls then
-					fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
-				end
-				on_complete(fields, nil)
-			end)
-		end
-	elseif provider_name == "openai_responses" then
+	if provider_name == "openai_responses" then
 		-- OpenAI Responses API provider
 		local history = nil
 		local api_key = os.getenv("OPENAI_API_KEY")
@@ -544,7 +442,7 @@ local function create_provider_module(provider_name)
 			}
 
 			if config.use_tools ~= false then
-				body.tools = common.build_request_tools(provider_config.api_format)
+				body.tools = common.build_request_tools(provider_config.api_format, model_config.tools)
 			end
 			body.messages = common.filter_messages(msgs)
 

@@ -114,11 +114,12 @@ to ensure patches are correct and minimal:
   include surrounding lines. Emit multiple calls if needed.
 - **Verify line numbers and content:** Ensure you are targeting the correct
   lines and that the content you are replacing/adding is consistent with the
-  file's current state by calling the `track_file` or `shell` tools. Beware that
-  a patch is affected by previous ones, so account for line number changes and
-  adjust the numbers.
+  file's current state by calling the `track_file` or `shell` tools. 
 - **Valid path verification:** Ensure needed folders exist before creating a
   new file.
+- **Reevaluate line numbers:** After a patch the line numbers may change, so
+  before your next patch to the same file reevaluate the line number taking
+  into account your previous changes.
 
 ### Tool Usage
 ]] .. tool_usage

@@ -251,7 +251,7 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 end
 
 function M.parse_response(res)
-	if #res.choices == 0 or not res.choices[1].message then
+	if not res.choices or #res.choices == 0 or not res.choices[1].message then
 		return nil, "no choices received"
 	end
 

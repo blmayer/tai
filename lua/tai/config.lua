@@ -66,7 +66,7 @@ function M.reload()
 	if M.use_tools == nil then
 		M.use_tools = true
 	end
-	M.options = data.options
+	M.options = data.options or {}
 	M.stream = data.stream or false
 	M.allowed_commands = data.allowed_commands
 	M.think = data.think or nil

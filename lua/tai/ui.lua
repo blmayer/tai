@@ -28,8 +28,6 @@ coder_config.tools = { "track_file", "shell", "send_image", "patch" }
 
 -- Global stop flag for hard stop command
 local hard_stop = false
-local pending_tool_calls = nil
-local pending_confirmation = nil
 
 function M.init()
 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
@@ -182,7 +180,6 @@ end
 
 local function run_tools(tool_calls)
 	M.append("\n")
-	-- pending_tool_calls = tool_calls
 	local results = {}
 	local stop = false
 
@@ -299,11 +296,13 @@ local function run_tools(tool_calls)
 			add_sep("___ CODER AGENT ")
 
 			stop = true
-			coder_call = res
-			coder_history = {
-				{ role = "system", content = agent.coder_system_prompt },
-				{ role = "user",   content = args.prompt }
-			}
+			coder_call = vim.deepcopy(res)
+			if args.clean_env then
+				coder_history = {
+					{ role = "system", content = agent.coder_system_prompt },
+				}
+			end
+			table.insert(coder_history, { role = "user", content = args.prompt })
 
 			M.code()
 			goto next
@@ -444,6 +443,7 @@ end
 function M.clear()
 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
+	coder_history = { { role = "system", content = agent.coder_system_prompt } }
 end
 
 function M.task()
@@ -702,10 +702,8 @@ function M.code()
 				if not fields.tool_calls or #fields.tool_calls == 0 then
 					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
-					table.insert(
-						planner_history,
-						{ role = "user", content = coder_history[#coder_history].content }
-					)
+					coder_call.content = coder_history[#coder_history].content
+					table.insert(planner_history, coder_call)
 					add_sep("___ PLANNER AGENT ")
 					M.task()
 					return
