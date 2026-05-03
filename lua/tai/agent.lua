@@ -11,9 +11,9 @@ local host = vim.uv.os_uname()
 local tool_usage = [[
 You can use tools to help on your task.
 
-- Don't use `cat` for just reading files instead use `track_file`. Binary files
+- Don't use `cat` for just reading files instead use `read` tool. Binary files
   are not supported, for images use the `send_image` tool.
-- Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
+- Avoid repeating tool calls, e.g. calling `read` or `ls` for the same
   file is useless.
 - Do NOT guess file paths — verify they exist with directory listing or `find`
   commands before trying to read or edit them.
@@ -94,7 +94,8 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - Avoid changing anything not extrictly asked for.
 - ALWAYS use line ranges if given to you instead of reading the whole file.
 - Respect the existing code style, including tabs vs spaces, identation etc.
-- Call the `patch` tool with the proper arguments to actualy write the changes.
+- Call the `edit` or `write` tools with the proper arguments to actualy write
+  the changes.
 - Check if your changes are correct by reading the affected parts, building the
   project or checking linter etc.
 - If tests are avaliable run the necessary ones, be clever to not take too long.
@@ -103,23 +104,6 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - Respond without any tool calls to indicate you finished your job, in your last
   response you MUST report your failures, things that need improvement, and task
   implementation details.
-
-### Patch Creation
-
-When you need to create or modify files use the patch tool, follow these rules
-to ensure patches are correct and minimal:
-
-- **Small, focused patches:** Aim for the smallest possible changes that
-  accomplishes the task. The best patches change only a few lines and don't
-  include surrounding lines. Emit multiple calls if needed.
-- **Verify line numbers and content:** Ensure you are targeting the correct
-  lines and that the content you are replacing/adding is consistent with the
-  file's current state by calling the `track_file` or `shell` tools. 
-- **Valid path verification:** Ensure needed folders exist before creating a
-  new file.
-- **Reevaluate line numbers:** After a patch the line numbers may change, so
-  before your next patch to the same file reevaluate the line number taking
-  into account your previous changes.
 
 ### Tool Usage
 ]] .. tool_usage

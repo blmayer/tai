@@ -83,8 +83,6 @@ local function create_provider_module(provider_name)
 	-- Build request body based on provider configuration
 	local function build_body(model_config, msgs)
 		-- Keep connected files up to date in history before sending
-		tools.refresh_connected_files(msgs)
-
 		local agent_tools = common.build_request_tools(provider_config.api_format, model_config.tools)
 
 		local body = {
@@ -184,8 +182,6 @@ local function create_provider_module(provider_name)
 			for _, msg in ipairs(msgs) do
 				add_history_message(vim.deepcopy(msg))
 			end
-
-			tools.refresh_connected_files(history)
 
 			local input = {}
 			for _, msg in ipairs(history or {}) do
@@ -434,8 +430,6 @@ local function create_provider_module(provider_name)
 		-- Standard cloud provider logic
 		local api_key = os.getenv(provider_config.api_key_env) or ""
 		function M_module.request(model_config, msgs, callback)
-			tools.refresh_connected_files(msgs)
-
 			local body = {
 				model = model_config.model,
 				messages = {},

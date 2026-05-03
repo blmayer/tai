@@ -1,15 +1,14 @@
 local M = {}
-
 local log = require('tai.log')
 local config = require("tai.config")
 
 M.defs = {
-	track_file = {
+	read = {
 		type = "function",
 		["function"] = {
-			name = "track_file",
+			name = "read",
 			description =
-			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made. Use this instead of cat.",
+			"Use this to read a file's content, it will return the file's content or range if given.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -26,47 +25,6 @@ M.defs = {
 				},
 				additionalProperties = false,
 				required = { "file" }
-			}
-		}
-	},
-	patch = {
-		type = "function",
-		["function"] = {
-			name = "patch",
-			description =
-			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls. Returns the line number changes.",
-			parameters = {
-				type = "object",
-				properties = {
-					name = {
-						type = "string",
-						description =
-						"Name for this patch or description, can be used for commits."
-					},
-					file = {
-						type = "string",
-						description =
-						"File name for this change. Relative to the project's folder (don't start with /)."
-					},
-					operation = {
-						type = "string",
-						description =
-						"Operation of this change: add will insert the content after the line in 'range' parameter; update will substitute the range with the content; delete will erase the lines in range.",
-						enum = { "add", "update", "delete" }
-					},
-					range = {
-						type = "string",
-						description =
-						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add). For 'add' operation only a single line is valid.",
-					},
-					content = {
-						type = "string",
-						description =
-						"New content (empty for delete operation). NEVER include unchanged lines nor line numbers.",
-					}
-				},
-				additionalProperties = false,
-				required = { "file", "operation", "range" }
 			}
 		}
 	},
@@ -101,13 +59,9 @@ M.defs = {
 				properties = {
 					prompt = {
 						type = "string",
-						description = "Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
+						description =
+						"Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
 					},
-					clean_env = {
-						type = "boolean",
-						description = "If the coder agent should start with a clean context or remember a previous interaction. Use this if you want to iterate on a past task.",
-					},
-
 				},
 				additionalProperties = false,
 				required = { "prompt" }
@@ -138,19 +92,70 @@ M.defs = {
 			}
 		}
 	},
+	write = {
+		type = "function",
+		["function"] = {
+			name = "write",
+			description =
+			"Use this to create new files with the given content. Ensures parent directories exist.",
+			parameters = {
+				type = "object",
+				properties = {
+					file = {
+						type = "string",
+						description = "Path to create, relative to project folder"
+					},
+					content = {
+						type = "string",
+						description = "Content to write to the file"
+					}
+				},
+				additionalProperties = false,
+				required = { "file", "content" }
+			}
+		}
+	},
+	edit = {
+		type = "function",
+		["function"] = {
+			name = "edit",
+			description =
+			"Use this to edit existing files by providing the old content changed. If old_text is empty, changes are made at the start of the file.",
+			parameters = {
+				type = "object",
+				properties = {
+					file = {
+						type = "string",
+						description = "Path to edit, relative to project folder"
+					},
+					old_text = {
+						type = "string",
+						description =
+						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness."
+					},
+					new_text = {
+						type = "string",
+						description = "New content to replace old_text in the file"
+					}
+				},
+				additionalProperties = false,
+				required = { "file", "old_text", "new_text" }
+			}
+		}
+	},
 }
 
 -- indexes are 1 based
 local function parse_lines(range)
 	-- Handle "$" (last line)
 	if range == "$" then
-		return {-1, -1}, true
+		return { -1, -1 }, true
 	end
 
 	-- Handle negative ranges (e.g., -5:$ for last 5 lines)
 	local start, end_line = range:match("^(-%d+):%$")
 	if start and end_line then
-		return {tonumber(start), -1}, true
+		return { tonumber(start), -1 }, true
 	end
 
 	-- Handle positive-to-$ ranges (e.g., 10:$ for tenth to last line)
@@ -158,23 +163,23 @@ local function parse_lines(range)
 	if dollar_pos and dollar_pos > 1 then
 		local start_num = tonumber(range:sub(1, dollar_pos - 1))
 		if start_num then
-			return {start_num - 1, -1}, true
+			return { start_num - 1, -1 }, true
 		end
 	end
 
 	-- Handle range (e.g., "2:5")
 	start, end_line = range:match("^(%d+):(%d+)$")
 	if start and end_line then
-		return {tonumber(start) - 1, tonumber(end_line) - 1}, true
+		return { tonumber(start) - 1, tonumber(end_line) - 1 }, true
 	end
 
 	-- Handle single line (e.g., "3")
 	local line = tonumber(range)
 	if line == 0 then
-		return {0, 0}, true
+		return { 0, 0 }, true
 	end
 	if line then
-		return {line - 1, line - 1}, true
+		return { line - 1, line - 1 }, true
 	end
 
 	return {}, false
@@ -326,103 +331,6 @@ function M.exec_command(cmd)
 	return output
 end
 
-function M.apply_patch(name, file, operation, lines, content)
-	-- First, check if the file is already open in a buffer
-	local buf = nil
-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_loaded(b) then
-			local buf_name = vim.api.nvim_buf_get_name(b)
-			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
-				buf = b
-				break
-			end
-		end
-	end
-
-	-- Check if buffer is visible in any window
-	local win = nil
-	if buf then
-		for _, w in ipairs(vim.api.nvim_list_wins()) do
-			if vim.api.nvim_win_get_buf(w) == buf then
-				win = w
-				break
-			end
-		end
-	end
-
-	-- If buffer exists but not visible, we can still modify it directly
-	-- No need to open a new window
-	if not buf then
-		-- File not loaded yet, create new buffer and window
-		vim.cmd("topleft vnew " .. file)
-		buf = vim.api.nvim_get_current_buf()
-	end
-
-
-	-- Ensure parent directory exists before writing
-	local dir = vim.fn.fnamemodify(file, ":p:h")
-	if dir and dir ~= "" and dir ~= "." and vim.fn.isdirectory(dir) == 0 then
-		local mkdir_result = vim.fn.mkdir(dir, "p")
-		if mkdir_result == -1 then
-			return "[sys] Error: Could not create directory: " .. dir
-		end
-	end
-
-	-- Get current state of buffer
-	local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-	local total_lines = #current_lines
-
-	-- Parse line range
-	local int, ok = parse_lines(lines)
-	if not ok then
-		return "[sys] Error: Invalid range " .. lines
-	end
-
-	local start = int[1]
-	local end_line = int[2]
-
-	-- Convert negative indexes (relative to end) to 0-based absolute indexes
-	if start < 0 then
-		start = total_lines + start
-	end
-	if end_line < 0 then
-		end_line = total_lines + end_line
-	end
-	if start > 0 and end_line > 0 and start > end_line then
-		return "[sys] Error: Invalid range: start is bigger than end"
-	end
-
-	-- Clamp to valid ranges
-	if start < 0 then start = 0 end
-	if end_line >= total_lines then end_line = total_lines - 1 end
-
-	local delta = 0
-	if operation == "add" then
-		-- Insert content after the specified line
-		local new_lines = vim.split(content, '\n')
-		local insert_pos = end_line + 1
-		if lines == "0" then
-			insert_pos = 0
-		end
-		vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
-		delta = #new_lines
-	elseif operation == "update" then
-		-- Replace lines with new content
-		local new_lines = vim.split(content or "", '\n')
-		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
-		delta = end_line - start + #new_lines
-	elseif operation == "delete" then
-		-- Remove lines
-		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
-		delta = end_line - start
-	end
-
-	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
-	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
-
-	return "[sys] Patched " .. file .. "\nLine number delta: " .. delta
-end
-
 -- Convert image file to base64 data URL
 function M.image_data_url(image_path)
 	-- Check if file exists
@@ -464,29 +372,98 @@ function M.image_data_url(image_path)
 	return "data:" .. mime .. ";base64," .. base64_content, nil
 end
 
-function M.refresh_connected_files(history)
-	-- Walk from the end so we can detect older connect_file calls for the same file.
-	local latest = {}
-	for i = #history, 1, -1 do
-		local msg = history[i]
-		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
-			local key = msg.file_path .. "::" .. (msg.file_range or "")
-			if latest[key] then
-				msg.content = "[sys] content shown in newer call"
-				msg.file_path = nil
-				msg.file_range = nil
-			else
-				latest[key] = true
-			end
+function M.write(file, content)
+	log.debug("Running write_file for: " .. file)
+
+	if file:sub(1, 1) == "/" then
+		return "[sys] Paths cannot start from root (/). Use relative."
+	end
+
+	-- Ensure parent directory exists
+	local dir = vim.fn.fnamemodify(file, ":p:h")
+	if dir and dir ~= "" and dir ~= "." and vim.fn.isdirectory(dir) == 0 then
+		local mkdir_result = vim.fn.mkdir(dir, "p")
+		if mkdir_result == -1 then
+			return "[sys] Error: Could not create directory: " .. dir
 		end
 	end
 
-	-- Refresh remaining (latest) connect_file messages.
-	for _, msg in ipairs(history or {}) do
-		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
-			msg.content = M.read_file(msg.file_path, msg.file_range or "")
-		end
+	-- Write content to file
+	local f = io.open(file, "w")
+	if not f then
+		return "[sys] Error: Could not open file for writing: " .. file
 	end
+	f:write(content)
+	f:close()
+
+	return "[sys] File created: " .. file
+end
+
+local function normalize_whitespace(str)
+	return str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+function M.edit(file, old_text, new_text)
+	log.debug("Running edit for: " .. file .. " with old_text: " .. (old_text or "nil"))
+
+	if file:sub(1, 1) == "/" then
+		return "[sys] Paths cannot start from root (/). Use relative."
+	end
+
+	-- Check if file exists
+	if vim.fn.filereadable(file) ~= 1 then
+		return "[sys] Error: File not found: " ..
+		    file .. ". Hint: check if it exists with the shell command: ls -R."
+	end
+
+	-- Check if file is binary before attempting to edit
+	if is_binary_file(file) then
+		return "[sys] Binary file detected. Use send_image for images or other binary formats."
+	end
+
+	-- Open file in buffer
+	vim.cmd("topleft vnew " .. file)
+	local buf = vim.api.nvim_get_current_buf()
+
+	-- Get current state of buffer
+	local new_lines = vim.split(new_text or "", '\n')
+	if old_text and old_text ~= "" then
+		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+		local old_lines = vim.split(old_text or "", '\n')
+
+		-- Find position based on old_text
+		local end_line = 0 -- Default to start of file
+
+		-- Search for old_text in current buffer content
+		local j = 1
+		for i, line in ipairs(current_lines) do
+			if j > #old_lines then
+				break
+			end
+			local norm_line = normalize_whitespace(line)
+			local norm_old_line = normalize_whitespace(old_lines[j])
+			if norm_line == norm_old_line then
+				end_line = i
+				j = j + 1
+			else
+				j = 1
+			end
+		end
+
+		if j < #old_lines then
+			return "[sys] Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
+		end
+
+		-- Replace the line matching old_text with new_text
+		vim.api.nvim_buf_set_lines(buf, end_line - j + 1, end_line, false, new_lines)
+	else
+		vim.api.nvim_buf_set_lines(buf, 0, 0, false, new_lines)
+	end
+
+	-- Save the buffer to disk
+	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
+
+	return "[sys] Patch applied with success."
 end
 
 return M

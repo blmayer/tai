@@ -290,7 +290,10 @@ function M.parse_chunk(chunk)
 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
 
 	if decoded.error then
-		return { error = decoded.error.message }
+		return { content = decoded.error.message }
+	end
+	if decoded.object == "error" then
+		return { content = decoded.message }
 	end
 
 	local fields = {}

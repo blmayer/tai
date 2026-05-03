@@ -1,5 +1,5 @@
 local M = {}
-
+-- Global stop flag for hard stop command
 local log = require("tai.log")
 local tools = require("tai.tools")
 local config = require("tai.config")
@@ -22,12 +22,12 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
 
 local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
-local coder_call = {}
-planner_config.tools = { "track_file", "shell", "send_image", "coder_agent" }
-coder_config.tools = { "track_file", "shell", "send_image", "patch" }
-
+local coder_call = nil
+planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
+coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
 -- Global stop flag for hard stop command
 local hard_stop = false
+local pending_tools = {}  -- {command: string, type: "shell", tool_call_id: string}
 
 function M.init()
 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
@@ -165,6 +165,7 @@ local function add_sep(title)
 	end
 	M.append("\n" .. result .. "\n")
 end
+
 local function refresh_and_close_folds()
 	if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
 		return
@@ -178,12 +179,11 @@ local function refresh_and_close_folds()
 	end)
 end
 
-local function run_tools(tool_calls)
+local function run_tools(tool_calls, history)
 	M.append("\n")
-	local results = {}
 	local stop = false
 
-	for _, call in ipairs(tool_calls or {}) do
+	for i, call in ipairs(tool_calls or {}) do
 		log.debug("[UI] running tool: " .. vim.inspect(call))
 		local name = call["function"].name
 		local args = vim.json.decode(call["function"].arguments)
@@ -197,7 +197,6 @@ local function run_tools(tool_calls)
 		if hard_stop then
 			goto continue
 		end
-
 		if name == "shell" then
 			if not tools.unsafe_command(args.command) then
 				log.debug("Executing allowed command: " .. args.command)
@@ -206,42 +205,18 @@ local function run_tools(tool_calls)
 				M.append(out or "")
 				res.content = out
 			else
-				local input = vim.fn.confirm(
-					"Run `" .. args.command .. "`?",
-					"&Y\n&n\n&s (stop)",
-					1
-				)
-				if input == 1 then
-					log.debug("Confirmed")
-					M.append("{{{ Running: " .. args.command .. "\n")
-					local out = tools.exec_command(args.command)
-					M.append((out or ""))
-					res.content = out
-				elseif input == 2 then
-					log.debug("Declined")
-					local comment = vim.fn.input("Comment (optional): ")
-					M.append("{{{ Declined " .. args.command .. "\n")
-					if comment and comment ~= "" then
-						res.content = "[sys] User declined running this command. Comment: " ..
-						    comment
-						M.append("Comment: " .. comment)
-					else
-						res.content = "[sys] User declined running this command"
-					end
-				else
-					local comment = vim.fn.input("Comment (optional): ")
-					M.append("{{{ Stopped at " .. args.command)
-					if comment and comment ~= "" then
-						res.content = "[sys] User stopped the task. Comment: " .. comment
-						M.append("Comment: " .. comment)
-					else
-						res.content = "[sys] User stopped the task"
-					end
-					stop = true
+				-- Set pending confirmation and output the question to chat buffer
+				local tcs = vim.deepcopy(tool_calls)
+				for j = 1, i do
+					table.remove(tcs, 1)
 				end
+				pending_tools = tcs
+				M.append("Run `" .. args.command .. "`? (y/n/s) ")
+				M.focus_input()
+				return true
 			end
 			M.append("\n}}}\n")
-		elseif name == "track_file" then
+		elseif name == "read" then
 			if not args.file then
 				M.append("{{{ Attaching file failed: no file field.\n}}}")
 				res.content = "[sys] missing file field"
@@ -253,36 +228,44 @@ local function run_tools(tool_calls)
 				goto continue
 			end
 
-			M.append("{{{ Attaching " .. args.file .. "\n")
+			M.append("{{{ Reading " .. args.file .. "\n")
 			res.content = tools.read_file(args.file, args.range)
 			res.file_range = args.range
 			M.append(res.content .. "\n}}}\n")
-		elseif name == "patch" then
+		elseif name == "edit" then
 			if not args.file then
 				M.append("{{{ Patching file failed: no file field.\n}}}")
 				res.content = "[sys] missing file field"
 				goto continue
 			end
-			if not args.operation then
-				M.append("{{{ Patching file failed: no operation field.\n}}}")
-				res.content =
-				"[sys] invalid operation field (must be one of 'add', 'update' or 'delete') check the tool definition to know the correct fields."
+			M.append(string.format(
+				"File: %s\nOld Content:\n%s\nNew Content:\n%s\n",
+				args.file,
+				args.old_text,
+				args.new_text
+			))
+
+			local out = tools.edit(args.file, args.old_text, args.new_text)
+			res.content = out
+			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
+		elseif name == "write" then
+			if not args.file then
+				M.append("{{{ Write file failed: no file field.\n}}}")
+				res.content = "[sys] missing file field"
 				goto continue
 			end
-			if not args.range then
-				M.append("{{{ Patching file failed: no range field.\n}}}\n")
-				res.content = "{{{ Patching file failed: no range field.\n}}}"
+			if not args.content then
+				M.append("{{{ Write file failed: no content field.\n}}}")
+				res.content = "[sys] missing content field"
 				goto continue
 			end
 			M.append(string.format(
-				"File: %s\nOperation: %s\nRange: %s\nContent:\n%s\n",
+				"File: %s\nContent:\n%s\n",
 				args.file,
-				args.operation,
-				args.range,
 				args.content
 			))
 
-			local out = tools.apply_patch(args.name, args.file, args.operation, args.range, args.content)
+			local out = tools.write(args.file, args.content)
 			res.content = out
 			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
 		elseif name == "coder_agent" then
@@ -297,12 +280,10 @@ local function run_tools(tool_calls)
 
 			stop = true
 			coder_call = vim.deepcopy(res)
-			if args.clean_env then
-				coder_history = {
-					{ role = "system", content = agent.coder_system_prompt },
-				}
-			end
-			table.insert(coder_history, { role = "user", content = args.prompt })
+			coder_history = {
+				{ role = "system", content = agent.coder_system_prompt },
+				{ role = "user", content = args.prompt }
+			}
 
 			M.code()
 			goto next
@@ -344,12 +325,12 @@ local function run_tools(tool_calls)
 
 		-- table.remove(pending_tool_calls, 1)
 		refresh_and_close_folds()
-		table.insert(results, res)
+		table.insert(history, res)
 
 		::next::
 	end
 
-	return results, stop
+	return stop
 end
 
 local function send_input()
@@ -369,14 +350,68 @@ local function send_input()
 		if not input or input == "" then
 			return
 		end
-		table.insert(planner_history, { role = "user", content = input })
 
-		add_sep("___ USER ")
-		M.append(input .. "\n")
-		add_sep("___ PLANNER AGENT ")
+		-- Handle pending confirmation
+		local history = planner_history
+		if coder_call then
+			history = coder_history
+		end
+
+		if #pending_tools > 0 then
+			local call = pending_tools[1]
+			local args = vim.json.decode(call["function"].arguments)
+			local res = {
+				role = "tool",
+				name = call["function"].name,
+				tool_call_id = call.id,
+			}
+			local response = input:lower():gsub("^%s*(.-)%s*$", "%1")
+
+			if response == "y" or response == "yes" then
+				log.debug("Confirmed")
+				M.append("Confirmed...\n")
+				local out = tools.exec_command(args.command)
+				M.append(out or "")
+				res.content = out
+			elseif response == "s" or response == "stop" then
+				log.debug("Stopped")
+				M.append("Stopped\n")
+				M.append("{{{ Stopped at " .. args.command .. "\n}}}\n")
+				-- Add to history
+				hard_stop = true
+				res.content = "[sys] User stopped execution."
+			else
+				log.debug("Declined")
+				M.append("{{{ Declined " .. args.command .. "\n\n}}}\n")
+				-- Add to history
+				res.content = "[sys] User declined running this command"
+				-- Treat any other input as decline
+				log.debug("Declined (invalid response)")
+			end
+			table.insert(history, res)
+			table.remove(pending_tools, 1)
+			local stop = run_tools(pending_tools, history)
+			if stop or hard_stop then
+				log.debug("[UI] stopped")
+				return
+			end
+		else
+			table.insert(history, { role = "user", content = input })
+
+			add_sep("___ USER ")
+			M.append(input .. "\n")
+
+		end
+
 
 		log.debug("[UI] got user input: " .. input)
-		M.task()
+		if coder_call then
+			add_sep("___ CODER AGENT ")
+			M.code()
+		else
+			add_sep("___ PLANNER AGENT ")
+			M.task()
+		end
 	end)
 end
 
@@ -447,8 +482,6 @@ function M.clear()
 end
 
 function M.task()
-	log.debug("Agent task with config: " .. vim.inspect(planner_config))
-
 	-- check pending tool calls first
 	if config.stream then
 		log.info("Agent executing streaming task")
@@ -512,10 +545,7 @@ function M.task()
 				end
 
 				log.debug("[UI] running tools")
-				local res, stop = run_tools(data.tool_calls)
-				for _, msg in ipairs(res) do
-					table.insert(planner_history, msg)
-				end
+				local stop = run_tools(data.tool_calls, planner_history)
 				if stop or hard_stop then
 					log.debug("[UI] stopped")
 					return
@@ -566,10 +596,7 @@ function M.task()
 
 				vim.schedule(function()
 					log.debug("[UI] running tools")
-					local res, stop = run_tools(fields.tool_calls)
-					for _, msg in ipairs(res) do
-						table.insert(planner_history, msg)
-					end
+					local stop = run_tools(fields.tool_calls, planner_history)
 					if stop or hard_stop then
 						log.debug("[UI] stopped")
 						return
@@ -645,16 +672,14 @@ function M.code()
 					-- worker finished the job
 					coder_call.content = coder_history[#coder_history].content
 					table.insert(planner_history, coder_call)
+					coder_call = nil
 					add_sep("___ PLANNER AGENT ")
 					M.task()
 					return
 				end
 
 				log.debug("[UI] running tools")
-				local res, stop = run_tools(data.tool_calls)
-				for _, msg in ipairs(res) do
-					table.insert(coder_history, msg)
-				end
+				local stop = run_tools(data.tool_calls, coder_history)
 				if stop or hard_stop then
 					log.debug("[UI] stopped")
 					return
@@ -704,6 +729,7 @@ function M.code()
 					-- worker finished the job
 					coder_call.content = coder_history[#coder_history].content
 					table.insert(planner_history, coder_call)
+					coder_call = nil
 					add_sep("___ PLANNER AGENT ")
 					M.task()
 					return
@@ -711,10 +737,7 @@ function M.code()
 
 				vim.schedule(function()
 					log.debug("[UI] running tools")
-					local res, stop = run_tools(fields.tool_calls)
-					for _, msg in ipairs(res) do
-						table.insert(coder_history, msg)
-					end
+					local stop = run_tools(fields.tool_calls, coder_history)
 					if stop or hard_stop then
 						log.debug("[UI] stopped")
 						return
