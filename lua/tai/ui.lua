@@ -22,12 +22,13 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
 
 local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
-local coder_call = nil
 planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
 coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
 -- Global stop flag for hard stop command
 local hard_stop = false
 local pending_tools = {}  -- {command: string, type: "shell", tool_call_id: string}
+local coder_call = nil
+local current_agent = "planner"  -- Default to planner
 
 function M.init()
 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
@@ -119,11 +120,22 @@ end
 function M.update_chat_name()
 	local name = bufname_prefix
 	if config and config.provider and config.model then
-		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
+		name = string.format("%s (%s/%s - %s)", bufname_prefix, config.provider, config.model, current_agent)
+	else
+		name = string.format("%s (%s)", bufname_prefix, current_agent)
 	end
 	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
 		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
 	end
+end
+
+function M.switch_agent()
+	if current_agent == "planner" then
+		current_agent = "coder"
+	else
+		current_agent = "planner"
+	end
+	M.update_chat_name()
 end
 
 function M.focus_input()
@@ -352,10 +364,7 @@ local function send_input()
 		end
 
 		-- Handle pending confirmation
-		local history = planner_history
-		if coder_call then
-			history = coder_history
-		end
+		local history = (current_agent == "coder") and coder_history or planner_history
 
 		if #pending_tools > 0 then
 			local call = pending_tools[1]
@@ -403,9 +412,8 @@ local function send_input()
 
 		end
 
-
 		log.debug("[UI] got user input: " .. input)
-		if coder_call then
+		if current_agent == "coder" then
 			add_sep("___ CODER AGENT ")
 			M.code()
 		else
@@ -479,10 +487,11 @@ function M.clear()
 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
+	current_agent = "planner"
+	M.update_chat_name()
 end
 
 function M.task()
-	-- check pending tool calls first
 	if config.stream then
 		log.info("Agent executing streaming task")
 
@@ -609,7 +618,6 @@ function M.task()
 end
 
 function M.code()
-	-- check pending tool calls first
 	if config.stream then
 		log.info("Coder Agent executing streaming task")
 
@@ -667,7 +675,7 @@ function M.code()
 				if data.error then
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 				end
-				if not data.tool_calls or #data.tool_calls == 0 then
+				if not data.tool_calls or #data.tool_calls == 0 and coder_call then
 					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
 					coder_call.content = coder_history[#coder_history].content
@@ -724,7 +732,7 @@ function M.code()
 					M.append(fields.content .. "\n")
 				end
 
-				if not fields.tool_calls or #fields.tool_calls == 0 then
+				if not fields.tool_calls or #fields.tool_calls == 0 and coder_call then
 					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
 					coder_call.content = coder_history[#coder_history].content

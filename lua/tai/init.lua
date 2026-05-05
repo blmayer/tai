@@ -40,4 +40,8 @@ function M.stop()
 	ui.stop()
 end
 
+function M.switch_agent()
+	ui.switch_agent()
+end
+
 return M

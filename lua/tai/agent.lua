@@ -92,7 +92,8 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 
 - Systematicaly implement each item of the task requested.
 - Avoid changing anything not extrictly asked for.
-- ALWAYS use line ranges if given to you instead of reading the whole file.
+- ALWAYS use line ranges if given to you instead of reading the whole file. If
+  there are many ranges for the same file merge them so you read the file once.
 - Respect the existing code style, including tabs vs spaces, identation etc.
 - Call the `edit` or `write` tools with the proper arguments to actualy write
   the changes.
