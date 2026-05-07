@@ -26,7 +26,7 @@ planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
 coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
 -- Global stop flag for hard stop command
 local hard_stop = false
-local pending_tools = {}  -- {command: string, type: "shell", tool_call_id: string}
+local pending_tools = nil
 local coder_call = nil
 local current_agent = "planner"  -- Default to planner
 
@@ -215,11 +215,12 @@ local function run_tools(tool_calls, history)
 				M.append("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
 				M.append(out or "")
+				M.append("\n}}}\n")
 				res.content = out
 			else
 				-- Set pending confirmation and output the question to chat buffer
 				local tcs = vim.deepcopy(tool_calls)
-				for j = 1, i do
+				for j = 1, i - 1 do
 					table.remove(tcs, 1)
 				end
 				pending_tools = tcs
@@ -227,7 +228,6 @@ local function run_tools(tool_calls, history)
 				M.focus_input()
 				return true
 			end
-			M.append("\n}}}\n")
 		elseif name == "read" then
 			if not args.file then
 				M.append("{{{ Attaching file failed: no file field.\n}}}")
@@ -296,6 +296,7 @@ local function run_tools(tool_calls, history)
 				{ role = "system", content = agent.coder_system_prompt },
 				{ role = "user", content = args.prompt }
 			}
+			current_agent = "coder"
 
 			M.code()
 			goto next
@@ -366,7 +367,8 @@ local function send_input()
 		-- Handle pending confirmation
 		local history = (current_agent == "coder") and coder_history or planner_history
 
-		if #pending_tools > 0 then
+		if pending_tools then
+			log.debug("executing pending tool calls " .. vim.inspect(pending_tools))
 			local call = pending_tools[1]
 			local args = vim.json.decode(call["function"].arguments)
 			local res = {
