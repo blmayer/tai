@@ -297,6 +297,7 @@ local function run_tools(tool_calls, history)
 				{ role = "user", content = args.prompt }
 			}
 			current_agent = "coder"
+			M.update_chat_name()
 
 			M.code()
 			goto next
@@ -367,7 +368,7 @@ local function send_input()
 		-- Handle pending confirmation
 		local history = (current_agent == "coder") and coder_history or planner_history
 
-		if pending_tools then
+		if pending_tools and #pending_tools > 0 then
 			log.debug("executing pending tool calls " .. vim.inspect(pending_tools))
 			local call = pending_tools[1]
 			local args = vim.json.decode(call["function"].arguments)
@@ -411,7 +412,6 @@ local function send_input()
 
 			add_sep("___ USER ")
 			M.append(input .. "\n")
-
 		end
 
 		log.debug("[UI] got user input: " .. input)
@@ -684,6 +684,8 @@ function M.code()
 					table.insert(planner_history, coder_call)
 					coder_call = nil
 					add_sep("___ PLANNER AGENT ")
+					current_agent = "planner"
+					M.update_chat_name()
 					M.task()
 					return
 				end

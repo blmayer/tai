@@ -317,7 +317,11 @@ function M.update_fields(fields, chunk)
 	end
 
 	if chunk.content then
-		fields.content = (fields.content or "") .. chunk.content
+		if type(chunk.content) == "table" then
+			fields.content = chunk.content.text
+		else
+			fields.content = (fields.content or "") .. chunk.content
+		end
 	end
 
 	if chunk.reasoning then
