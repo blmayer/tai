@@ -382,8 +382,10 @@ local function send_input()
 			if response == "y" or response == "yes" then
 				log.debug("Confirmed")
 				M.append("Confirmed...\n")
+				M.append("{{{ Running: " .. args.command .. "\n")
 				local out = tools.exec_command(args.command)
 				M.append(out or "")
+				M.append("\n}}}\n")
 				res.content = out
 			elseif response == "s" or response == "stop" then
 				log.debug("Stopped")

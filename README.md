@@ -62,9 +62,11 @@ return {
   opts = {},
   -- Optional: keybindings
   keys = {
-    { "<leader>ti", "<cmd>Tai chat<cr>", desc = "Open Tai chat" },
+    { "<leader>tt", "<cmd>Tai chat<cr>", desc = "Open Tai chat" },
+    { "<leader>tc", "<cmd>Tai reload<cr>", desc = "Reload Tai config" },
+    { "<leader>ta", "<cmd>Tai agent<cr>", desc = "Switch agent" },
     { "<leader>tr", "<cmd>Tai clear<cr>", desc = "Clear Tai history" },
-    { "<C-w><C-t>", "<cmd>Tai toggle<cr>", desc = "Toggle Tai window" },
+    { "<leader>ts", "<cmd>Tai stop<cr>", desc = "Stop Tai" },
   },
 }
 ```
@@ -81,6 +83,27 @@ use("blmayer/tai")
 Plug "blmayer/tai"
 ```
 
+#### Native Installation
+
+For a minimal setup without plugin managers, add to your `init.lua`:
+
+```lua
+-- Clone the plugin to your nvim config
+-- git clone https://github.com/blmayer/tai.git ~/.config/nvim/lua/tai
+
+local tai = require("tai")
+tai.setup({})
+
+-- Optional: keybindings
+vim.keymap.set("n", "<leader>tt", tai.chat, { noremap = true })
+vim.keymap.set("n", "<leader>tc", tai.reload, { noremap = true })
+vim.keymap.set("n", "<leader>ta", tai.switch_agent, { noremap = true })
+vim.keymap.set("n", "<leader>tr", tai.clear_history, { noremap = true })
+vim.keymap.set("n", "<leader>ts", tai.stop, { noremap = true })
+
+vim.keymap.set("n", "<C-W><C-T>", tai.toggle_chat_window, { noremap = true })
+```
+
 #### Manual Installation
 
 Place the plugin code at:
@@ -92,14 +115,7 @@ and load it in your `init.lua`:
     local tai = require("tai")
     tai.setup({})
 
-The plugin also provides the `:Tai` command for common operations:
-
-- `:Tai chat` - Open the chat window
-- `:Tai toggle` - Toggle the chat window
-- `:Tai clear` - Clear conversation history
-- `:Tai reload` - Reload configuration
-
-## Configuration
+## Project Configuration
 
 tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
 
