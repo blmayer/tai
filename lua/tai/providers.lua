@@ -1,9 +1,29 @@
 local M = {}
 
 local log = require("tai.log")
-local tools = require("tai.tools")
 local common = require("tai.provider_common")
 local config = require("tai.config")
+
+-- Rate limiting variables
+local request_count = 0
+local last_reset_time = os.time()
+
+-- Function to check and enforce rate limiting
+local function check_rate_limit()
+    local current_time = os.time()
+    -- Reset the counter if a minute has passed
+    if current_time - last_reset_time >= 60 then
+        request_count = 0
+        last_reset_time = current_time
+    end
+    -- Check if the rate limit is exceeded
+    if config.rpm and request_count >= config.rpm then
+        return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
+    end
+    return true
+end
+
+-- Provider configurations
 
 -- Provider configurations
 -- Each provider has:

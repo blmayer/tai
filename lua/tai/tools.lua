@@ -8,7 +8,7 @@ M.defs = {
 		["function"] = {
 			name = "read",
 			description =
-			"Use this to read a file's content, it will return the file's content or range if given.",
+			"Use this to read a file's content, it will return the file's content or range if given. Line numbers are added.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -131,11 +131,11 @@ M.defs = {
 					old_text = {
 						type = "string",
 						description =
-						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness."
+						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
 					},
 					new_text = {
 						type = "string",
-						description = "New content to replace old_text in the file"
+						description = "New content to replace old_text in the file."
 					}
 				},
 				additionalProperties = false,
@@ -211,19 +211,19 @@ function M.read_file(file_path, range)
 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
 
 	if file_path:sub(1, 1) == "/" then
-		return "[sys] Paths cannot start from root (/). Use relative."
+		return "Paths cannot start from root (/). Use relative."
 	end
 
 	-- Check if file is binary before attempting to read
 	if is_binary_file(file_path) then
-		return "[sys] Binary file detected. Use send_image for images or other binary formats."
+		return "Binary file detected. Use send_image for images or other binary formats."
 	end
 
 	-- Always read from disk to ensure fresh content (buffers can be stale).
 	log.debug("reading from file")
 	local file = io.open(file_path, "r")
 	if not file then
-		return "[sys] File `" ..
+		return "File `" ..
 		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
 	end
 	local content = file:read("*all")
@@ -243,7 +243,7 @@ function M.read_file(file_path, range)
 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
 	local int, ok = parse_lines(range)
 	if not ok then
-		return "[sys] Error: Invalid range " .. range
+		return "Error: Invalid range " .. range
 	end
 
 	local start0 = int[1]
@@ -268,7 +268,7 @@ function M.read_file(file_path, range)
 	end
 
 	if start1 < 1 or end1 < 0 or start1 > nlines or start1 > end1 then
-		return "[sys] Error: Invalid range " .. range
+		return "Error: Invalid range " .. range
 	end
 
 	for i = start1, end1 do
@@ -293,7 +293,7 @@ function M.unsafe_command(cmd)
 	-- Extract the base command (first word)
 	local base_cmd = cmd:match("^%s*(%w+)")
 	if not base_cmd and allowed[base_cmd] then
-		return "[sys] Command " .. base_cmd .. " is not allowed."
+		return "Command " .. base_cmd .. " is not allowed."
 	end
 
 	return false
@@ -325,7 +325,7 @@ function M.exec_command(cmd)
 	handle:close()
 
 	if not output then
-		output = "[sys] `" .. cmd .. "` returned null"
+		output = cmd .. "` returned null"
 	end
 
 	return output
@@ -376,7 +376,7 @@ function M.write(file, content)
 	log.debug("Running write_file for: " .. file)
 
 	if file:sub(1, 1) == "/" then
-		return "[sys] Paths cannot start from root (/). Use relative."
+		return "Paths cannot start from root (/). Use relative."
 	end
 
 	-- Ensure parent directory exists
@@ -391,12 +391,12 @@ function M.write(file, content)
 	-- Write content to file
 	local f = io.open(file, "w")
 	if not f then
-		return "[sys] Error: Could not open file for writing: " .. file
+		return "Error: Could not open file for writing: " .. file
 	end
 	f:write(content)
 	f:close()
 
-	return "[sys] File created: " .. file
+	return "File created: " .. file
 end
 
 local function normalize_whitespace(str)
@@ -407,18 +407,18 @@ function M.edit(file, old_text, new_text)
 	log.debug("Running edit for: " .. file .. " with old_text: " .. (old_text or "nil"))
 
 	if file:sub(1, 1) == "/" then
-		return "[sys] Paths cannot start from root (/). Use relative."
+		return "Paths cannot start from root (/). Use relative."
 	end
 
 	-- Check if file exists
 	if vim.fn.filereadable(file) ~= 1 then
-		return "[sys] Error: File not found: " ..
+		return "Error: File not found: " ..
 		    file .. ". Hint: check if it exists with the shell command: ls -R."
 	end
 
 	-- Check if file is binary before attempting to edit
 	if is_binary_file(file) then
-		return "[sys] Binary file detected. Use send_image for images or other binary formats."
+		return "Binary file detected. Use send_image for images or other binary formats."
 	end
 
 	-- Open file in buffer
@@ -451,7 +451,7 @@ function M.edit(file, old_text, new_text)
 		end
 
 		if j < #old_lines then
-			return "[sys] Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
+			return "Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
 		end
 
 		-- Replace the line matching old_text with new_text
@@ -463,7 +463,7 @@ function M.edit(file, old_text, new_text)
 	-- Save the buffer to disk
 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
 
-	return "[sys] Patch applied with success."
+	return "Patched " .. file
 end
 
 return M

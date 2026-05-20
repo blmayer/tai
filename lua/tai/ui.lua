@@ -231,12 +231,12 @@ local function run_tools(tool_calls, history)
 		elseif name == "read" then
 			if not args.file then
 				M.append("{{{ Attaching file failed: no file field.\n}}}")
-				res.content = "[sys] missing file field"
+				res.content = "missing file field"
 				goto continue
 			end
 			if vim.fn.filereadable(args.file) ~= 1 then
 				M.append("{{{ Attaching " .. args.file .. " failed\nFile not readable.}}}\n")
-				res.content = "[sys] file does not exist or is not readable"
+				res.content = "file does not exist or is not readable"
 				goto continue
 			end
 
@@ -247,43 +247,31 @@ local function run_tools(tool_calls, history)
 		elseif name == "edit" then
 			if not args.file then
 				M.append("{{{ Patching file failed: no file field.\n}}}")
-				res.content = "[sys] missing file field"
+				res.content = "missing file field"
 				goto continue
 			end
-			M.append(string.format(
-				"File: %s\nOld Content:\n%s\nNew Content:\n%s\n",
-				args.file,
-				args.old_text,
-				args.new_text
-			))
-
 			local out = tools.edit(args.file, args.old_text, args.new_text)
 			res.content = out
-			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
+			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
 		elseif name == "write" then
 			if not args.file then
 				M.append("{{{ Write file failed: no file field.\n}}}")
-				res.content = "[sys] missing file field"
+				res.content = "missing file field"
 				goto continue
 			end
 			if not args.content then
 				M.append("{{{ Write file failed: no content field.\n}}}")
-				res.content = "[sys] missing content field"
+				res.content = "missing content field"
 				goto continue
 			end
-			M.append(string.format(
-				"File: %s\nContent:\n%s\n",
-				args.file,
-				args.content
-			))
 
 			local out = tools.write(args.file, args.content)
 			res.content = out
-			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
+			M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
 		elseif name == "coder_agent" then
 			if not args.prompt then
 				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
-				res.content = "[sys] missing prompt field"
+				res.content = "Missing prompt field"
 				goto continue
 			end
 
@@ -304,17 +292,17 @@ local function run_tools(tool_calls, history)
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Addind image failed: no file field.\n}}}")
-				res.content = "[sys] missing file field"
+				res.content = "Missing file field"
 				goto continue
 			end
 
 			local image_url, err = tools.image_data_url(args.file)
 			if not image_url then
 				M.append("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
-				res.content = "[sys] Error: " .. err
+				res.content = "Error: " .. err
 				goto continue
 			end
-			res.content = "[sys] Image " .. args.file .. " added."
+			res.content = "Image " .. args.file .. " added."
 			M.append("{{{ Adding image " .. args.file .. "\n}}}")
 
 			local content = { }
@@ -330,7 +318,7 @@ local function run_tools(tool_calls, history)
 			})
 			res.content = content
 		else
-			res.content = "[sys] Invalid tool name: " .. (name or "")
+			res.content = "Invalid tool name: " .. (name or "")
 			M.append("{{{ Invalid tool name\n}}}\n")
 		end
 
@@ -393,12 +381,12 @@ local function send_input()
 				M.append("{{{ Stopped at " .. args.command .. "\n}}}\n")
 				-- Add to history
 				hard_stop = true
-				res.content = "[sys] User stopped execution."
+				res.content = "User stopped execution."
 			else
 				log.debug("Declined")
 				M.append("{{{ Declined " .. args.command .. "\n\n}}}\n")
 				-- Add to history
-				res.content = "[sys] User declined running this command"
+				res.content = "User declined running this command"
 				-- Treat any other input as decline
 				log.debug("Declined (invalid response)")
 			end
@@ -429,7 +417,7 @@ end
 
 function M.stop()
 	hard_stop = true
-	M.append("[tai] Stopped by user\n")
+	M.append("\n[tai] Stopped by user\n")
 end
 
 vim.keymap.set("n", "<CR>", send_input, { buffer = M.input_buffer_nr })
@@ -679,7 +667,7 @@ function M.code()
 				if data.error then
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 				end
-				if not data.tool_calls or #data.tool_calls == 0 and coder_call then
+				if (not data.tool_calls or #data.tool_calls == 0) and coder_call then
 					log.debug("[UI] coder finished, handing back to planner")
 					-- worker finished the job
 					coder_call.content = coder_history[#coder_history].content
