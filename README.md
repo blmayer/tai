@@ -152,9 +152,9 @@ Example `.tai` file:
 
 ## Screenshots
 
-- [www/screenshot.png](tai.nvim in action)
-- [www/2025-08-05-174307_1372x1415_scrot.png](side panel)
-- [www/folding.png](side panel with folding)
+- ![tai.nvim in action](www/screenshot.png)
+- ![side panel](www/2025-08-05-174307_1372x1415_scrot.png)
+- ![side panel with folding](www/folding.png)
 
 
 ## License

@@ -5,23 +5,34 @@ local common = require("tai.provider_common")
 local config = require("tai.config")
 
 -- Rate limiting variables
-local request_count = 0
-local last_reset_time = os.time()
+local request_tokens = {}  -- Queue of {timestamp, tokens_used} pairs
 
--- Function to check and enforce rate limiting
-local function check_rate_limit()
+-- Helper function to clean old timestamps
+local function cleanup_old_timestamps()
     local current_time = os.time()
-    -- Reset the counter if a minute has passed
-    if current_time - last_reset_time >= 60 then
-        request_count = 0
-        last_reset_time = current_time
+    local window_seconds = 60  -- 1-minute window
+    while #request_tokens > 0 and (current_time - request_tokens[1][1] > window_seconds) do
+        table.remove(request_tokens, 1)  -- Remove old entries
     end
-    -- Check if the rate limit is exceeded
-    if config.rpm and request_count >= config.rpm then
-        return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
-    end
-    return true
 end
+
+    -- Function to check and enforce rate limiting
+    local function check_rate_limit(max_tokens)
+        cleanup_old_timestamps()  -- Remove old timestamps
+        local total_tokens = 0
+        local total_requests = 0
+        for _, entry in ipairs(request_tokens) do
+            total_tokens = total_tokens + entry[2]  -- Sum tokens in the current window
+            total_requests = total_requests + 1
+        end
+        if config.rpm and total_requests >= config.rpm then
+            return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
+        end
+        if max_tokens and total_tokens >= max_tokens then
+            return false, "Token rate limit exceeded: " .. max_tokens .. " tokens per minute allowed"
+        end
+        return true
+    end
 
 -- Provider configurations
 
@@ -449,78 +460,98 @@ local function create_provider_module(provider_name)
 	else
 		-- Standard cloud provider logic
 		local api_key = os.getenv(provider_config.api_key_env) or ""
-		function M_module.request(model_config, msgs, callback)
-			local body = {
-				model = model_config.model,
-				messages = {},
-			}
+function M_module.request(model_config, msgs, callback)
+    -- Check rate limit before making the request
+    local ok, err = check_rate_limit(config.tpm)
+    if not ok then
+        callback(nil, err)
+        return
+    end
+    table.insert(request_tokens, {os.time(), 0})
 
-			if config.use_tools ~= false then
-				body.tools = common.build_request_tools(provider_config.api_format, model_config.tools)
-			end
-			body.messages = common.filter_messages(msgs)
+        local body = {
+            model = model_config.model,
+            messages = {},
+        }
 
-			if model_config.think ~= nil then
-				body.reasoning_effort = model_config.think
-			end
+        if config.use_tools ~= false then
+            body.tools = common.build_request_tools(provider_config.api_format, model_config.tools)
+        end
+        body.messages = common.filter_messages(msgs)
 
-			if model_config.options then
-				for k, v in pairs(model_config.options) do
-					body[k] = v
-				end
-			end
+        if model_config.think ~= nil then
+            body.reasoning_effort = model_config.think
+        end
 
-			local request_body = vim.json.encode(body)
+        if model_config.options then
+            for k, v in pairs(model_config.options) do
+                body[k] = v
+            end
+        end
 
-			log.debug("[API] requesting " .. provider_config.url .. " with " .. vim.inspect(body))
-			common.make_http_call(provider_config.url, api_key, request_body, function(parsed, err)
-				if err then
-					callback(nil, err)
-					return
-				end
+        local request_body = vim.json.encode(body)
 
-				log.debug("[API] request response: " .. vim.inspect(parsed))
+        log.debug("[API] requesting " .. provider_config.url .. " with " .. vim.inspect(body))
+        common.make_http_call(provider_config.url, api_key, request_body, function(parsed, err)
+            if err then
+                callback(nil, err)
+                return
+            end
 
-				if parsed.error then
-					return callback(nil, parsed.error.message)
-				end
+            log.debug("[API] request response: " .. vim.inspect(parsed))
 
-				local fields, err = common.parse_response(parsed)
-				callback(fields, err)
-			end)
+            if parsed.error then
+                return callback(nil, parsed.error.message)
+            end
+
+            local fields, err = common.parse_response(parsed)
+            -- Track token usage after receiving a successful response
+            table.insert(request_tokens, {os.time(), parsed.usage.total_tokens or 0})
+            callback(fields, err)
+        end)
 		end
 
 		-- Streaming request
-		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
-			local body = build_body(model_config, msgs)
-			body.stream = true
+function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+    -- Check rate limit before making the request
+    local ok, err = check_rate_limit(config.tpm)
+    if not ok then
+        return on_complete(nil, err)
+    end
+    table.insert(request_tokens, {os.time(), 0})
 
-			log.debug("[API] requesting stream " .. provider_config.url .. " with " .. vim.inspect(body))
-			local request_body = vim.json.encode(body)
+        local body = build_body(model_config, msgs)
+        body.stream = true
 
-			local fields = {}
+        log.debug("[API] requesting stream " .. provider_config.url .. " with " .. vim.inspect(body))
+        local request_body = vim.json.encode(body)
 
-			common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
-				local chunk_data, err = common.parse_chunk(chunk)
-				if err then
-					on_chunk(chunk_data, err)
-					return
-				end
+        local fields = {}
 
-				fields = common.update_fields(fields, chunk_data)
+        common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
+            local chunk_data, err = common.parse_chunk(chunk)
+            if err then
+                on_chunk(chunk_data, err)
+                return
+            end
 
-				on_chunk(chunk_data, nil)
-			end, function(_, err)
-				if err then
-					on_complete(nil, err)
-					return
-				end
+            fields = common.update_fields(fields, chunk_data)
 
-				if fields.tool_calls then
-					fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
-				end
-				on_complete(fields, nil)
-			end)
+            on_chunk(chunk_data, nil)
+        end, function(_, err)
+            if err then
+                on_complete(nil, err)
+                return
+            end
+
+            -- Track token usage after receiving a successful response
+            -- Note: Token tracking may not be possible in streaming mode without parsed data
+            -- This is a limitation and should be addressed if parsed data is available
+            if fields.tool_calls then
+                fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+            end
+            on_complete(fields, nil)
+        end)
 		end
 	end
 
