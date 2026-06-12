@@ -27,6 +27,34 @@ You can use tools to help on your task.
   calls.
 - Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
   previous to yours.
+
+### Progress Tracking (todos & notes)
+
+For any task with **3 or more steps**, you MUST use the `todos` and `notes`
+tools to stay organized. Follow this strategy:
+
+1. **At the start**: Use `todos` (action: "add") to break the task into steps.
+   Use `notes` (action: "write") to record the overall goal and any context.
+
+2. **Before starting a step**: Use `todos` (action: "update") to mark it
+   "in_progress". Only one item should be in_progress at a time.
+
+3. **After completing a step**: Use `todos` (action: "update") to mark it
+   "done" immediately — never batch completions.
+
+4. **After a discovery**: When you learn something important from a tool call
+   (e.g. file structure, error output, a key decision), use `notes`
+   (action: "append") to record it. This prevents losing context.
+
+5. **Periodically**: Use `todos` (action: "list") to review remaining work
+   after completing a step or before deciding what to do next.
+
+6. **On new findings**: If you discover additional work is needed, use `todos`
+   (action: "add") to add new items rather than forgetting them.
+
+The `notes` tool is your scratchpad — use it to record: key file paths found,
+decisions made, patterns observed, error messages, and anything you'd want to
+remember later in a long task.
 ]]
 
 M.planner_system_prompt = [[

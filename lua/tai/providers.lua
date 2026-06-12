@@ -5,34 +5,192 @@ local common = require("tai.provider_common")
 local config = require("tai.config")
 
 -- Rate limiting variables
-local request_tokens = {}  -- Queue of {timestamp, tokens_used} pairs
+local request_tokens = {}  -- Queue of {timestamp, tokens_used} pairs (one entry per request attempt)
+local pending_timers = {}
 
--- Helper function to clean old timestamps
+-- Helper function to clean old timestamps outside the 1-min window
 local function cleanup_old_timestamps()
-    local current_time = os.time()
-    local window_seconds = 60  -- 1-minute window
-    while #request_tokens > 0 and (current_time - request_tokens[1][1] > window_seconds) do
-        table.remove(request_tokens, 1)  -- Remove old entries
-    end
+	local current_time = os.time()
+	local window_seconds = 60
+	while #request_tokens > 0 and (current_time - request_tokens[1][1] > window_seconds) do
+		table.remove(request_tokens, 1)
+	end
 end
 
-    -- Function to check and enforce rate limiting
-    local function check_rate_limit(max_tokens)
-        cleanup_old_timestamps()  -- Remove old timestamps
-        local total_tokens = 0
-        local total_requests = 0
-        for _, entry in ipairs(request_tokens) do
-            total_tokens = total_tokens + entry[2]  -- Sum tokens in the current window
-            total_requests = total_requests + 1
-        end
-        if config.rpm and total_requests >= config.rpm then
-            return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
-        end
-        if max_tokens and total_tokens >= max_tokens then
-            return false, "Token rate limit exceeded: " .. max_tokens .. " tokens per minute allowed"
-        end
-        return true
-    end
+-- Rough token estimator for provisional cost of an outgoing request (based on the
+-- messages being sent). This lets us count the "ongoing" request in the tpm window
+-- immediately at dispatch time. We correct it with the real usage when the response
+-- arrives.
+local function estimate_tokens_from_messages(msgs)
+	if not msgs then return 1500 end
+	local chars = 0
+	for _, msg in ipairs(msgs) do
+		local c = msg.content
+		if type(c) == "string" then
+			chars = chars + #c
+		elseif type(c) == "table" then
+			for _, part in ipairs(c) do
+				if type(part) == "table" and part.text then
+					chars = chars + #part.text
+				elseif type(part) == "string" then
+					chars = chars + #part
+				end
+			end
+		end
+	end
+	-- Over-estimate (smaller divisor + headroom) + fixed overhead for tool schemas
+	-- (which are sent on every call when use_tools) to be safer against 429s on
+	-- large contexts (e.g. "read" injecting big file for the next call).
+	-- The provisional is used in the tpm decision *for this call itself*.
+	-- Real usage from provider corrects the entry.
+	local prompt_est = math.ceil(chars / 3) + 1200
+	local tools_overhead = (config.use_tools ~= false) and 2500 or 0
+	return math.max(2000, prompt_est + tools_overhead)
+end
+
+-- When we have a response (success or error) for a dispatched call, commit the
+-- real usage if known, or on rate-limit errors bump the recorded cost so that
+-- subsequent decisions are more conservative (we under-estimated or the provider
+-- was stricter than our client tpm).
+local function commit_call_cost(entry, usage, err_msg)
+	if not entry then return end
+	if usage and usage > 0 then
+		entry[2] = usage
+		return
+	end
+	if err_msg and type(err_msg) == "string" then
+		local lower = err_msg:lower()
+		if lower:find("rate") or lower:find("429") or lower:find("too many") or lower:find("limit") then
+			entry[2] = math.max(entry[2] or 0, 10000)
+		end
+	end
+end
+
+-- Compute how many ms we need to wait (if any) before the next request can be sent
+-- without exceeding rpm or the given max_tokens (tpm). Returns 0 if safe now.
+-- additional_cost: provisional estimate for the call we're *about to* make (so we
+-- account for the ongoing request's own tokens in this decision).
+local function get_required_wait_ms(max_tokens, additional_cost)
+	cleanup_old_timestamps()
+	local total_tokens = 0
+	local total_requests = #request_tokens
+	for _, entry in ipairs(request_tokens) do
+		total_tokens = total_tokens + (entry[2] or 0)
+	end
+	if additional_cost then
+		total_tokens = total_tokens + additional_cost
+	end
+	local now = os.time()
+	local wait_s = 0
+
+	if config.rpm and total_requests >= config.rpm then
+		local to_drop = total_requests - config.rpm + 1
+		if to_drop > 0 and request_tokens[to_drop] then
+			wait_s = math.max(wait_s, (request_tokens[to_drop][1] + 60 - now) + 1)
+		end
+	end
+
+	if max_tokens and total_tokens >= max_tokens then
+		local excess = total_tokens - max_tokens + 1
+		local acc = 0
+		for _, entry in ipairs(request_tokens) do
+			acc = acc + (entry[2] or 0)
+			if acc >= excess then
+				wait_s = math.max(wait_s, (entry[1] + 60 - now) + 1)
+				break
+			end
+		end
+	end
+
+	if wait_s <= 0 then return 0 end
+	return math.max(0, math.ceil(wait_s * 1000))
+end
+
+-- Check limits and record attempt *only if safe right now*.
+-- On success returns the specific rate entry table for this request (so its response
+-- handler can precisely fill in the token count, even if responses arrive out-of-order).
+-- Returns nil, err if a limit is hit.
+local function check_and_record_request(max_tokens, initial_tokens)
+	cleanup_old_timestamps()
+	local total_tokens = 0
+	local total_requests = #request_tokens
+	for _, entry in ipairs(request_tokens) do
+		total_tokens = total_tokens + (entry[2] or 0)
+	end
+	if initial_tokens then
+		total_tokens = total_tokens + initial_tokens
+	end
+	if config.rpm and total_requests >= config.rpm then
+		return nil, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
+	end
+	if max_tokens and total_tokens >= max_tokens then
+		return nil, "Token rate limit exceeded: " .. max_tokens .. " tokens per minute allowed"
+	end
+	local entry = { os.time(), initial_tokens or 0 }
+	table.insert(request_tokens, entry)
+	return entry
+end
+
+-- Return current observed rate in the sliding window (after cleanup).
+function M.get_rate_limits()
+	cleanup_old_timestamps()
+	local total_tokens = 0
+	local total_requests = #request_tokens
+	for _, entry in ipairs(request_tokens) do
+		total_tokens = total_tokens + (entry[2] or 0)
+	end
+	return {
+		requests = total_requests,
+		tokens = total_tokens,
+	}
+end
+
+-- Cancel any pending auto-throttle timers (e.g. on user stop).
+function M.cancel_pending_waits()
+	for _, timer in ipairs(pending_timers) do
+		pcall(function()
+			timer:stop()
+			timer:close()
+		end)
+	end
+	pending_timers = {}
+end
+
+-- Helper: if we must wait for the rate window, schedule a re-dispatch via timer and return false.
+-- Otherwise record the attempt and return true (caller may then proceed).
+-- retry_fn is a 0-arg function that will re-invoke the original request with captured args.
+local function ensure_rate_limit_or_wait(max_tokens, retry_fn, initial_tokens)
+	local wait_ms = get_required_wait_ms(max_tokens, initial_tokens)
+	if wait_ms > 0 then
+		local timer = vim.uv.new_timer()
+		table.insert(pending_timers, timer)
+		timer:start(wait_ms, 0, function()
+			-- remove this timer from the list
+			for i = #pending_timers, 1, -1 do
+				if pending_timers[i] == timer then
+					table.remove(pending_timers, i)
+					break
+				end
+			end
+			timer:close()
+			-- The timer callback is a "fast event" context. vim.fn.* (tempname, writefile, jobstart etc.)
+			-- are not allowed directly here. Schedule the actual request resume so it runs in a
+			-- normal main-loop context (same as how send_input already wraps user sends).
+			vim.schedule(retry_fn)
+		end)
+		return nil
+	end
+
+	-- Safe: record and proceed. Return the per-request entry so the response
+	-- handler can update *this* entry's token count (no more blind "last" updates).
+	-- initial_tokens (provisional estimate from the messages) is passed so the cost
+	-- of this ongoing request is counted in the tpm window right at dispatch.
+	local entry, err = check_and_record_request(max_tokens, initial_tokens)
+	if not entry then
+		return nil, err
+	end
+	return entry
+end
 
 -- Provider configurations
 
@@ -75,6 +233,11 @@ local providers_config = {
 	z_ai = {
 		url = "https://api.z.ai/api/paas/v4/chat/completions",
 		api_key_env = "Z_AI_API_KEY",
+		api_format = "chat_completions",
+	},
+	xai = {
+		url = "https://api.x.ai/v1/chat/completions",
+		api_key_env = "XAI_API_KEY",
 		api_format = "chat_completions",
 	},
 	-- Generic/custom provider
@@ -210,6 +373,27 @@ local function create_provider_module(provider_name)
 		end
 
 		function M_module.request(model_config, msgs, callback)
+			local function retry()
+				M_module.request(model_config, msgs, callback)
+			end
+			-- Estimate cost of this request so the ongoing request's tokens are
+			-- counted in tpm immediately (real usage will correct the entry later).
+			local provisional = estimate_tokens_from_messages(msgs)
+			-- Add conservative output headroom (we pay for completion tokens too).
+			-- Use max_tokens from options if present (capped for safety).
+			do
+				local max_out = 2048
+				if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
+					max_out = math.min(model_config.options.max_tokens, 4096)
+				end
+				provisional = provisional + max_out
+			end
+			local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
+			if not entry then
+				if err then callback(nil, err) end
+				return
+			end
+
 			for _, msg in ipairs(msgs) do
 				add_history_message(vim.deepcopy(msg))
 			end
@@ -261,6 +445,7 @@ local function create_provider_module(provider_name)
 				log.debug("Request response: " .. vim.inspect(parsed))
 
 				if parsed and parsed.error ~= vim.NIL then
+					commit_call_cost(entry, nil, parsed.error.message)
 					return callback(nil, "Received error: " .. parsed.error.message)
 				end
 
@@ -310,12 +495,36 @@ local function create_provider_module(provider_name)
 					end
 				end
 
+				-- Best-effort token usage for tpm tracking (Responses API) - precise to this request's entry
+				local u = (parsed and parsed.usage and parsed.usage.total_tokens) or nil
+				commit_call_cost(entry, u, nil)
 				callback(fields, nil)
 			end)
 		end
 
 		-- Streaming request for OpenAI Responses API
 		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+			local function retry()
+				M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+			end
+			-- Estimate cost of this request so the ongoing request's tokens are
+			-- counted in tpm immediately (real usage will correct the entry later).
+			local provisional = estimate_tokens_from_messages(msgs)
+			-- Add conservative output headroom (we pay for completion tokens too).
+			-- Use max_tokens from options if present (capped for safety).
+			do
+				local max_out = 2048
+				if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
+					max_out = math.min(model_config.options.max_tokens, 4096)
+				end
+				provisional = provisional + max_out
+			end
+			local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
+			if not entry then
+				if err then on_complete(nil, err) end
+				return
+			end
+
 			for _, msg in ipairs(msgs) do
 				add_history_message(vim.deepcopy(msg))
 			end
@@ -374,6 +583,8 @@ local function create_provider_module(provider_name)
 					if fields.tool_calls then
 						fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
 					end
+					-- precise per-request entry (Responses stream may report usage in final events)
+					commit_call_cost(entry, fields.token_usage, nil)
 					on_complete(fields, nil)
 					return
 				end
@@ -451,25 +662,45 @@ local function create_provider_module(provider_name)
 						table.insert(fields.reasoning_details, reason)
 					end
 				end
+
+				-- Capture usage if the stream event includes it (for tpm tracking)
+				if parsed.usage and parsed.usage.total_tokens then
+					fields.token_usage = parsed.usage.total_tokens
+				end
 			end, function(err)
 				if err then
+					commit_call_cost(entry, nil, err)
 					on_complete(nil, err)
 				end
+				-- success path: [DONE] inside on_chunk already called on_complete
 			end)
 		end
 	else
 		-- Standard cloud provider logic
 		local api_key = os.getenv(provider_config.api_key_env) or ""
-function M_module.request(model_config, msgs, callback)
-    -- Check rate limit before making the request
-    local ok, err = check_rate_limit(config.tpm)
-    if not ok then
-        callback(nil, err)
-        return
-    end
-    table.insert(request_tokens, {os.time(), 0})
+		function M_module.request(model_config, msgs, callback)
+	local function retry()
+		M_module.request(model_config, msgs, callback)
+	end
+	-- Estimate cost of this request (including full context being sent) so the
+	-- ongoing request's tokens are counted in tpm immediately.
+	local provisional = estimate_tokens_from_messages(msgs)
+	-- Add conservative output headroom (we pay for completion tokens too).
+	-- Use max_tokens from options if present (capped for safety).
+	do
+		local max_out = 2048
+		if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
+			max_out = math.min(model_config.options.max_tokens, 4096)
+		end
+		provisional = provisional + max_out
+	end
+	local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
+	if not entry then
+		if err then callback(nil, err) end
+		return
+	end
 
-        local body = {
+		local body = {
             model = model_config.model,
             messages = {},
         }
@@ -501,27 +732,46 @@ function M_module.request(model_config, msgs, callback)
             log.debug("[API] request response: " .. vim.inspect(parsed))
 
             if parsed.error then
+                commit_call_cost(entry, nil, parsed.error.message or "provider error")
                 return callback(nil, parsed.error.message)
             end
 
             local fields, err = common.parse_response(parsed)
-            -- Track token usage after receiving a successful response
-            table.insert(request_tokens, {os.time(), parsed.usage.total_tokens or 0})
+            -- Update *this* request's rate entry with actual tokens (precise, not "last")
+            local usage = parsed and parsed.usage and parsed.usage.total_tokens or nil
+            commit_call_cost(entry, usage, err)
             callback(fields, err)
         end)
 		end
 
 		-- Streaming request
-function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
-    -- Check rate limit before making the request
-    local ok, err = check_rate_limit(config.tpm)
-    if not ok then
-        return on_complete(nil, err)
-    end
-    table.insert(request_tokens, {os.time(), 0})
+		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+	local function retry()
+		M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+	end
+	-- Estimate cost of this request (including full context being sent) so the
+	-- ongoing request's tokens are counted in tpm immediately.
+	local provisional = estimate_tokens_from_messages(msgs)
+	-- Add conservative output headroom (we pay for completion tokens too).
+	-- Use max_tokens from options if present (capped for safety).
+	do
+		local max_out = 2048
+		if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
+			max_out = math.min(model_config.options.max_tokens, 4096)
+		end
+		provisional = provisional + max_out
+	end
+	local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
+	if not entry then
+		if err then on_complete(nil, err) end
+		return
+	end
 
-        local body = build_body(model_config, msgs)
+		local body = build_body(model_config, msgs)
         body.stream = true
+        -- Ask for usage in the final stream chunk so our tpm counter sees real token counts
+        -- (many OpenAI-compatible providers, including Mistral, require/include this).
+        body.stream_options = { include_usage = true }
 
         log.debug("[API] requesting stream " .. provider_config.url .. " with " .. vim.inspect(body))
         local request_body = vim.json.encode(body)
@@ -540,16 +790,16 @@ function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
             on_chunk(chunk_data, nil)
         end, function(_, err)
             if err then
+                commit_call_cost(entry, nil, err)
                 on_complete(nil, err)
                 return
             end
 
-            -- Track token usage after receiving a successful response
-            -- Note: Token tracking may not be possible in streaming mode without parsed data
-            -- This is a limitation and should be addressed if parsed data is available
             if fields.tool_calls then
                 fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
             end
+            -- Update *this* request's rate entry with actual tokens (precise ownership)
+            commit_call_cost(entry, fields.token_usage, nil)
             on_complete(fields, nil)
         end)
 		end

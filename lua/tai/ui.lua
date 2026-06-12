@@ -22,13 +22,31 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
 
 local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
-planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
-coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
+planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
+coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
 -- Global stop flag for hard stop command
 local hard_stop = false
 local pending_tools = nil
 local coder_call = nil
 local current_agent = "planner"  -- Default to planner
+local last_ctx = nil  -- last reported token usage for ctx display in input name
+
+local function update_input_name(token_count)
+	if token_count then
+		last_ctx = token_count
+	end
+	local name = input_bufname
+	local stats = providers_factory.get_rate_limits()
+	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
+	if last_ctx then
+		name = string.format("%s (ctx: %u | %s)", input_bufname, last_ctx, rate_part)
+	else
+		name = string.format("%s (%s)", input_bufname, rate_part)
+	end
+	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
+	end
+end
 
 function M.init()
 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
@@ -79,6 +97,7 @@ function M.init()
 	})
 	M.clear()
 	M.update_chat_name()
+	update_input_name()
 end
 
 function M.append(content)
@@ -107,16 +126,6 @@ function M.append(content)
 	end
 end
 
-local function update_token_display(token_count)
-	local name = input_bufname
-	if token_count then
-		name = string.format("%s (ctx: %u)", input_bufname, token_count)
-	end
-	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
-		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
-	end
-end
-
 function M.update_chat_name()
 	local name = bufname_prefix
 	if config and config.provider and config.model then
@@ -127,6 +136,10 @@ function M.update_chat_name()
 	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
 		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
 	end
+end
+
+function M.update_input_name()
+	update_input_name()
 end
 
 function M.switch_agent()
@@ -289,6 +302,14 @@ local function run_tools(tool_calls, history)
 
 			M.code()
 			goto next
+		elseif name == "todos" then
+			local out = tools.run_todos(args)
+			res.content = out
+			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+		elseif name == "notes" then
+			local out = tools.run_notes(args)
+			res.content = out
+			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Addind image failed: no file field.\n}}}")
@@ -412,11 +433,15 @@ local function send_input()
 			add_sep("___ PLANNER AGENT ")
 			M.task()
 		end
+		update_input_name()
 	end)
 end
 
 function M.stop()
 	hard_stop = true
+	pcall(function()
+		providers_factory.cancel_pending_waits()
+	end)
 	M.append("\n[tai] Stopped by user\n")
 end
 
@@ -480,7 +505,12 @@ function M.clear()
 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
 	current_agent = "planner"
+	last_ctx = nil
+	pcall(function()
+		providers_factory.cancel_pending_waits()
+	end)
 	M.update_chat_name()
+	update_input_name()
 end
 
 function M.task()
@@ -536,7 +566,7 @@ function M.task()
 					M.append("\n}}}\n")
 				end
 				if data.token_usage then
-					update_token_display(data.token_usage)
+					update_input_name(data.token_usage)
 				end
 				if data.error then
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
@@ -575,7 +605,7 @@ function M.task()
 				M.open()
 
 				if fields.token_usage then
-					update_token_display(fields.token_usage)
+					update_input_name(fields.token_usage)
 				end
 				if fields.error then
 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
@@ -662,7 +692,7 @@ function M.code()
 					M.append("\n}}}\n")
 				end
 				if data.token_usage then
-					update_token_display(data.token_usage)
+					update_input_name(data.token_usage)
 				end
 				if data.error then
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
@@ -710,7 +740,7 @@ function M.code()
 				M.open()
 
 				if fields.token_usage then
-					update_token_display(fields.token_usage)
+					update_input_name(fields.token_usage)
 				end
 				if fields.error then
 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")

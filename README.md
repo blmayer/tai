@@ -10,37 +10,38 @@
 
 ## Providers
 
-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
+Tai supports the following providers. Set the corresponding environment variable for your chosen provider:
 
-       GROQ_API_KEY=your_api_key_here
+| Provider | Config value | Environment variable |
+|---|---|---|
+| Gemini | `gemini` | `GEMINI_API_KEY` |
+| Groq | `groq` | `GROQ_API_KEY` |
+| Minimax | `minimax` | `MINIMAX_API_KEY` |
+| Mistral | `mistral` | `MISTRAL_API_KEY` |
+| Ollama (local) | `ollama` | — |
+| llama.cpp (local) | `llama_cpp` | — |
+| OpenAI | `openai_responses` | `OPENAI_API_KEY` |
+| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+| StepFun | `stepfun` | `STEPFUN_API_KEY` |
+| xAI | `xai` | `XAI_API_KEY` |
+| Z.AI | `z_ai` | `ZAI_API_KEY` |
+| Custom | `custom` | — |
 
-for Groq, or:
-
-       GEMINI_API_KEY=your_api_key_here
-
-for Gemini, or:
-
-       ZAI_API_KEY=your_api_key_here
-
-for Z.AI, or:
-
-       OPENAI_API_KEY=your_api_key_here
-
-for OpenAI, or:
-
-       MINIMAX_API_KEY=your_api_key_here
-
-for Minimax, or configure a local Ollama server (localhost:11434).
+Local providers (Ollama, llama.cpp) don't need an API key. The custom provider uses the URL from `options.url` in your `.tai` file.
 
 
-## Integrated workflow
+## Features
 
-Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
-
-- Opens a side panel to display input and responses
-- Minimal, dependency-free Lua code for Neovim
-- Can run commands with safety validation
-- Follows plans for complex tasks
+- **Side panel UI** — responses display in a split buffer with code folding
+- **Planner + Coder agents** — an architect agent plans tasks, a coder agent implements them
+- **Tool use** — agents can read/write files, run shell commands, and send images
+- **In-memory todos & notes** — agents track progress and record discoveries during long tasks
+- **Rate limiting** — configurable requests-per-minute (`rpm`) and tokens-per-minute (`tpm`)
+- **Streaming** — optional streaming responses for real-time output
+- **Extended thinking** — reasoning/thinking support for compatible models
+- **Provider tools** — server-side tools like `web_search` (provider-dependent)
+- **Safety validation** — shell commands go through an allow-list before execution
+- **Minimal, dependency-free** Lua code for Neovim
 
 
 ## Installation
@@ -117,38 +118,65 @@ and load it in your `init.lua`:
 
 ## Project Configuration
 
-tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
+Tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
 
-- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
-- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
-- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
-- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
-- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
-- `think`: Enable extended thinking/reasoning for models that support it.
-- `system_prompt`: Custom system prompt to override the default agent instructions.
-- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
-- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `model` | string | — | Model used for chat completions (e.g., `"grok-4.3"`, `"gemini-2.0-flash"`) |
+| `provider` | string | — | API provider (see Providers table above) |
+| `options` | object | `{}` | Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`) |
+| `provider_tools` | array | `nil` | Provider-side tools (e.g., `["web_search"]`) |
+| `use_tools` | boolean | `true` | Enable/disable agent tools (read, write, edit, shell, todos, notes) |
+| `think` | string | `nil` | Enable extended thinking/reasoning (`"low"`, `"medium"`, `"high"`) |
+| `stream` | boolean | `false` | Enable streaming responses for real-time output |
+| `rpm` | number | `60` | Rate limit: max requests per minute |
+| `tpm` | number | `nil` | Rate limit: max tokens per minute |
+| `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
+| `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
+| `allowed_commands` | object | (see below) | Override allowed shell commands |
+
+Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
 
 Example `.tai` file:
 
 ```json
 {
-	"provider": "groq",
-	"model": "llama-3.1-70b-versatile",
+	"provider": "xai",
+	"model": "grok-4.3",
 	"options": {
 		"temperature": 0.7,
 		"max_tokens": 4096
 	},
+	"stream": true,
 	"use_tools": true,
-	"system_prompt": "You are a senior python programmer. Always write tests.",
-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+	"rpm": 30,
+	"custom_prompt": "Prefer using rust over python for performance-critical code.",
 	"allowed_commands": {
 		"git": true,
 		"npm": true,
-        "make": true
-    }
+		"make": true
+	}
 }
 ```
+
+## Agent Tools
+
+Tai agents have access to the following tools:
+
+| Tool | Available to | Description |
+|---|---|---|
+| `read` | Planner, Coder | Read file contents with optional line range |
+| `shell` | Planner, Coder | Run shell commands (allow-listed) |
+| `edit` | Coder | Edit existing files via old/new text replacement |
+| `write` | Coder | Create new files |
+| `send_image` | Planner, Coder | Send images for visual analysis |
+| `coder_agent` | Planner | Delegate implementation to the coder agent |
+| `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
+| `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
+
+The **todos** tool supports actions: `add`, `update`, `list`. Items have statuses: `pending`, `in_progress`, `done`, `cancelled`.
+
+The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
 
 ## Screenshots
 

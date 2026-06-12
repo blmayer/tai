@@ -2,6 +2,11 @@ local M = {}
 local log = require('tai.log')
 local config = require("tai.config")
 
+-- In-memory stores for agent tools
+M.todos_store = {}  -- list of {id, text, status}
+M.todos_next_id = 1
+M.notes_store = ""  -- single string notepad
+
 M.defs = {
 	read = {
 		type = "function",
@@ -140,6 +145,63 @@ M.defs = {
 				},
 				additionalProperties = false,
 				required = { "file", "old_text", "new_text" }
+			}
+		}
+	},
+	todos = {
+		type = "function",
+		["function"] = {
+			name = "todos",
+			description =
+			"In-memory todo list to track progress on multi-step tasks. Use for tasks with 3+ steps. Actions: 'add' creates a new item, 'update' changes status/text of an existing item, 'list' returns all items.",
+			parameters = {
+				type = "object",
+				properties = {
+					action = {
+						type = "string",
+						description = "The action to perform: 'add', 'update', or 'list'.",
+						enum = { "add", "update", "list" }
+					},
+					text = {
+						type = "string",
+						description = "Description of the todo item. Required for 'add', optional for 'update' (to change text)."
+					},
+					id = {
+						type = "number",
+						description = "ID of the todo item. Required for 'update'."
+					},
+					status = {
+						type = "string",
+						description = "Status of the item. For 'add' defaults to 'pending'. For 'update' changes the status.",
+						enum = { "pending", "in_progress", "done", "cancelled" }
+					}
+				},
+				additionalProperties = false,
+				required = { "action" }
+			}
+		}
+	},
+	notes = {
+		type = "function",
+		["function"] = {
+			name = "notes",
+			description =
+			"In-memory scratchpad for registering discoveries, important thoughts, decisions, and context gathered during the task. Use this to persist insights across tool calls so you don't lose track. Actions: 'read' returns current notes, 'write' overwrites with new content, 'append' adds to existing notes.",
+			parameters = {
+				type = "object",
+				properties = {
+					action = {
+						type = "string",
+						description = "The action: 'read', 'write', or 'append'.",
+						enum = { "read", "write", "append" }
+					},
+					content = {
+						type = "string",
+						description = "The content to write or append. Required for 'write' and 'append'."
+					}
+				},
+				additionalProperties = false,
+				required = { "action" }
 			}
 		}
 	},
@@ -464,6 +526,74 @@ function M.edit(file, old_text, new_text)
 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
 
 	return "Patched " .. file
+end
+
+function M.run_todos(args)
+	local action = args.action
+	if action == "add" then
+		if not args.text or args.text == "" then
+			return "Error: 'text' is required for 'add'"
+		end
+		local item = {
+			id = M.todos_next_id,
+			text = args.text,
+			status = args.status or "pending",
+		}
+		table.insert(M.todos_store, item)
+		M.todos_next_id = M.todos_next_id + 1
+		return string.format("Added todo #%d: [%s] %s", item.id, item.status, item.text)
+	elseif action == "update" then
+		if not args.id then
+			return "Error: 'id' is required for 'update'"
+		end
+		for _, item in ipairs(M.todos_store) do
+			if item.id == args.id then
+				if args.status then item.status = args.status end
+				if args.text then item.text = args.text end
+				return string.format("Updated todo #%d: [%s] %s", item.id, item.status, item.text)
+			end
+		end
+		return "Error: todo #" .. tostring(args.id) .. " not found"
+	elseif action == "list" then
+		if #M.todos_store == 0 then
+			return "No todos yet."
+		end
+		local lines = {}
+		for _, item in ipairs(M.todos_store) do
+			table.insert(lines, string.format("#%d [%s] %s", item.id, item.status, item.text))
+		end
+		return table.concat(lines, "\n")
+	else
+		return "Error: unknown action '" .. tostring(action) .. "'"
+	end
+end
+
+function M.run_notes(args)
+	local action = args.action
+	if action == "read" then
+		if M.notes_store == "" then
+			return "(empty)"
+		end
+		return M.notes_store
+	elseif action == "write" then
+		if not args.content then
+			return "Error: 'content' is required for 'write'"
+		end
+		M.notes_store = args.content
+		return "Notes updated."
+	elseif action == "append" then
+		if not args.content then
+			return "Error: 'content' is required for 'append'"
+		end
+		if M.notes_store == "" then
+			M.notes_store = args.content
+		else
+			M.notes_store = M.notes_store .. "\n" .. args.content
+		end
+		return "Notes appended."
+	else
+		return "Error: unknown action '" .. tostring(action) .. "'"
+	end
 end
 
 return M

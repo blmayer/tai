@@ -20,6 +20,7 @@ function M.reload(opts)
 		return
 	end
 	ui.update_chat_name()
+	ui.update_input_name()
 	vim.notify("tai: config reloaded", vim.log.levels.INFO)
 end
 

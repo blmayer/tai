@@ -18,11 +18,15 @@ agents directly to your editor.
 
 <b>features</b>
 
-- agents can read files and run commands
-- responses show up in a split buffer in Neovim
-- apply patches or run commands
-- agents create plans for big code changes
-- code folding in the chat
+- planner + coder agents for complex tasks
+- read/write files and run shell commands
+- in-memory todos &amp; notes for tracking progress
+- rate limiting (rpm/tpm)
+- streaming responses
+- extended thinking/reasoning support
+- provider-side tools (e.g. web_search)
+- safety validation for shell commands
+- code folding in the chat buffer
 
 
 <i>providers</i>
@@ -31,12 +35,13 @@ agents directly to your editor.
 - groq
 - minimax
 - mistral
-- local
-- ollama
+- ollama / llama.cpp (local)
 - openai
 - openrouter
 - stepfun
+- xai
 - z.ai
+- custom
 
 
 <b>keybindings</b>
@@ -83,42 +88,53 @@ tai reads configuration from a <i>.tai</i> JSON file
 in your project root. the following options are
 supported:
 
-- <i>model</i>: the model used for chat completions
-- <i>provider</i>: one of: groq, gemini, mistral,
-  z_ai, openai, openrouter, stepfun, local, minimax.
+- <i>model</i>: the model for chat completions
+- <i>provider</i>: see providers list above
 - <i>options</i>: provider-specific options passed
-  to the API (e.g., temperature, max_tokens). See
-  the provider's API docs.
+  to the API (e.g., temperature, max_tokens)
 - <i>provider_tools</i>: array of provider-side
-  tools (e.g., ["web_browser"] for OpenAI).
-- <i>use_tools</i>: boolean to enable/disable agent
-  tools. default is true. if false, the agent won't
-  have access to file read/write or the shell tool.
-- <i>think</i>: enable extended thinking/reasoning
-  for models that support it.
-- <i>system_prompt</i>: custom system prompt to
-  override the default agent instructions.
-- <i>custom_prompt</i>: additional prompt text
-  appended to the system prompt. useful for adding
-  extra instructions without replacing the default.
-- <i>allowed_commands</i>: override the default
-  list of allowed shell commands. by default, tai
-  allows: cat, grep, ag, rg, ls, head, tail, wc,
-  diff, sort, uniq, find, file, stat, date, echo,
-  tree, pwd, which, type.
+  tools (e.g., ["web_search"])
+- <i>use_tools</i>: enable/disable agent tools
+  (default: true)
+- <i>stream</i>: enable streaming responses
+  (default: false)
+- <i>think</i>: extended thinking/reasoning level
+  ("low", "medium", "high")
+- <i>rpm</i>: max requests per minute (default: 60)
+- <i>tpm</i>: max tokens per minute
+- <i>system_prompt</i>: replace default agent prompt
+- <i>custom_prompt</i>: append to default prompt
+- <i>allowed_commands</i>: override allowed shell
+  commands
+
+
+<b>agent tools</b>
+
+- <i>read</i>: read files with optional line range
+- <i>shell</i>: run allow-listed shell commands
+- <i>edit</i>: edit files via old/new replacement
+- <i>write</i>: create new files
+- <i>send_image</i>: send images for analysis
+- <i>coder_agent</i>: delegate to coder agent
+- <i>todos</i>: in-memory todo list (add/update/list)
+  with statuses: pending, in_progress, done, cancelled
+- <i>notes</i>: in-memory scratchpad (read/write/append)
+  for tracking discoveries and context
+
 
 example .tai file:
 
 {
-	"provider": "groq",
-	"model": "llama-3.1-70b-versatile",
+	"provider": "xai",
+	"model": "grok-4.3",
 	"options": {
 		"temperature": 0.7,
 		"max_tokens": 4096
 	},
+	"stream": true,
 	"use_tools": true,
-	"system_prompt": "You are a senior python programmer. Always write tests.",
-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+	"rpm": 30,
+	"custom_prompt": "Prefer rust for performance.",
 	"allowed_commands": {
 		"git": true,
 		"npm": true,
@@ -131,8 +147,8 @@ example .tai file:
 
 <b>usage</b>
 
-make sure the correct env var is set: <i>GROQ_API_KEY</i>,
-for Groq or <i>GEMINI_API_KEY</i> for Gemini etc.
+make sure the correct env var is set for your provider:
+<i>XAI_API_KEY</i>, <i>GROQ_API_KEY</i>, <i>GEMINI_API_KEY</i>, etc.
 create a .tai file at the root or your project.
 editting any file in that project should start tai.
 then just use the keybindings above.

@@ -19,6 +19,8 @@ log.debug("Root is " .. M.root)
 
 -- Provider-side tools (e.g., web_browser for OpenAI)
 M.provider_tools = nil
+M.rpm = 60
+M.tpm = nil
 
 -- Default allowed shell commands
 M.default_allowed_commands = {
@@ -73,7 +75,8 @@ function M.reload()
 	M.provider_tools = data.provider_tools
 	M.system_prompt = data.system_prompt or nil
 	M.custom_prompt = data.custom_prompt or nil
-	M.rpm = data.rpm or 60  -- Default to 60 if not provided
+	M.rpm = data.rpm or 60
+	M.tpm = data.tpm
 
 	return true
 end
