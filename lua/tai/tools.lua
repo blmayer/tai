@@ -580,7 +580,7 @@ function M.run_notes(args)
 			return "Error: 'content' is required for 'write'"
 		end
 		M.notes_store = args.content
-		return "Notes updated."
+		return "Notes updated: " .. args.content
 	elseif action == "append" then
 		if not args.content then
 			return "Error: 'content' is required for 'append'"
@@ -590,10 +590,9 @@ function M.run_notes(args)
 		else
 			M.notes_store = M.notes_store .. "\n" .. args.content
 		end
-		return "Notes appended."
-	else
-		return "Error: unknown action '" .. tostring(action) .. "'"
+		return "Note appended: " .. args.content
 	end
+	return "Error: unknown action '" .. tostring(action) .. "'"
 end
 
 return M

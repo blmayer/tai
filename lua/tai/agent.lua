@@ -9,6 +9,8 @@ end
 local host = vim.uv.os_uname()
 
 local tool_usage = [[
+## Tool Usage
+
 You can use tools to help on your task.
 
 - Don't use `cat` for just reading files instead use `read` tool. Binary files
@@ -35,23 +37,17 @@ tools to stay organized. Follow this strategy:
 
 1. **At the start**: Use `todos` (action: "add") to break the task into steps.
    Use `notes` (action: "write") to record the overall goal and any context.
-
 2. **Before starting a step**: Use `todos` (action: "update") to mark it
    "in_progress". Only one item should be in_progress at a time.
-
 3. **After completing a step**: Use `todos` (action: "update") to mark it
    "done" immediately — never batch completions.
-
 4. **After a discovery**: When you learn something important from a tool call
    (e.g. file structure, error output, a key decision), use `notes`
    (action: "append") to record it. This prevents losing context.
-
 5. **Periodically**: Use `todos` (action: "list") to review remaining work
    after completing a step or before deciding what to do next.
-
 6. **On new findings**: If you discover additional work is needed, use `todos`
    (action: "add") to add new items rather than forgetting them.
-
 The `notes` tool is your scratchpad — use it to record: key file paths found,
 decisions made, patterns observed, error messages, and anything you'd want to
 remember later in a long task.
@@ -99,7 +95,6 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - NEVER send empty messages, at least tell what are doing so the user knows what
   to expect.
 
-### Tool Usage
 ]] .. tool_usage
 
 M.planner_system_prompt = config.planner_system_prompt or M.planner_system_prompt
@@ -134,7 +129,6 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
   response you MUST report your failures, things that need improvement, and task
   implementation details.
 
-### Tool Usage
 ]] .. tool_usage
 
 return M

@@ -8,7 +8,16 @@ M.ERROR = 4
 
 -- Current log level (default to INFO)
 M.level = M.INFO
-M.log_file = os.getenv("HOME") .. "/.cache/tai.log"
+
+-- Use XDG cache directory for logs
+local function get_xdg_cache_dir()
+  local xdg_cache = os.getenv("XDG_CACHE_HOME")
+  if xdg_cache and xdg_cache ~= "" then
+    return xdg_cache
+  end
+  return os.getenv("HOME") .. "/.cache"
+end
+M.log_file = get_xdg_cache_dir() .. "/tai.log"
 
 -- Set the log level
 function M.set_level(level)

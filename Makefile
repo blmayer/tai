@@ -10,11 +10,25 @@ install_deps:
 	luarocks install luacheck
 
 # Run Busted tests
-.PHONY: test
-
-test:
+.PHONY: test-busted
+test-busted:
 	@echo "Running Busted tests..."
 	busted lua/tai/spec
+
+# Run custom/manual tests (these require a real Neovim instance)
+.PHONY: test-custom
+test-custom:
+	@echo "Running custom tests (nvim headless)..."
+	@for f in lua/tai/tests/*_test.lua; do \
+		echo "  Running $$f"; \
+		nvim --headless -u NONE --noplugin -c "luafile $$f" -c 'qa' || exit 1; \
+	done
+	@echo "Custom tests completed."
+
+# Run all tests
+.PHONY: test
+test: test-busted test-custom
+	@echo "All tests completed."
 
 # Run Luacheck linting
 .PHONY: lint

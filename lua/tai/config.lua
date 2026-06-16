@@ -22,6 +22,15 @@ M.provider_tools = nil
 M.rpm = 60
 M.tpm = nil
 
+-- Context persistence configuration
+M.context = {
+  enabled = true,
+  cache_dir = nil,
+  auto_save = true,
+  save_on_shutdown = true,
+  file_name = "tai_context.json"
+}
+
 -- Default allowed shell commands
 M.default_allowed_commands = {
 	cat = true,
@@ -77,6 +86,13 @@ function M.reload()
 	M.custom_prompt = data.custom_prompt or nil
 	M.rpm = data.rpm or 60
 	M.tpm = data.tpm
+
+	-- Context persistence settings
+	M.context.enabled = data.context and data.context.enabled ~= false
+	M.context.cache_dir = data.context and data.context.cache_dir
+	M.context.auto_save = data.context and data.context.auto_save ~= false
+	M.context.save_on_shutdown = data.context and data.context.save_on_shutdown ~= false
+	M.context.file_name = data.context and data.context.file_name or M.context.file_name
 
 	return true
 end

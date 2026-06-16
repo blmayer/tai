@@ -10,6 +10,13 @@ function M.setup(opts)
 	if not config.provider then
 		return
 	end
+
+	-- Initialize context module if enabled
+	if config.context and config.context.enabled then
+		local context = require("tai.context")
+		context.setup(config.context)
+	end
+
 	ui.init()
 end
 
