@@ -330,7 +330,7 @@ local function run_tools(tool_calls, history)
 				res.content = "missing file field"
 				goto continue
 			end
-			local out = tools.edit(args.file, args.old_text, args.new_text)
+			local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
 			res.content = out
 			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
 		elseif name == "write" then

@@ -145,7 +145,7 @@ M.defs = {
 		["function"] = {
 			name = "edit",
 			description =
-			"Use this to edit existing files by providing the old content changed. If old_text is empty, changes are made at the start of the file.",
+			"Use this to edit existing files by providing the old content changed. If old_text is empty, changes are made at the start of the file. Matching uses line-by-line comparison after normalizing whitespace (collapse runs of spaces, trim). If the first line of old_text appears multiple times, the matcher tries all possible alignments until the full old_text block matches.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -156,11 +156,15 @@ M.defs = {
 					old_text = {
 						type = "string",
 						description =
-						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
+						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
 					},
 					new_text = {
 						type = "string",
 						description = "New content to replace old_text in the file."
+					},
+					multi = {
+						type = "boolean",
+						description = "If true, replace every matching occurrence of the old_text block (instead of only the first match). Use when the same change should be applied in multiple places."
 					}
 				},
 				additionalProperties = false,
@@ -482,10 +486,49 @@ function M.write(file, content)
 end
 
 local function normalize_whitespace(str)
-	return str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
+	-- Use parentheses to force only the first return value from the final gsub.
+	-- (gsub returns the string plus the replacement count; we only want the string.)
+	return (str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
-function M.edit(file, old_text, new_text)
+-- Find all 0-based starting line numbers where the exact sequence of
+-- (normalized) old_lines appears contiguously in the buffer lines.
+-- This replaces the previous streaming/greedy matcher so that when the
+-- first line of old_text occurs multiple times we still consider later
+-- candidate alignments for the full block (instead of failing after the
+-- first partial prefix match).
+local function find_match_starts(lines, old_lines)
+	if not old_lines or #old_lines == 0 then
+		return {}
+	end
+	local norm_buf = {}
+	for _, line in ipairs(lines) do
+		table.insert(norm_buf, normalize_whitespace(line))
+	end
+	local norm_old = {}
+	for _, line in ipairs(old_lines) do
+		table.insert(norm_old, normalize_whitespace(line))
+	end
+
+	local starts = {}
+	local n = #norm_buf
+	local m = #norm_old
+	for i = 1, n - m + 1 do
+		local is_match = true
+		for k = 1, m do
+			if norm_buf[i + k - 1] ~= norm_old[k] then
+				is_match = false
+				break
+			end
+		end
+		if is_match then
+			table.insert(starts, i - 1) -- 0-based for nvim_buf_set_lines
+		end
+	end
+	return starts
+end
+
+function M.edit(file, old_text, new_text, multi)
 	log.debug("Running edit for: " .. file .. " with old_text: " .. (old_text or "nil"))
 
 	if file:sub(1, 1) == "/" then
@@ -513,31 +556,34 @@ function M.edit(file, old_text, new_text)
 		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 		local old_lines = vim.split(old_text or "", '\n')
 
-		-- Find position based on old_text
-		local end_line = 0 -- Default to start of file
+		local matches = find_match_starts(current_lines, old_lines)
 
-		-- Search for old_text in current buffer content
-		local j = 1
-		for i, line in ipairs(current_lines) do
-			if j > #old_lines then
-				break
-			end
-			local norm_line = normalize_whitespace(line)
-			local norm_old_line = normalize_whitespace(old_lines[j])
-			if norm_line == norm_old_line then
-				end_line = i
-				j = j + 1
-			else
-				j = 1
-			end
+		if #matches == 0 then
+			-- Close the temp buffer we opened so we don't leave stray windows
+			pcall(vim.api.nvim_buf_delete, buf, { force = true })
+			return "Error: could not find old_text block in file (after whitespace normalization)."
 		end
 
-		if j < #old_lines then
-			return "Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
+		if multi then
+			-- Apply from bottom to top so earlier (smaller) line numbers stay valid
+			-- while we edit later parts of the file.
+			local starts = {}
+			for _, s in ipairs(matches) do table.insert(starts, s) end
+			table.sort(starts, function(a, b) return a > b end)
+			for _, start0 in ipairs(starts) do
+				local stop0 = start0 + #old_lines
+				vim.api.nvim_buf_set_lines(buf, start0, stop0, false, new_lines)
+			end
+		else
+			-- Non-multi: use the earliest match (first occurrence in file order).
+			-- The full-block search (instead of the old streaming matcher) ensures
+			-- that even if the first line of old_text appears earlier without a
+			-- following full match, we still find a later correct alignment for the
+			-- whole block.
+			local start0 = matches[1]
+			local stop0 = start0 + #old_lines
+			vim.api.nvim_buf_set_lines(buf, start0, stop0, false, new_lines)
 		end
-
-		-- Replace the line matching old_text with new_text
-		vim.api.nvim_buf_set_lines(buf, end_line - j + 1, end_line, false, new_lines)
 	else
 		vim.api.nvim_buf_set_lines(buf, 0, 0, false, new_lines)
 	end
