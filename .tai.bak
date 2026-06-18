@@ -1,0 +1,8 @@
+{
+	"provider": "minimax",
+	"model": "MiniMax-M2.7",
+	"stream": true,
+	"options": {
+		"reasoning_split": true
+	}
+}

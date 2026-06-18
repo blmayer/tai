@@ -79,7 +79,7 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
      any other information that can help the agent to correcty implement the
      task. If changes are not needed go to 6.
   3. Show the plan and REQUEST AUTHORIZATION.
-     - In positive case call the `coder_agent` tool with the detailed list to
+     - In positive case call the `coder` tool with the detailed list to
      start the implementation.
   4. When the coder finishes the task you MUST do a code review of the affected
      files, including:
@@ -88,7 +88,7 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
      - Verify if the solution implemented works by running builds or programs.
      - Check if the solution satisfies the user's request.
   5. If it passes go to 6. Else generate a new plan based on the current state,
-     with the fixes needed and call the `coder_agent` tool with the new plan.
+     with the fixes needed and call the `coder` tool with the new plan.
   6. Write a summary of what changed and how the solution works to the user.
 - Each call to the coder agent starts with a clean context, so if you want the
   agent to consider past interactions include the content in the prompt.
@@ -123,11 +123,16 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - Check if your changes are correct by reading the affected parts, building the
   project or checking linter etc.
 - If tests are avaliable run the necessary ones, be clever to not take too long.
-- When you finish all tasks tell which files and lines you changed, what you
-  changed in the functions, be detailed.
-- Respond without any tool calls to indicate you finished your job, in your last
-  response you MUST report your failures, things that need improvement, and task
-  implementation details.
+- When you finish all tasks, call the `planner` tool (instead of a plain final
+  response). Pass a single `prompt` string containing a detailed report:
+  - Which files/lines were changed and exactly what was modified in each function.
+  - Verification performed (builds, tests run, manual checks, reads of results).
+  - Any failures encountered or areas needing improvement.
+  - How the implemented changes satisfy the original request from the planner.
+- The `planner` tool returns immediately with "planner is working on the task.";
+  your report will be delivered to the planner (in its own history) so it can
+  review, summarize to the user, or call you again with fixes if needed.
+- Always use the planner handoff to conclude a task delegation.
 
 ]] .. tool_usage
 

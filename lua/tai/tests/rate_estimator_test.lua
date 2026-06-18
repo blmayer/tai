@@ -24,7 +24,7 @@ local providers = dofile("./lua/tai/providers.lua")
 local planner_system = agent.planner_system_prompt
 
 -- Planner tools (from ui.lua planner_config.tools)
-local planner_tool_names = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
+local planner_tool_names = { "read", "shell", "send_image", "coder", "todos", "notes" }
 local planner_tools = {}
 for _, name in ipairs(planner_tool_names) do
   if tools.defs[name] then

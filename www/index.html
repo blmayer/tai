@@ -106,6 +106,8 @@ supported:
 - <i>custom_prompt</i>: append to default prompt
 - <i>allowed_commands</i>: override allowed shell
   commands
+- <i>auto_approve</i>: if true, auto-run shell commands
+  without the y/n/s confirmation prompt (use with care)
 
 
 <b>agent tools</b>
@@ -115,7 +117,8 @@ supported:
 - <i>edit</i>: edit files via old/new replacement
 - <i>write</i>: create new files
 - <i>send_image</i>: send images for analysis
-- <i>coder_agent</i>: delegate to coder agent
+- <i>coder</i>: (for planner) delegate to coder agent with prompt (gets "coder is working..." ack; coder has own history)
+- <i>planner</i>: (for coder) hand back report to planner at end of task (gets ack; planner receives report in its history)
 - <i>todos</i>: in-memory todo list (add/update/list)
   with statuses: pending, in_progress, done, cancelled
 - <i>notes</i>: in-memory scratchpad (read/write/append)

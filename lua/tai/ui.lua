@@ -22,24 +22,36 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
 
 local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
-planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
-coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
+planner_config.tools = { "read", "shell", "send_image", "coder", "todos", "notes" }
+coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes", "planner" }
 -- Global stop flag for hard stop command
 local hard_stop = false
 local pending_tools = nil
-local coder_call = nil
 local current_agent = "planner"  -- Default to planner
-local last_ctx = nil  -- last reported token usage for ctx display in input name
+local current_job = nil  -- for live shell commands (long-running / progress)
+
+local function get_agent_ctx()
+	local hist = (current_agent == "coder") and coder_history or planner_history
+	for i = #hist, 1, -1 do
+		local msg = hist[i]
+		if msg and type(msg.token_usage) == "number" then
+			return msg.token_usage
+		end
+	end
+	return nil
+end
 
 local function update_input_name(token_count)
-	if token_count then
-		last_ctx = token_count
-	end
+	-- Derive ctx from the last assistant message in the *current agent's* history
+	-- (the authoritative source). No separate per-agent storage.
+	-- Responses already insert the assistant message (which carries token_usage)
+	-- before update_input_name is called in completion paths.
+	local current_ctx = get_agent_ctx()
 	local name = input_bufname
 	local stats = providers_factory.get_rate_limits()
 	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
-	if last_ctx then
-		name = string.format("%s (ctx: %u | %s)", input_bufname, last_ctx, rate_part)
+	if current_ctx then
+		name = string.format("%s (ctx: %u | %s)", input_bufname, current_ctx, rate_part)
 	else
 		name = string.format("%s (%s)", input_bufname, rate_part)
 	end
@@ -149,6 +161,7 @@ function M.switch_agent()
 		current_agent = "planner"
 	end
 	M.update_chat_name()
+	update_input_name()
 end
 
 function M.focus_input()
@@ -204,6 +217,59 @@ local function refresh_and_close_folds()
 	end)
 end
 
+-- Run a shell command using an async job but block the caller (via jobwait slices)
+-- so that stdout/stderr is streamed live via M.append as it is produced.
+-- This gives progress output for long-running commands (downloads, builds, etc.)
+-- inside the usual fold, while preserving the original sync control flow for
+-- tool sequencing and when to call M.continue.
+-- The caller must write the opening "{{{ Running: ..." line (and the closing later).
+-- Returns the full collected output (for the tool result sent back to the LLM).
+local function run_live_shell(command)
+	local chunks = {}
+	local exit_code = 0
+	local shell = vim.o.shell or "sh"
+	local flag = vim.o.shellcmdflag or "-c"
+	local full_cmd = command .. " 2>&1"
+
+	local job = vim.fn.jobstart({ shell, flag, full_cmd }, {
+		on_stdout = function(_, data, _)
+			if data then
+				local text = table.concat(data, "\n")
+				if text ~= "" then
+					M.append(text)
+					table.insert(chunks, text)
+				end
+			end
+		end,
+		on_exit = function(_, code, _)
+			exit_code = code or 0
+		end,
+	})
+
+	current_job = job
+	if job <= 0 then
+		current_job = nil
+		return "Failed to start: " .. command
+	end
+
+	-- Small timeouts let scheduled appends (from on_stdout) and other events run,
+	-- so the user sees progress live in the buffer even though we are logically "blocking".
+	while vim.fn.jobwait({ job }, 100)[1] == -1 do
+		if hard_stop then
+			pcall(vim.fn.jobstop, job)
+			break
+		end
+	end
+
+	current_job = nil
+
+	local full = table.concat(chunks, "")
+	if exit_code ~= 0 then
+		full = full .. "\n[exit " .. tostring(exit_code) .. "]"
+	end
+	return full
+end
+
 local function run_tools(tool_calls, history)
 	M.append("\n")
 	local stop = false
@@ -223,11 +289,12 @@ local function run_tools(tool_calls, history)
 			goto continue
 		end
 		if name == "shell" then
-			if not tools.unsafe_command(args.command) then
+			local unsafe = tools.unsafe_command(args.command)
+			if not unsafe or config.auto_approve then
 				log.debug("Executing allowed command: " .. args.command)
-				M.append("{{{ Running: " .. args.command .. "\n")
-				local out = tools.exec_command(args.command)
-				M.append(out or "")
+				local label = unsafe and "Auto-approved" or "Running"
+				M.append("{{{ " .. label .. ": " .. args.command .. "\n")
+				local out = run_live_shell(args.command)
 				M.append("\n}}}\n")
 				res.content = out
 			else
@@ -281,7 +348,7 @@ local function run_tools(tool_calls, history)
 			local out = tools.write(args.file, args.content)
 			res.content = out
 			M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
-		elseif name == "coder_agent" then
+		elseif name == "coder" then
 			if not args.prompt then
 				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
 				res.content = "Missing prompt field"
@@ -292,16 +359,41 @@ local function run_tools(tool_calls, history)
 			add_sep("___ CODER AGENT ")
 
 			stop = true
-			coder_call = vim.deepcopy(res)
+			res.content = "coder is working on the task."
 			coder_history = {
 				{ role = "system", content = agent.coder_system_prompt },
 				{ role = "user", content = args.prompt }
 			}
 			current_agent = "coder"
 			M.update_chat_name()
+			update_input_name()
 
-			M.code()
-			goto next
+			M.continue()
+			-- fall through to insert the stub res.content into caller's (planner) history
+		elseif name == "planner" then
+			if not args.prompt then
+				M.append("{{{ Calling planner failed: no prompt field.\n}}}\n")
+				res.content = "Missing prompt field"
+				goto continue
+			end
+
+			M.append("{{{ Calling planner agent\nReport:\n" .. args.prompt .. "\n}}}\n")
+			add_sep("___ PLANNER AGENT ")
+
+			res.content = "planner is working on the task."
+			-- Deliver the coder's final report into the planner's independent history
+			-- as a fresh user message so planner can review / summarize / re-task.
+			table.insert(planner_history, {
+				role = "user",
+				content = "Coder agent has completed its work and handed back. Report from coder:\n\n" .. args.prompt
+			})
+			current_agent = "planner"
+			M.update_chat_name()
+			update_input_name()
+
+			M.continue()
+			-- fall through to insert the stub res.content into caller's (coder) history
+			stop = true
 		elseif name == "todos" then
 			local out = tools.run_todos(args)
 			res.content = out
@@ -388,24 +480,25 @@ local function send_input()
 			}
 			local response = input:lower():gsub("^%s*(.-)%s*$", "%1")
 
+			M.append(input .. "\n")
+
 			if response == "y" or response == "yes" then
 				log.debug("Confirmed")
 				M.append("Confirmed...\n")
 				M.append("{{{ Running: " .. args.command .. "\n")
-				local out = tools.exec_command(args.command)
-				M.append(out or "")
+				local out = run_live_shell(args.command)
 				M.append("\n}}}\n")
 				res.content = out
 			elseif response == "s" or response == "stop" then
 				log.debug("Stopped")
 				M.append("Stopped\n")
-				M.append("{{{ Stopped at " .. args.command .. "\n}}}\n")
+				M.append("{{{ Stopped at " .. args.command .. " (user: " .. input .. ")\n}}}\n")
 				-- Add to history
 				hard_stop = true
 				res.content = "User stopped execution."
 			else
 				log.debug("Declined")
-				M.append("{{{ Declined " .. args.command .. "\n\n}}}\n")
+				M.append("{{{ Declined " .. args.command .. " (user: " .. input .. ")\n}}}\n")
 				-- Add to history
 				res.content = "User declined running this command"
 				-- Treat any other input as decline
@@ -428,17 +521,20 @@ local function send_input()
 		log.debug("[UI] got user input: " .. input)
 		if current_agent == "coder" then
 			add_sep("___ CODER AGENT ")
-			M.code()
 		else
 			add_sep("___ PLANNER AGENT ")
-			M.task()
 		end
+		M.continue()
 		update_input_name()
 	end)
 end
 
 function M.stop()
 	hard_stop = true
+	if current_job then
+		pcall(vim.fn.jobstop, current_job)
+		current_job = nil
+	end
 	pcall(function()
 		providers_factory.cancel_pending_waits()
 	end)
@@ -505,7 +601,6 @@ function M.clear()
 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
 	current_agent = "planner"
-	last_ctx = nil
 	pcall(function()
 		providers_factory.cancel_pending_waits()
 	end)
@@ -513,15 +608,20 @@ function M.clear()
 	update_input_name()
 end
 
-function M.task()
+function M.continue()
+	local is_coder = current_agent == "coder"
+	local hist = is_coder and coder_history or planner_history
+	local cfg = is_coder and coder_config or planner_config
+	local agent_label = is_coder and "Coder Agent" or "Agent"
+
 	if config.stream then
-		log.info("Agent executing streaming task")
+		log.info(agent_label .. " executing streaming task")
 
 		local think_start = true
 		local content_start = true
 		provider.request_stream(
-			planner_config,
-			planner_history,
+			cfg,
+			hist,
 			function(chunk, err)
 				if err then
 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
@@ -553,59 +653,62 @@ function M.task()
 				log.debug("[UI] got message completed: " .. vim.inspect(data))
 				if err then
 					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
-					table.insert(planner_history, { role = "assistant", content = err })
+					table.insert(hist, { role = "assistant", content = err })
 					return
 				end
 				local response = { role = "assistant" }
 				for k, v in pairs(data) do
 					response[k] = v
 				end
-				table.insert(planner_history, response)
+				table.insert(hist, response)
 
 				if not think_start and content_start then
 					M.append("\n}}}\n")
 				end
 				if data.token_usage then
-					update_input_name(data.token_usage)
+					update_input_name()
 				end
 				if data.error then
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 				end
 				if not data.tool_calls or #data.tool_calls == 0 then
+					if is_coder then
+						log.debug("[UI] coder finished (no more tool calls)")
+					end
 					return
 				end
 
 				log.debug("[UI] running tools")
-				local stop = run_tools(data.tool_calls, planner_history)
+				local stop = run_tools(data.tool_calls, hist)
 				if stop or hard_stop then
 					log.debug("[UI] stopped")
 					return
 				end
-				M.task()
+				M.continue()
 			end
 		)
 	else
-		log.info("Agent executing task")
+		log.info(agent_label .. " executing task")
 		provider.request(
-			planner_config,
-			planner_history,
+			cfg,
+			hist,
 			function(fields, err)
 				if err then
 					M.append("{{{ Error\n" .. err .. "\n}}}")
-					table.insert(planner_history, { role = "assistant", content = err })
+					table.insert(hist, { role = "assistant", content = err })
 					return
 				end
 				local response = { role = "assistant" }
 				for k, v in pairs(fields) do
 					response[k] = v
 				end
-				table.insert(planner_history, response)
+				table.insert(hist, response)
 
 				log.debug("[UI] processing response: " .. vim.inspect(fields))
 				M.open()
 
 				if fields.token_usage then
-					update_input_name(fields.token_usage)
+					update_input_name()
 				end
 				if fields.error then
 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
@@ -622,159 +725,20 @@ function M.task()
 				end
 
 				if not fields.tool_calls or #fields.tool_calls == 0 then
+					if is_coder then
+						log.debug("[UI] coder finished (no more tool calls)")
+					end
 					return
 				end
 
 				vim.schedule(function()
 					log.debug("[UI] running tools")
-					local stop = run_tools(fields.tool_calls, planner_history)
+					local stop = run_tools(fields.tool_calls, hist)
 					if stop or hard_stop then
 						log.debug("[UI] stopped")
 						return
 					end
-					M.task()
-				end)
-			end
-		)
-	end
-end
-
-function M.code()
-	if config.stream then
-		log.info("Coder Agent executing streaming task")
-
-		local think_start = true
-		local content_start = true
-		provider.request_stream(
-			coder_config,
-			coder_history,
-			function(chunk, err)
-				if err then
-					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
-					return
-				end
-
-				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
-				if chunk.reasoning and #chunk.reasoning > 0 then
-					if think_start then
-						M.append("{{{ Thinking \n" .. chunk.reasoning)
-						think_start = false
-					else
-						M.append(chunk.reasoning)
-					end
-				end
-
-				if chunk.content and chunk.content ~= "" then
-					if content_start and not think_start then
-						M.append("\n}}}\n")
-						refresh_and_close_folds()
-						content_start = false
-					end
-
-					M.append(chunk.content)
-				end
-				log.debug("[UI] updated chat")
-			end,
-			function(data, err)
-				log.debug("[UI] got message completed: " .. vim.inspect(data))
-				if err then
-					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
-					table.insert(coder_history, { role = "assistant", content = err })
-					return
-				end
-				local response = { role = "assistant" }
-				for k, v in pairs(data) do
-					response[k] = v
-				end
-				table.insert(coder_history, response)
-
-				if not think_start and content_start then
-					M.append("\n}}}\n")
-				end
-				if data.token_usage then
-					update_input_name(data.token_usage)
-				end
-				if data.error then
-					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
-				end
-				if (not data.tool_calls or #data.tool_calls == 0) and coder_call then
-					log.debug("[UI] coder finished, handing back to planner")
-					-- worker finished the job
-					coder_call.content = coder_history[#coder_history].content
-					table.insert(planner_history, coder_call)
-					coder_call = nil
-					add_sep("___ PLANNER AGENT ")
-					current_agent = "planner"
-					M.update_chat_name()
-					M.task()
-					return
-				end
-
-				log.debug("[UI] running tools")
-				local stop = run_tools(data.tool_calls, coder_history)
-				if stop or hard_stop then
-					log.debug("[UI] stopped")
-					return
-				end
-				M.code()
-			end
-		)
-	else
-		log.info("Coder Agent executing task")
-		provider.request(
-			coder_config,
-			coder_history,
-			function(fields, err)
-				if err then
-					M.append("{{{ Error\n" .. err .. "\n}}}")
-					table.insert(coder_history, { role = "assistant", content = err })
-					return
-				end
-				local response = { role = "assistant" }
-				for k, v in pairs(fields) do
-					response[k] = v
-				end
-				table.insert(coder_history, response)
-
-				log.debug("[UI] processing response: " .. vim.inspect(fields))
-				M.open()
-
-				if fields.token_usage then
-					update_input_name(fields.token_usage)
-				end
-				if fields.error then
-					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
-				end
-
-				if fields.reasoning then
-					M.append("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
-					refresh_and_close_folds()
-				end
-
-				-- For non-streaming responses, append the content to the buffer
-				if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
-					M.append(fields.content .. "\n")
-				end
-
-				if not fields.tool_calls or #fields.tool_calls == 0 and coder_call then
-					log.debug("[UI] coder finished, handing back to planner")
-					-- worker finished the job
-					coder_call.content = coder_history[#coder_history].content
-					table.insert(planner_history, coder_call)
-					coder_call = nil
-					add_sep("___ PLANNER AGENT ")
-					M.task()
-					return
-				end
-
-				vim.schedule(function()
-					log.debug("[UI] running tools")
-					local stop = run_tools(fields.tool_calls, coder_history)
-					if stop or hard_stop then
-						log.debug("[UI] stopped")
-						return
-					end
-					M.code()
+					M.continue()
 				end)
 			end
 		)

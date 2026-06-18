@@ -1,0 +1,7 @@
+{
+	"provider": "mistral",
+	"model": "mistral-small-latest",
+	"rpm": 49,
+	"tpm": 40000,
+	"stream": true
+}

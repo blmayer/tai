@@ -134,6 +134,7 @@ Tai reads configuration from a `.tai` JSON file in your project root. The follow
 | `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
 | `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
 | `allowed_commands` | object | (see below) | Override allowed shell commands |
+| `auto_approve` | boolean | `false` | Automatically approve and run *all* shell commands without the interactive y/n/s confirmation prompt (bypasses `allowed_commands`). Use with caution. |
 
 Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
 
@@ -170,7 +171,8 @@ Tai agents have access to the following tools:
 | `edit` | Coder | Edit existing files via old/new text replacement |
 | `write` | Coder | Create new files |
 | `send_image` | Planner, Coder | Send images for visual analysis |
-| `coder_agent` | Planner | Delegate implementation to the coder agent |
+| `coder` | Planner | Delegate implementation tasks to the coder agent (pass prompt); receives immediate "coder is working on the task." ack. Coder uses independent history. |
+| `planner` | Coder | Hand off at end of task: coder calls planner with detailed report (prompt); receives immediate ack. Planner uses independent history and receives the report as context. |
 | `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
 | `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
 

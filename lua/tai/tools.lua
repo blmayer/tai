@@ -53,12 +53,12 @@ M.defs = {
 			}
 		}
 	},
-	coder_agent = {
+	coder = {
 		type = "function",
 		["function"] = {
-			name = "coder_agent",
+			name = "coder",
 			description =
-			"This tool calls the coder agent to start working on the tasks sent. The return is the last response sent by the coder agent.",
+			"Call the coder agent (implementer with read/write access) to perform code changes. Pass a detailed prompt describing the tasks, plan, target files, and any context. This tool returns immediately with an ack message; the coder runs with its own independent history and will hand back via the planner tool when finished.",
 			parameters = {
 				type = "object",
 				properties = {
@@ -66,6 +66,26 @@ M.defs = {
 						type = "string",
 						description =
 						"Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
+					},
+				},
+				additionalProperties = false,
+				required = { "prompt" }
+			}
+		}
+	},
+	planner = {
+		type = "function",
+		["function"] = {
+			name = "planner",
+			description =
+			"Call the planner agent (architect, read-only) typically at the end of a coding task to hand back a detailed report for review and coordination. Pass the summary of work done as the prompt. Returns immediately with an ack; planner uses its own history.",
+			parameters = {
+				type = "object",
+				properties = {
+					prompt = {
+						type = "string",
+						description =
+						"Detailed report/summary for the planner: files changed, specific edits, verification performed, issues found, etc. This becomes the handoff message the planner sees.",
 					},
 				},
 				additionalProperties = false,

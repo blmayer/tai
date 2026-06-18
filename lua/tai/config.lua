@@ -86,6 +86,7 @@ function M.reload()
 	M.custom_prompt = data.custom_prompt or nil
 	M.rpm = data.rpm or 60
 	M.tpm = data.tpm
+	M.auto_approve = data.auto_approve or false
 
 	-- Context persistence settings
 	M.context.enabled = data.context and data.context.enabled ~= false

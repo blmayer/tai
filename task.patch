@@ -1,0 +1,527 @@
+diff --git a/README.md b/README.md
+index 4091ccf..1e1cd95 100644
+--- a/README.md
++++ b/README.md
+@@ -10,37 +10,38 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
+-
+-       GROQ_API_KEY=your_api_key_here
+-
+-for Groq, or:
+-
+-       GEMINI_API_KEY=your_api_key_here
+-
+-for Gemini, or:
+-
+-       ZAI_API_KEY=your_api_key_here
+-
+-for Z.AI, or:
+-
+-       OPENAI_API_KEY=your_api_key_here
+-
+-for OpenAI, or:
+-
+-       MINIMAX_API_KEY=your_api_key_here
+-
+-for Minimax, or configure a local Ollama server (localhost:11434).
+-
+-
+-## Integrated workflow
+-
+-Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
+-
+-- Opens a side panel to display input and responses
+-- Minimal, dependency-free Lua code for Neovim
+-- Can run commands with safety validation
+-- Follows plans for complex tasks
++Tai supports the following providers. Set the corresponding environment variable for your chosen provider:
++
++| Provider | Config value | Environment variable |
++|---|---|---|
++| Gemini | `gemini` | `GEMINI_API_KEY` |
++| Groq | `groq` | `GROQ_API_KEY` |
++| Minimax | `minimax` | `MINIMAX_API_KEY` |
++| Mistral | `mistral` | `MISTRAL_API_KEY` |
++| Ollama (local) | `ollama` | — |
++| llama.cpp (local) | `llama_cpp` | — |
++| OpenAI | `openai_responses` | `OPENAI_API_KEY` |
++| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
++| StepFun | `stepfun` | `STEPFUN_API_KEY` |
++| xAI | `xai` | `XAI_API_KEY` |
++| Z.AI | `z_ai` | `ZAI_API_KEY` |
++| Custom | `custom` | — |
++
++Local providers (Ollama, llama.cpp) don't need an API key. The custom provider uses the URL from `options.url` in your `.tai` file.
++
++
++## Features
++
++- **Side panel UI** — responses display in a split buffer with code folding
++- **Planner + Coder agents** — an architect agent plans tasks, a coder agent implements them
++- **Tool use** — agents can read/write files, run shell commands, and send images
++- **In-memory todos & notes** — agents track progress and record discoveries during long tasks
++- **Rate limiting** — configurable requests-per-minute (`rpm`) and tokens-per-minute (`tpm`)
++- **Streaming** — optional streaming responses for real-time output
++- **Extended thinking** — reasoning/thinking support for compatible models
++- **Provider tools** — server-side tools like `web_search` (provider-dependent)
++- **Safety validation** — shell commands go through an allow-list before execution
++- **Minimal, dependency-free** Lua code for Neovim
+ 
+ 
+ ## Installation
+@@ -117,39 +118,66 @@ and load it in your `init.lua`:
+ 
+ ## Project Configuration
+ 
+-tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
+-
+-- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
+-- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
+-- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
+-- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
+-- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
+-- `think`: Enable extended thinking/reasoning for models that support it.
+-- `system_prompt`: Custom system prompt to override the default agent instructions.
+-- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
+-- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
++Tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
++
++| Option | Type | Default | Description |
++|---|---|---|---|
++| `model` | string | — | Model used for chat completions (e.g., `"grok-4.3"`, `"gemini-2.0-flash"`) |
++| `provider` | string | — | API provider (see Providers table above) |
++| `options` | object | `{}` | Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`) |
++| `provider_tools` | array | `nil` | Provider-side tools (e.g., `["web_search"]`) |
++| `use_tools` | boolean | `true` | Enable/disable agent tools (read, write, edit, shell, todos, notes) |
++| `think` | string | `nil` | Enable extended thinking/reasoning (`"low"`, `"medium"`, `"high"`) |
++| `stream` | boolean | `false` | Enable streaming responses for real-time output |
++| `rpm` | number | `60` | Rate limit: max requests per minute |
++| `tpm` | number | `nil` | Rate limit: max tokens per minute |
++| `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
++| `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
++| `allowed_commands` | object | (see below) | Override allowed shell commands |
++
++Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+ 
+ Example `.tai` file:
+ 
+ ```json
+ {
+-	"provider": "groq",
+-	"model": "llama-3.1-70b-versatile",
++	"provider": "xai",
++	"model": "grok-4.3",
+ 	"options": {
+ 		"temperature": 0.7,
+ 		"max_tokens": 4096
+ 	},
++	"stream": true,
+ 	"use_tools": true,
+-	"system_prompt": "You are a senior python programmer. Always write tests.",
+-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
++	"rpm": 30,
++	"custom_prompt": "Prefer using rust over python for performance-critical code.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+-        "make": true
+-    }
++		"make": true
++	}
+ }
+ ```
+ 
++## Agent Tools
++
++Tai agents have access to the following tools:
++
++| Tool | Available to | Description |
++|---|---|---|
++| `read` | Planner, Coder | Read file contents with optional line range |
++| `shell` | Planner, Coder | Run shell commands (allow-listed) |
++| `edit` | Coder | Edit existing files via old/new text replacement |
++| `write` | Coder | Create new files |
++| `send_image` | Planner, Coder | Send images for visual analysis |
++| `coder_agent` | Planner | Delegate implementation to the coder agent |
++| `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
++| `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
++
++The **todos** tool supports actions: `add`, `update`, `list`. Items have statuses: `pending`, `in_progress`, `done`, `cancelled`.
++
++The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
++
+ ## Screenshots
+ 
+ - ![tai.nvim in action](www/screenshot.png)
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index d5d99e5..856d635 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -27,6 +27,34 @@ You can use tools to help on your task.
+   calls.
+ - Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
+   previous to yours.
++
++### Progress Tracking (todos & notes)
++
++For any task with **3 or more steps**, you MUST use the `todos` and `notes`
++tools to stay organized. Follow this strategy:
++
++1. **At the start**: Use `todos` (action: "add") to break the task into steps.
++   Use `notes` (action: "write") to record the overall goal and any context.
++
++2. **Before starting a step**: Use `todos` (action: "update") to mark it
++   "in_progress". Only one item should be in_progress at a time.
++
++3. **After completing a step**: Use `todos` (action: "update") to mark it
++   "done" immediately — never batch completions.
++
++4. **After a discovery**: When you learn something important from a tool call
++   (e.g. file structure, error output, a key decision), use `notes`
++   (action: "append") to record it. This prevents losing context.
++
++5. **Periodically**: Use `todos` (action: "list") to review remaining work
++   after completing a step or before deciding what to do next.
++
++6. **On new findings**: If you discover additional work is needed, use `todos`
++   (action: "add") to add new items rather than forgetting them.
++
++The `notes` tool is your scratchpad — use it to record: key file paths found,
++decisions made, patterns observed, error messages, and anything you'd want to
++remember later in a long task.
+ ]]
+ 
+ M.planner_system_prompt = [[
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index 3d5c6ae..da39db2 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -77,6 +77,11 @@ local providers_config = {
+ 		api_key_env = "Z_AI_API_KEY",
+ 		api_format = "chat_completions",
+ 	},
++	xai = {
++		url = "https://api.x.ai/v1/chat/completions",
++		api_key_env = "XAI_API_KEY",
++		api_format = "chat_completions",
++	},
+ 	-- Generic/custom provider
+ 	custom = {
+ 		url = config.options.url,
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index b23c357..72ee757 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -2,6 +2,11 @@ local M = {}
+ local log = require('tai.log')
+ local config = require("tai.config")
+ 
++-- In-memory stores for agent tools
++M.todos_store = {}  -- list of {id, text, status}
++M.todos_next_id = 1
++M.notes_store = ""  -- single string notepad
++
+ M.defs = {
+ 	read = {
+ 		type = "function",
+@@ -143,6 +148,63 @@ M.defs = {
+ 			}
+ 		}
+ 	},
++	todos = {
++		type = "function",
++		["function"] = {
++			name = "todos",
++			description =
++			"In-memory todo list to track progress on multi-step tasks. Use for tasks with 3+ steps. Actions: 'add' creates a new item, 'update' changes status/text of an existing item, 'list' returns all items.",
++			parameters = {
++				type = "object",
++				properties = {
++					action = {
++						type = "string",
++						description = "The action to perform: 'add', 'update', or 'list'.",
++						enum = { "add", "update", "list" }
++					},
++					text = {
++						type = "string",
++						description = "Description of the todo item. Required for 'add', optional for 'update' (to change text)."
++					},
++					id = {
++						type = "number",
++						description = "ID of the todo item. Required for 'update'."
++					},
++					status = {
++						type = "string",
++						description = "Status of the item. For 'add' defaults to 'pending'. For 'update' changes the status.",
++						enum = { "pending", "in_progress", "done", "cancelled" }
++					}
++				},
++				additionalProperties = false,
++				required = { "action" }
++			}
++		}
++	},
++	notes = {
++		type = "function",
++		["function"] = {
++			name = "notes",
++			description =
++			"In-memory scratchpad for registering discoveries, important thoughts, decisions, and context gathered during the task. Use this to persist insights across tool calls so you don't lose track. Actions: 'read' returns current notes, 'write' overwrites with new content, 'append' adds to existing notes.",
++			parameters = {
++				type = "object",
++				properties = {
++					action = {
++						type = "string",
++						description = "The action: 'read', 'write', or 'append'.",
++						enum = { "read", "write", "append" }
++					},
++					content = {
++						type = "string",
++						description = "The content to write or append. Required for 'write' and 'append'."
++					}
++				},
++				additionalProperties = false,
++				required = { "action" }
++			}
++		}
++	},
+ }
+ 
+ -- indexes are 1 based
+@@ -466,4 +528,72 @@ function M.edit(file, old_text, new_text)
+ 	return "Patched " .. file
+ end
+ 
++function M.run_todos(args)
++	local action = args.action
++	if action == "add" then
++		if not args.text or args.text == "" then
++			return "Error: 'text' is required for 'add'"
++		end
++		local item = {
++			id = M.todos_next_id,
++			text = args.text,
++			status = args.status or "pending",
++		}
++		table.insert(M.todos_store, item)
++		M.todos_next_id = M.todos_next_id + 1
++		return string.format("Added todo #%d: [%s] %s", item.id, item.status, item.text)
++	elseif action == "update" then
++		if not args.id then
++			return "Error: 'id' is required for 'update'"
++		end
++		for _, item in ipairs(M.todos_store) do
++			if item.id == args.id then
++				if args.status then item.status = args.status end
++				if args.text then item.text = args.text end
++				return string.format("Updated todo #%d: [%s] %s", item.id, item.status, item.text)
++			end
++		end
++		return "Error: todo #" .. tostring(args.id) .. " not found"
++	elseif action == "list" then
++		if #M.todos_store == 0 then
++			return "No todos yet."
++		end
++		local lines = {}
++		for _, item in ipairs(M.todos_store) do
++			table.insert(lines, string.format("#%d [%s] %s", item.id, item.status, item.text))
++		end
++		return table.concat(lines, "\n")
++	else
++		return "Error: unknown action '" .. tostring(action) .. "'"
++	end
++end
++
++function M.run_notes(args)
++	local action = args.action
++	if action == "read" then
++		if M.notes_store == "" then
++			return "(empty)"
++		end
++		return M.notes_store
++	elseif action == "write" then
++		if not args.content then
++			return "Error: 'content' is required for 'write'"
++		end
++		M.notes_store = args.content
++		return "Notes updated."
++	elseif action == "append" then
++		if not args.content then
++			return "Error: 'content' is required for 'append'"
++		end
++		if M.notes_store == "" then
++			M.notes_store = args.content
++		else
++			M.notes_store = M.notes_store .. "\n" .. args.content
++		end
++		return "Notes appended."
++	else
++		return "Error: unknown action '" .. tostring(action) .. "'"
++	end
++end
++
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 05b60b4..7de771f 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -22,8 +22,8 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
+ 
+ local planner_config = vim.deepcopy(config)
+ local coder_config = vim.deepcopy(config)
+-planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
+-coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
++planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
++coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
+ -- Global stop flag for hard stop command
+ local hard_stop = false
+ local pending_tools = nil
+@@ -289,6 +289,14 @@ local function run_tools(tool_calls, history)
+ 
+ 			M.code()
+ 			goto next
++		elseif name == "todos" then
++			local out = tools.run_todos(args)
++			res.content = out
++			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
++		elseif name == "notes" then
++			local out = tools.run_notes(args)
++			res.content = out
++			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+ 		elseif name == "send_image" then
+ 			if not args.file then
+ 				M.append("{{{ Addind image failed: no file field.\n}}}")
+diff --git a/www/index.html b/www/index.html
+index bc811cd..b8394b5 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -18,11 +18,15 @@ agents directly to your editor.
+ 
+ <b>features</b>
+ 
+-- agents can read files and run commands
+-- responses show up in a split buffer in Neovim
+-- apply patches or run commands
+-- agents create plans for big code changes
+-- code folding in the chat
++- planner + coder agents for complex tasks
++- read/write files and run shell commands
++- in-memory todos &amp; notes for tracking progress
++- rate limiting (rpm/tpm)
++- streaming responses
++- extended thinking/reasoning support
++- provider-side tools (e.g. web_search)
++- safety validation for shell commands
++- code folding in the chat buffer
+ 
+ 
+ <i>providers</i>
+@@ -31,12 +35,13 @@ agents directly to your editor.
+ - groq
+ - minimax
+ - mistral
+-- local
+-- ollama
++- ollama / llama.cpp (local)
+ - openai
+ - openrouter
+ - stepfun
++- xai
+ - z.ai
++- custom
+ 
+ 
+ <b>keybindings</b>
+@@ -83,42 +88,53 @@ tai reads configuration from a <i>.tai</i> JSON file
+ in your project root. the following options are
+ supported:
+ 
+-- <i>model</i>: the model used for chat completions
+-- <i>provider</i>: one of: groq, gemini, mistral,
+-  z_ai, openai, openrouter, stepfun, local, minimax.
++- <i>model</i>: the model for chat completions
++- <i>provider</i>: see providers list above
+ - <i>options</i>: provider-specific options passed
+-  to the API (e.g., temperature, max_tokens). See
+-  the provider's API docs.
++  to the API (e.g., temperature, max_tokens)
+ - <i>provider_tools</i>: array of provider-side
+-  tools (e.g., ["web_browser"] for OpenAI).
+-- <i>use_tools</i>: boolean to enable/disable agent
+-  tools. default is true. if false, the agent won't
+-  have access to file read/write or the shell tool.
+-- <i>think</i>: enable extended thinking/reasoning
+-  for models that support it.
+-- <i>system_prompt</i>: custom system prompt to
+-  override the default agent instructions.
+-- <i>custom_prompt</i>: additional prompt text
+-  appended to the system prompt. useful for adding
+-  extra instructions without replacing the default.
+-- <i>allowed_commands</i>: override the default
+-  list of allowed shell commands. by default, tai
+-  allows: cat, grep, ag, rg, ls, head, tail, wc,
+-  diff, sort, uniq, find, file, stat, date, echo,
+-  tree, pwd, which, type.
++  tools (e.g., ["web_search"])
++- <i>use_tools</i>: enable/disable agent tools
++  (default: true)
++- <i>stream</i>: enable streaming responses
++  (default: false)
++- <i>think</i>: extended thinking/reasoning level
++  ("low", "medium", "high")
++- <i>rpm</i>: max requests per minute (default: 60)
++- <i>tpm</i>: max tokens per minute
++- <i>system_prompt</i>: replace default agent prompt
++- <i>custom_prompt</i>: append to default prompt
++- <i>allowed_commands</i>: override allowed shell
++  commands
++
++
++<b>agent tools</b>
++
++- <i>read</i>: read files with optional line range
++- <i>shell</i>: run allow-listed shell commands
++- <i>edit</i>: edit files via old/new replacement
++- <i>write</i>: create new files
++- <i>send_image</i>: send images for analysis
++- <i>coder_agent</i>: delegate to coder agent
++- <i>todos</i>: in-memory todo list (add/update/list)
++  with statuses: pending, in_progress, done, cancelled
++- <i>notes</i>: in-memory scratchpad (read/write/append)
++  for tracking discoveries and context
++
+ 
+ example .tai file:
+ 
+ {
+-	"provider": "groq",
+-	"model": "llama-3.1-70b-versatile",
++	"provider": "xai",
++	"model": "grok-4.3",
+ 	"options": {
+ 		"temperature": 0.7,
+ 		"max_tokens": 4096
+ 	},
++	"stream": true,
+ 	"use_tools": true,
+-	"system_prompt": "You are a senior python programmer. Always write tests.",
+-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
++	"rpm": 30,
++	"custom_prompt": "Prefer rust for performance.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+@@ -131,8 +147,8 @@ example .tai file:
+ 
+ <b>usage</b>
+ 
+-make sure the correct env var is set: <i>GROQ_API_KEY</i>,
+-for Groq or <i>GEMINI_API_KEY</i> for Gemini etc.
++make sure the correct env var is set for your provider:
++<i>XAI_API_KEY</i>, <i>GROQ_API_KEY</i>, <i>GEMINI_API_KEY</i>, etc.
+ create a .tai file at the root or your project.
+ editting any file in that project should start tai.
+ then just use the keybindings above.
