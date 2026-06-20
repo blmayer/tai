@@ -29,6 +29,7 @@ local hard_stop = false
 local pending_tools = nil
 local current_agent = "planner"  -- Default to planner
 local current_job = nil  -- for live shell commands (long-running / progress)
+local current_state = "idle"  -- idle | waiting | throttled | thinking | tools
 
 local function get_agent_ctx()
 	local hist = (current_agent == "coder") and coder_history or planner_history
@@ -50,14 +51,23 @@ local function update_input_name(token_count)
 	local name = input_bufname
 	local stats = providers_factory.get_rate_limits()
 	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
+	local state_part = current_state or "idle"
 	if current_ctx then
-		name = string.format("%s (ctx: %u | %s)", input_bufname, current_ctx, rate_part)
+		name = string.format("%s [%s] (ctx: %u | %s)", input_bufname, state_part, current_ctx, rate_part)
 	else
-		name = string.format("%s (%s)", input_bufname, rate_part)
+		name = string.format("%s [%s] (%s)", input_bufname, state_part, rate_part)
 	end
 	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
 		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
 	end
+end
+
+-- Hook into provider throttle notifications to update state indicator
+providers_factory.on_throttle = function(_wait_ms)
+	vim.schedule(function()
+		current_state = "throttled"
+		update_input_name()
+	end)
 end
 
 function M.init()
@@ -176,7 +186,20 @@ local function scroll_down()
 		if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
 			return
 		end
-		local original_win = vim.api.nvim_get_current_win()
+
+		-- Only auto-scroll if the cursor is not in the chat window,
+		-- or if it is in the chat window and on the last line already.
+		local current_win = vim.api.nvim_get_current_win()
+		if current_win == chat_win then
+			local cursor_line = vim.api.nvim_win_get_cursor(chat_win)[1]
+			local last_line = vim.api.nvim_buf_line_count(M.buffer_nr)
+			-- Allow a small margin (cursor within 2 lines of the end)
+			if cursor_line < last_line - 2 then
+				return
+			end
+		end
+
+		local original_win = current_win
 		vim.api.nvim_set_current_win(chat_win)
 
 		-- Check if input window exists and get its height
@@ -320,7 +343,8 @@ local function run_tools(tool_calls, history)
 				goto continue
 			end
 
-			M.append("{{{ Reading " .. args.file .. "\n")
+			local range_label = args.range and (" [" .. args.range .. "]") or ""
+			M.append("{{{ Reading " .. args.file .. range_label .. "\n")
 			res.content = tools.read_file(args.file, args.range)
 			res.file_range = args.range
 			M.append(res.content .. "\n}}}\n")
@@ -332,7 +356,8 @@ local function run_tools(tool_calls, history)
 			end
 			local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
 			res.content = out
-			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
+			local multi_label = args.multi and " (multi)" or ""
+			M.append("{{{ " .. out .. multi_label .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
 		elseif name == "write" then
 			if not args.file then
 				M.append("{{{ Write file failed: no file field.\n}}}")
@@ -614,6 +639,9 @@ function M.continue()
 	local cfg = is_coder and coder_config or planner_config
 	local agent_label = is_coder and "Coder Agent" or "Agent"
 
+	current_state = "waiting"
+	update_input_name()
+
 	if config.stream then
 		log.info(agent_label .. " executing streaming task")
 
@@ -624,6 +652,8 @@ function M.continue()
 			hist,
 			function(chunk, err)
 				if err then
+					current_state = "idle"
+					update_input_name()
 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
 					return
 				end
@@ -631,6 +661,8 @@ function M.continue()
 				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
 				if chunk.reasoning and #chunk.reasoning > 0 then
 					if think_start then
+						current_state = "thinking"
+						update_input_name()
 						M.append("{{{ Thinking \n" .. chunk.reasoning)
 						think_start = false
 					else
@@ -652,6 +684,8 @@ function M.continue()
 			function(data, err)
 				log.debug("[UI] got message completed: " .. vim.inspect(data))
 				if err then
+					current_state = "idle"
+					update_input_name()
 					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
 					table.insert(hist, { role = "assistant", content = err })
 					return
@@ -672,12 +706,16 @@ function M.continue()
 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
 				end
 				if not data.tool_calls or #data.tool_calls == 0 then
+					current_state = "idle"
+					update_input_name()
 					if is_coder then
 						log.debug("[UI] coder finished (no more tool calls)")
 					end
 					return
 				end
 
+				current_state = "tools"
+				update_input_name()
 				log.debug("[UI] running tools")
 				local stop = run_tools(data.tool_calls, hist)
 				if stop or hard_stop then
@@ -694,6 +732,8 @@ function M.continue()
 			hist,
 			function(fields, err)
 				if err then
+					current_state = "idle"
+					update_input_name()
 					M.append("{{{ Error\n" .. err .. "\n}}}")
 					table.insert(hist, { role = "assistant", content = err })
 					return
@@ -725,6 +765,8 @@ function M.continue()
 				end
 
 				if not fields.tool_calls or #fields.tool_calls == 0 then
+					current_state = "idle"
+					update_input_name()
 					if is_coder then
 						log.debug("[UI] coder finished (no more tool calls)")
 					end
@@ -732,6 +774,8 @@ function M.continue()
 				end
 
 				vim.schedule(function()
+					current_state = "tools"
+					update_input_name()
 					log.debug("[UI] running tools")
 					local stop = run_tools(fields.tool_calls, hist)
 					if stop or hard_stop then

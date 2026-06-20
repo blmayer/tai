@@ -123,8 +123,12 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - Check if your changes are correct by reading the affected parts, building the
   project or checking linter etc.
 - If tests are avaliable run the necessary ones, be clever to not take too long.
-- When you finish all tasks, call the `planner` tool (instead of a plain final
-  response). Pass a single `prompt` string containing a detailed report:
+- **CRITICAL**: You MUST call the `planner` tool when you are done — this is
+  the ONLY way to finish. Do NOT end with a plain text response. If you respond
+  without calling `planner`, your work will be lost and the user will never see
+  the results. Even if you encounter errors or cannot complete everything, you
+  MUST still call `planner` with a report of what happened.
+- Pass a single `prompt` string containing a detailed report:
   - Which files/lines were changed and exactly what was modified in each function.
   - Verification performed (builds, tests run, manual checks, reads of results).
   - Any failures encountered or areas needing improvement.
@@ -132,7 +136,8 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
 - The `planner` tool returns immediately with "planner is working on the task.";
   your report will be delivered to the planner (in its own history) so it can
   review, summarize to the user, or call you again with fixes if needed.
-- Always use the planner handoff to conclude a task delegation.
+- NEVER skip the planner handoff. Every coder session must end with a `planner`
+  tool call — no exceptions.
 
 ]] .. tool_usage
 

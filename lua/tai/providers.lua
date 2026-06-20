@@ -100,6 +100,15 @@ function M.get_rate_limits()
 	}
 end
 
+-- Check if there are pending throttle timers (requests waiting for rate limit).
+function M.is_throttled()
+	return #pending_timers > 0
+end
+
+-- Optional callback invoked when a request starts throttle-waiting.
+-- Set by the UI layer to update state indicators.
+M.on_throttle = nil
+
 -- Cancel pending throttle timers.
 function M.cancel_pending_waits()
 	for _, timer in ipairs(pending_timers) do
@@ -362,6 +371,7 @@ local function create_provider_module(provider_name)
 			if wait_ms > 0 then
 				local timer = vim.uv.new_timer()
 				table.insert(pending_timers, timer)
+				if M.on_throttle then M.on_throttle(wait_ms) end
 				timer:start(wait_ms, 0, function()
 					for i = #pending_timers, 1, -1 do
 						if pending_timers[i] == timer then table.remove(pending_timers, i) break end
@@ -500,6 +510,7 @@ local function create_provider_module(provider_name)
 			if wait_ms > 0 then
 				local timer = vim.uv.new_timer()
 				table.insert(pending_timers, timer)
+				if M.on_throttle then M.on_throttle(wait_ms) end
 				timer:start(wait_ms, 0, function()
 					for i = #pending_timers, 1, -1 do
 						if pending_timers[i] == timer then table.remove(pending_timers, i) break end
@@ -664,6 +675,7 @@ local function create_provider_module(provider_name)
 	if wait_ms > 0 then
 		local timer = vim.uv.new_timer()
 		table.insert(pending_timers, timer)
+		if M.on_throttle then M.on_throttle(wait_ms) end
 		timer:start(wait_ms, 0, function()
 			for i = #pending_timers, 1, -1 do
 				if pending_timers[i] == timer then table.remove(pending_timers, i) break end
@@ -720,6 +732,7 @@ local function create_provider_module(provider_name)
 	if wait_ms > 0 then
 		local timer = vim.uv.new_timer()
 		table.insert(pending_timers, timer)
+		if M.on_throttle then M.on_throttle(wait_ms) end
 		timer:start(wait_ms, 0, function()
 			for i = #pending_timers, 1, -1 do
 				if pending_timers[i] == timer then table.remove(pending_timers, i) break end

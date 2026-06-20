@@ -156,7 +156,7 @@ M.defs = {
 					old_text = {
 						type = "string",
 						description =
-						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
+						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Use the MINIMUM number of context lines needed to uniquely identify the location — typically 1-3 distinctive lines, not large blocks. Don't add line numbers that appear on the read output, they are just for reference."
 					},
 					new_text = {
 						type = "string",
@@ -546,9 +546,37 @@ function M.edit(file, old_text, new_text, multi)
 		return "Binary file detected. Use send_image for images or other binary formats."
 	end
 
-	-- Open file in buffer
-	vim.cmd("topleft vnew " .. file)
-	local buf = vim.api.nvim_get_current_buf()
+	-- Reuse an already-open buffer for the file, otherwise open a new split.
+	local abs_path = vim.fn.fnamemodify(file, ":p")
+	local buf = nil
+	local buf_reused = false
+	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+		if vim.api.nvim_buf_is_loaded(b) then
+			local bname = vim.api.nvim_buf_get_name(b)
+			if bname == abs_path then
+				buf = b
+				buf_reused = true
+				break
+			end
+		end
+	end
+	if buf_reused then
+		-- Buffer already open — make sure it's showing in some window
+		local win_found = false
+		for _, w in ipairs(vim.api.nvim_list_wins()) do
+			if vim.api.nvim_win_get_buf(w) == buf then
+				win_found = true
+				break
+			end
+		end
+		if not win_found then
+			vim.cmd("topleft vsplit")
+			vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), buf)
+		end
+	else
+		vim.cmd("topleft vnew " .. vim.fn.fnameescape(file))
+		buf = vim.api.nvim_get_current_buf()
+	end
 
 	-- Get current state of buffer
 	local new_lines = vim.split(new_text or "", '\n')
@@ -559,9 +587,40 @@ function M.edit(file, old_text, new_text, multi)
 		local matches = find_match_starts(current_lines, old_lines)
 
 		if #matches == 0 then
-			-- Close the temp buffer we opened so we don't leave stray windows
-			pcall(vim.api.nvim_buf_delete, buf, { force = true })
-			return "Error: could not find old_text block in file (after whitespace normalization)."
+			-- Only close the buffer if we opened a new one (don't kill a reused buffer)
+			if not buf_reused then
+				pcall(vim.api.nvim_buf_delete, buf, { force = true })
+			end
+			-- Report how many lines of old_text matched before diverging,
+			-- to help the caller narrow down what went wrong.
+			local best_matched = 0
+			local norm_buf = {}
+			for _, line in ipairs(current_lines) do
+				table.insert(norm_buf, normalize_whitespace(line))
+			end
+			local norm_old = {}
+			for _, line in ipairs(old_lines) do
+				table.insert(norm_old, normalize_whitespace(line))
+			end
+			for i = 1, #norm_buf do
+				if norm_buf[i] == norm_old[1] then
+					local count = 0
+					for k = 1, #norm_old do
+						if i + k - 1 <= #norm_buf and norm_buf[i + k - 1] == norm_old[k] then
+							count = k
+						else
+							break
+						end
+					end
+					if count > best_matched then
+						best_matched = count
+					end
+				end
+			end
+			return string.format(
+				"Error: could not find old_text block in file (after whitespace normalization). Best partial match: %d/%d lines.",
+				best_matched, #old_lines
+			)
 		end
 
 		if multi then
