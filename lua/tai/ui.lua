@@ -1,4 +1,5 @@
 local M = {}
+
 -- Global stop flag for hard stop command
 local log = require("tai.log")
 local tools = require("tai.tools")
@@ -8,6 +9,7 @@ local agent = require("tai.agent")
 if not config.provider then
 	return M
 end
+
 -- Use the new providers factory to get the provider module
 local providers_factory = require("tai.providers")
 local provider = providers_factory.get_provider(config.provider)
@@ -24,6 +26,7 @@ local planner_config = vim.deepcopy(config)
 local coder_config = vim.deepcopy(config)
 planner_config.tools = { "read", "shell", "send_image", "coder", "todos", "notes" }
 coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes", "planner" }
+
 -- Global stop flag for hard stop command
 local hard_stop = false
 local pending_tools = nil
@@ -42,7 +45,7 @@ local function get_agent_ctx()
 	return nil
 end
 
-local function update_input_name(token_count)
+local function update_input_name()
 	-- Derive ctx from the last assistant message in the *current agent's* history
 	-- (the authoritative source). No separate per-agent storage.
 	-- Responses already insert the assistant message (which carries token_usage)
@@ -51,11 +54,10 @@ local function update_input_name(token_count)
 	local name = input_bufname
 	local stats = providers_factory.get_rate_limits()
 	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
-	local state_part = current_state or "idle"
 	if current_ctx then
-		name = string.format("%s [%s] (ctx: %u | %s)", input_bufname, state_part, current_ctx, rate_part)
+		name = string.format("%s (ctx: %u | %s)", input_bufname, current_ctx, rate_part)
 	else
-		name = string.format("%s [%s] (%s)", input_bufname, state_part, rate_part)
+		name = string.format("%s (%s)", input_bufname, rate_part)
 	end
 	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
 		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
@@ -63,7 +65,7 @@ local function update_input_name(token_count)
 end
 
 -- Hook into provider throttle notifications to update state indicator
-providers_factory.on_throttle = function(_wait_ms)
+providers_factory.on_throttle = function()
 	vim.schedule(function()
 		current_state = "throttled"
 		update_input_name()
@@ -150,10 +152,11 @@ end
 
 function M.update_chat_name()
 	local name = bufname_prefix
+	local state_part = current_state or "idle"
 	if config and config.provider and config.model then
-		name = string.format("%s (%s/%s - %s)", bufname_prefix, config.provider, config.model, current_agent)
+		name = string.format("%s (%s/%s - %s) [%s]", bufname_prefix, config.provider, config.model, current_agent, state_part)
 	else
-		name = string.format("%s (%s)", bufname_prefix, current_agent)
+		name = string.format("%s %s [%s]", bufname_prefix, current_agent, state_part)
 	end
 	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
 		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
@@ -466,8 +469,6 @@ local function run_tools(tool_calls, history)
 		-- table.remove(pending_tool_calls, 1)
 		refresh_and_close_folds()
 		table.insert(history, res)
-
-		::next::
 	end
 
 	return stop
