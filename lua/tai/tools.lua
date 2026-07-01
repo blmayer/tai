@@ -7,6 +7,40 @@ M.todos_store = {}  -- list of {id, text, status}
 M.todos_next_id = 1
 M.notes_store = ""  -- single string notepad
 
+-- Max characters returned from read/shell tools to the model (head+tail truncation).
+-- Keeps requests within context limits and avoids freezing on huge outputs.
+M.MAX_TOOL_OUTPUT = 80000
+
+--- Truncate oversized tool output before it is sent back to the agent.
+--- Keeps head and tail so build/log errors near the end are still visible.
+function M.limit_output(output, source)
+	if type(output) ~= "string" then
+		return output
+	end
+	local n = #output
+	if n <= M.MAX_TOOL_OUTPUT then
+		return output
+	end
+	local half = math.floor(M.MAX_TOOL_OUTPUT / 2)
+	local head = output:sub(1, half)
+	local tail = output:sub(n - half + 1)
+	local msg = string.format(
+		"\n\n[sys] Output truncated (%d chars > %d limit from %s). "
+			.. "Showing head and tail. Prefer a narrower read range, grep, head/tail, or filters.\n\n"
+			.. "--- tail ---\n",
+		n,
+		M.MAX_TOOL_OUTPUT,
+		source or "tool"
+	)
+	log.warning(string.format(
+		"Truncated %s output: %d chars (limit %d)",
+		source or "tool",
+		n,
+		M.MAX_TOOL_OUTPUT
+	))
+	return head .. msg .. tail
+end
+
 M.defs = {
 	read = {
 		type = "function",
@@ -305,6 +339,26 @@ function M.read_file(file_path, range)
 		return "Binary file detected. Use send_image for images or other binary formats."
 	end
 
+	-- Avoid loading enormous files fully into memory (freezes Neovim).
+	-- Allow ranged reads up to a larger on-disk size; still truncate final output.
+	local max_read_bytes = M.MAX_TOOL_OUTPUT * 4
+	local stat = vim.uv.fs_stat(file_path)
+	if stat and stat.size and stat.size > max_read_bytes and (not range or range == "") then
+		log.warning(string.format(
+			"read refused full file: %s is %d bytes (limit %d); use a range",
+			file_path,
+			stat.size,
+			max_read_bytes
+		))
+		return string.format(
+			"[sys] File `%s` is %d bytes (>%d). Refuse full read to protect context size. "
+				.. "Pass a `range` (e.g. 1:200) or use shell grep/head/tail.",
+			file_path,
+			stat.size,
+			max_read_bytes
+		)
+	end
+
 	-- Always read from disk to ensure fresh content (buffers can be stale).
 	log.debug("reading from file")
 	local file = io.open(file_path, "r")
@@ -322,8 +376,8 @@ function M.read_file(file_path, range)
 		for i, line in ipairs(lines) do
 			table.insert(numbered_lines, string.format("%d: %s", i, line))
 		end
-		local numbered_content = table.concat(numbered_lines, "\n")
-		return numbered_content
+	local numbered_content = table.concat(numbered_lines, "\n")
+		return M.limit_output(numbered_content, "read:" .. file_path)
 	end
 
 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
@@ -362,7 +416,7 @@ function M.read_file(file_path, range)
 	end
 
 	local numbered_content = table.concat(numbered_lines, "\n")
-	return numbered_content
+	return M.limit_output(numbered_content, "read:" .. file_path)
 end
 
 function M.unsafe_command(cmd)
@@ -407,14 +461,14 @@ function M.exec_command(cmd)
 		return nil, "Failed to run command"
 	end
 
-	local output = handle:read("*a")
+local output = handle:read("*a")
 	handle:close()
 
 	if not output then
 		output = cmd .. "` returned null"
 	end
 
-	return output
+	return M.limit_output(output, "shell")
 end
 
 -- Convert image file to base64 data URL

@@ -23,12 +23,14 @@ M.rpm = 60
 M.tpm = nil
 
 -- Context persistence configuration
+-- Default file is project-scoped (.tai-session.json in project root).
+-- Set cache_dir to use a global cache path instead.
 M.context = {
   enabled = true,
   cache_dir = nil,
   auto_save = true,
   save_on_shutdown = true,
-  file_name = "tai_context.json"
+  file_name = ".tai-session.json"
 }
 
 -- Default allowed shell commands
@@ -88,12 +90,33 @@ function M.reload()
 	M.tpm = data.tpm
 	M.auto_approve = data.auto_approve or false
 
-	-- Context persistence settings
-	M.context.enabled = data.context and data.context.enabled ~= false
-	M.context.cache_dir = data.context and data.context.cache_dir
-	M.context.auto_save = data.context and data.context.auto_save ~= false
-	M.context.save_on_shutdown = data.context and data.context.save_on_shutdown ~= false
-	M.context.file_name = data.context and data.context.file_name or M.context.file_name
+	-- Context persistence settings (keep defaults when `context` is omitted from .tai)
+	if data.context then
+		if data.context.enabled ~= nil then
+			M.context.enabled = data.context.enabled
+		end
+		if data.context.cache_dir ~= nil then
+			M.context.cache_dir = data.context.cache_dir
+		end
+		if data.context.auto_save ~= nil then
+			M.context.auto_save = data.context.auto_save
+		end
+		if data.context.save_on_shutdown ~= nil then
+			M.context.save_on_shutdown = data.context.save_on_shutdown
+		end
+		if data.context.file_name then
+			M.context.file_name = data.context.file_name
+		end
+	end
+
+	log.debug(string.format(
+		"Context config: enabled=%s auto_save=%s save_on_shutdown=%s file_name=%s cache_dir=%s",
+		tostring(M.context.enabled),
+		tostring(M.context.auto_save),
+		tostring(M.context.save_on_shutdown),
+		tostring(M.context.file_name),
+		tostring(M.context.cache_dir)
+	))
 
 	return true
 end
