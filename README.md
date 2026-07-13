@@ -50,6 +50,7 @@ tai supports the following providers out of the box:
 | StepFun | `STEPFUN_API_KEY` | |
 | xAI | `XAI_API_KEY` | |
 | Z.AI | `Z_AI_API_KEY` | |
+| Zyphra | `ZYPHRA_API_KEY` | |
 | Custom | *(via `options.url`)* | Any OpenAI-compatible endpoint |
 
 Set the corresponding environment variable for your chosen provider.

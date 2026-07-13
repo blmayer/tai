@@ -190,6 +190,11 @@ local providers_config = {
 		api_key_env = "XAI_API_KEY",
 		api_format = "chat_completions",
 	},
+	zyphra = {
+		url = "https://api.zyphracloud.com/api/v1/chat/completions",
+		api_key_env = "ZYPHRA_API_KEY",
+		api_format = "chat_completions",
+	},
 	-- Generic/custom provider
 	custom = {
 		url = config.options.url,
@@ -400,9 +405,10 @@ local function create_provider_module(provider_name)
 
 				log.debug("Request response: " .. vim.inspect(parsed))
 
-				if parsed and parsed.error ~= vim.NIL then
-					record_actual_cost(send_time, nil, parsed.error.message)
-					return callback(nil, "Received error: " .. parsed.error.message)
+				if parsed and parsed.error and parsed.error ~= vim.NIL then
+					local err_msg = common.format_error(parsed.error)
+					record_actual_cost(send_time, nil, err_msg)
+					return callback(nil, "Received error: " .. err_msg)
 				end
 
 				local fields = {}
@@ -559,8 +565,8 @@ local function create_provider_module(provider_name)
 					return
 				end
 
-				if parsed and parsed.error ~= vim.NIL then
-					on_chunk(nil, "Received error: " .. parsed.error.message)
+				if parsed and parsed.error and parsed.error ~= vim.NIL then
+					on_chunk(nil, "Received error: " .. common.format_error(parsed.error))
 					return
 				end
 
@@ -629,7 +635,7 @@ local function create_provider_module(provider_name)
 				if parsed.usage and parsed.usage.total_tokens then
 					fields.token_usage = parsed.usage.total_tokens
 				end
-			end, function(err)
+			end, function(_, err)
 				if err then
 					record_actual_cost(send_time, nil, err)
 					on_complete(nil, err)
@@ -699,15 +705,22 @@ local function create_provider_module(provider_name)
 
 		log.debug("[API] request response: " .. vim.inspect(parsed))
 
-		if parsed.error then
-			record_actual_cost(send_time, nil, parsed.error.message or "provider error")
-			return callback(nil, parsed.error.message)
+		if parsed and parsed.error and parsed.error ~= vim.NIL then
+			local err_msg = common.format_error(parsed.error)
+			record_actual_cost(send_time, nil, err_msg)
+			return callback(nil, err_msg)
+		end
+
+		local fields, parse_err = common.parse_response(parsed)
+		if parse_err or not fields then
+			local err_msg = parse_err or "empty provider response"
+			record_actual_cost(send_time, nil, err_msg)
+			return callback(nil, err_msg)
 		end
 
 		local real = (parsed and parsed.usage and parsed.usage.total_tokens) or nil
-		record_actual_cost(send_time, real, err)
-		local fields, _ = common.parse_response(parsed)
-		callback(fields, err)
+		record_actual_cost(send_time, real, nil)
+		callback(fields, nil)
 	end)
 		end
 
@@ -752,9 +765,12 @@ local function create_provider_module(provider_name)
 	local fields = {}
 
 	common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
-		local chunk_data, err = common.parse_chunk(chunk)
-		if err then
-			on_chunk(chunk_data, err)
+		local chunk_data, chunk_err = common.parse_chunk(chunk)
+		if chunk_err then
+			on_chunk(nil, chunk_err)
+			return
+		end
+		if type(chunk_data) ~= "table" then
 			return
 		end
 

@@ -69,7 +69,7 @@ function M.make_http_call(url, api_key, body_json, on_complete)
 	local tmp = vim.fn.tempname()
 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
 	if not ok_write then
-		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
+		return on_complete(nil, "Failed to write request body to temp file: " .. tostring(write_err))
 	end
 
 	local function cleanup()
@@ -91,13 +91,12 @@ function M.make_http_call(url, api_key, body_json, on_complete)
 		stdout_buffered = true,
 		on_stdout = function(_, data)
 			if not data then
-				on_complete(nil, nil)
 				return
 			end
 			log.debug("[API] received data: " .. vim.inspect(data))
-				for _, line in ipairs(data) do
-					response = response .. line
-				end
+			for _, line in ipairs(data) do
+				response = response .. line
+			end
 		end,
 
 		on_stderr = function(_, data)
@@ -114,11 +113,15 @@ function M.make_http_call(url, api_key, body_json, on_complete)
 			cleanup()
 			if code ~= 0 then
 				log.debug("[API] command returned code " .. tostring(code))
-				on_complete("curl returned code " .. tostring(code))
+				on_complete(nil, "curl returned code " .. tostring(code))
 				return
 			end
-			local parsed = vim.json.decode(response)
-			if not parsed then
+			if response == "" then
+				on_complete(nil, "empty response from provider")
+				return
+			end
+			local ok, parsed = pcall(vim.json.decode, response)
+			if not ok or not parsed then
 				on_complete(nil, "Failed to decode JSON response")
 				return
 			end
@@ -128,8 +131,41 @@ function M.make_http_call(url, api_key, body_json, on_complete)
 
 	if job_id <= 0 then
 		cleanup()
-		on_complete("Failed to start job")
+		on_complete(nil, "Failed to start job")
 	end
+end
+
+-- Normalize provider error payloads into a human-readable string.
+-- Providers may return:
+--   - a string: "quota exceeded"
+--   - an object: { message = "...", type = "..." }
+--   - nil / unexpected values
+function M.format_error(err, fallback)
+	if err == nil or err == vim.NIL then
+		return fallback or "unknown provider error"
+	end
+	if type(err) == "string" then
+		if err ~= "" then
+			return err
+		end
+		return fallback or "unknown provider error"
+	end
+	if type(err) == "table" then
+		if type(err.message) == "string" and err.message ~= "" then
+			return err.message
+		end
+		if type(err.error) == "string" and err.error ~= "" then
+			return err.error
+		end
+		if type(err.msg) == "string" and err.msg ~= "" then
+			return err.msg
+		end
+		local ok, encoded = pcall(vim.json.encode, err)
+		if ok and type(encoded) == "string" and encoded ~= "" then
+			return encoded
+		end
+	end
+	return fallback or tostring(err)
 end
 
 -- Extract fields (content, tool_calls) from a standard OpenAI-style response
@@ -141,7 +177,7 @@ function M.extract_fields(message)
 	end
 
 	if message.error then
-		fields.error = message.error.message
+		fields.error = M.format_error(message.error)
 	end
 
 	local content = message.content
@@ -192,7 +228,7 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 	local tmp = vim.fn.tempname()
 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
 	if not ok_write then
-		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
+		return on_complete(nil, "Failed to write request body to temp file: " .. tostring(write_err))
 	end
 
 	local function cleanup()
@@ -237,20 +273,28 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
 			cleanup()
 			if code ~= 0 then
 				log.debug("[API] command returned code " .. tostring(code))
-				on_complete("curl returned code " .. tostring(code))
+				on_complete(nil, "curl returned code " .. tostring(code))
 				return
 			end
-			on_complete(nil)
+			on_complete(nil, nil)
 		end,
 	})
 
 	if job_id <= 0 then
 		cleanup()
-		on_complete("Failed to start job")
+		on_complete(nil, "Failed to start job")
 	end
 end
 
 function M.parse_response(res)
+	if not res then
+		return nil, "empty response"
+	end
+
+	if res.error and res.error ~= vim.NIL then
+		return nil, M.format_error(res.error)
+	end
+
 	if not res.choices or #res.choices == 0 or not res.choices[1].message then
 		return nil, "no choices received"
 	end
@@ -263,7 +307,7 @@ function M.parse_response(res)
 		fields.token_usage = res.usage.total_tokens
 	end
 
-	return fields
+	return fields, nil
 end
 
 local temp_data = ""
@@ -278,42 +322,52 @@ function M.parse_chunk(chunk)
 
 	local ok, decoded = pcall(vim.json.decode, chunk)
 	if not ok then
+		-- Incomplete SSE fragments are common; buffer and try again.
 		log.debug("chunk is not valid JSON trying with temp_data")
 		temp_data = temp_data .. chunk
 		ok, decoded = pcall(vim.json.decode, temp_data)
 	end
-	if ok then
-		temp_data = ""
+	if not ok or type(decoded) ~= "table" then
+		-- Still incomplete / unusable — wait for more data without erroring.
+		return {}, nil
 	end
+	temp_data = ""
 
-	-- try again
 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
 
-	if decoded.error then
-		return { content = decoded.error.message }
+	if decoded.error and decoded.error ~= vim.NIL then
+		return nil, M.format_error(decoded.error)
 	end
 	if decoded.object == "error" then
-		return { content = decoded.message }
+		return nil, M.format_error(decoded.message or decoded)
 	end
 
 	local fields = {}
 	if decoded.choices and #decoded.choices > 0 then
 		local message = decoded.choices[1].delta
-		fields, err = M.extract_fields(message)
-		if err then
-			return fields, err
+		local extract_err
+		fields, extract_err = M.extract_fields(message)
+		if extract_err then
+			return fields, extract_err
 		end
 	end
 	if decoded.usage and decoded.usage.total_tokens then
 		fields.token_usage = decoded.usage.total_tokens
 	end
 
-	return fields
+	return fields, nil
 end
 
 function M.update_fields(fields, chunk)
+	if type(fields) ~= "table" then
+		fields = {}
+	end
+	if type(chunk) ~= "table" then
+		return fields
+	end
+
 	if chunk.error then
-		fields.error = chunk.error
+		fields.error = M.format_error(chunk.error)
 	end
 
 	if chunk.content then

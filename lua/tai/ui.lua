@@ -982,6 +982,9 @@ function M.continue()
 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
 					return
 				end
+				if type(chunk) ~= "table" then
+					return
+				end
 
 				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
 				if chunk.reasoning and #chunk.reasoning > 0 then
@@ -1013,6 +1016,15 @@ function M.continue()
 					update_input_name()
 					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
 					table.insert(hist, { role = "assistant", content = err })
+					return
+				end
+				if type(data) ~= "table" then
+					current_state = "idle"
+					update_input_name()
+					local msg = "empty provider response"
+					M.append("{{{ Received error\n" .. msg .. "\n}}}\n")
+					table.insert(hist, { role = "assistant", content = msg })
+					maybe_auto_save()
 					return
 				end
 				local response = { role = "assistant" }
@@ -1064,6 +1076,15 @@ if not data.tool_calls or #data.tool_calls == 0 then
 					update_input_name()
 					M.append("{{{ Error\n" .. err .. "\n}}}")
 					table.insert(hist, { role = "assistant", content = err })
+					maybe_auto_save()
+					return
+				end
+				if type(fields) ~= "table" then
+					current_state = "idle"
+					update_input_name()
+					local msg = "empty provider response"
+					M.append("{{{ Error\n" .. msg .. "\n}}}")
+					table.insert(hist, { role = "assistant", content = msg })
 					maybe_auto_save()
 					return
 				end
