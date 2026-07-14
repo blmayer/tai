@@ -3,9 +3,8 @@
 ![tai.nvim in action](www/screenshot.png)
 
 > A minimal, dependency-free Neovim plugin that brings AI coding agents directly
-> into your editor. It features a **planner/coder** dual-agent architecture,
-> session persistence, in-memory task tracking, and support for many LLM
-> providers.
+> into your editor. It uses a **subtask harness** (main → plan/code), per-agent
+> working memory, session persistence, and many LLM providers.
 
 <a href="https://dotfyle.com/plugins/blmayer/tai">
 	<img src="https://dotfyle.com/plugins/blmayer/tai/shield?style=flat" />
@@ -13,28 +12,61 @@
 
 ## Features
 
-- **Dual-agent architecture** — a planner agent coordinates work and a coder
-  agent implements changes. Each has independent history and can delegate to the
-  other.
-- **Session persistence** — conversations are automatically saved and restored
-  between Neovim sessions (stored as `.tai-session.json` in your project root).
-- **In-memory task tracking** — agents can use `todos` and `notes` tools to
-  stay organized during long multi-step tasks.
-- **Tool use** — agents can read/write files, run shell commands, edit code,
-  and send images for analysis.
-- **Rate limiting** — configurable requests-per-minute (`rpm`) and
-  tokens-per-minute (`tpm`) limits to stay within API quotas.
-- **Streaming and non-streaming** — supports both modes for all providers.
-- **Code folding** — tool output and thinking blocks are folded in the chat
-  buffer for readability.
-- **Provider-side tools** — pass-through support for provider tools like
-  `web_search` or `web_browser`.
-- **Configurable shell safety** — allowlist of shell commands the agent can run
-  without confirmation.
+- **Subtask harness** — a main orchestrator spawns plan/code subtasks with
+  isolated history; only summaries return to the parent.
+- **Working memory** — each agent has private `notes` and `todos`, injected into
+  the system prompt every request (not stored in chat history).
+- **Session persistence** — conversations are saved and restored between Neovim
+  sessions (`.tai-session.json` in the project root).
+- **Tool use** — read/write files, shell, edit, images, subtask/complete.
+- **Rate limiting** — configurable `rpm` / `tpm`.
+- **Streaming and non-streaming** for all providers.
+- **Code folding** — tool output and whole subtasks fold in the chat buffer.
+- **Provider-side tools** — pass-through for e.g. `web_search`.
+- **Configurable shell safety** — allowlist of commands without confirmation.
+
+## Agent harness
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  MAIN (long-lived)                                          │
+│  tools: read, shell, send_image, subtask, notes, todos      │
+│  memory: notes + todos  ──► injected into system each turn  │
+│                                                             │
+│   user request                                              │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  SUBTASK profile=plan          {{{ fold             │   │
+│   │  own history + notes/todos                          │   │
+│   │  explore → sketch plan in notes → complete()        │   │
+│   └───────────────────────┬─────────────────────────────┘   │
+│                           │ summary + notes + todos         │
+│                           ▼                                 │
+│   merge into main memory, request auth if needed            │
+│        │                                                    │
+│        ▼                                                    │
+│   ┌─────────────────────────────────────────────────────┐   │
+│   │  SUBTASK profile=code          {{{ fold             │   │
+│   │  seeded with plan notes                             │   │
+│   │  implement → verify → complete()                    │   │
+│   └───────────────────────┬─────────────────────────────┘   │
+│                           │ report + notes + todos          │
+│                           ▼                                 │
+│   verify lightly → answer user                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Rules of the harness:**
+
+1. Each frame (main or subtask) has its own history and notes/todos.
+2. Notes/todos are **request-time only** — merged into the single system message
+   when calling the API; never written into message history.
+3. `subtask` opens a chat fold; `complete` closes it and returns
+   `status`, `summary`, child notes, and child todos to the parent.
+4. Max depth is 2 (main + one subtask). Plan and code run sequentially, not nested.
 
 ## Providers
-
-tai supports the following providers out of the box:
 
 | Provider | Environment Variable | Notes |
 |---|---|---|
@@ -52,8 +84,6 @@ tai supports the following providers out of the box:
 | Z.AI | `Z_AI_API_KEY` | |
 | Zyphra | `ZYPHRA_API_KEY` | |
 | Custom | *(via `options.url`)* | Any OpenAI-compatible endpoint |
-
-Set the corresponding environment variable for your chosen provider.
 
 ## Installation
 
@@ -74,7 +104,6 @@ return {
   keys = {
     { "<leader>tt", "<cmd>Tai chat<cr>", desc = "Open Tai chat" },
     { "<leader>tc", "<cmd>Tai reload<cr>", desc = "Reload Tai config" },
-    { "<leader>ta", "<cmd>Tai agent<cr>", desc = "Switch agent" },
     { "<leader>tr", "<cmd>Tai clear<cr>", desc = "Clear Tai history" },
     { "<leader>ts", "<cmd>Tai stop<cr>", desc = "Stop Tai" },
   },
@@ -87,7 +116,7 @@ return {
 use("blmayer/tai")
 ```
 
-#### [vim-plug](https://github.com/junegunn/vim-plug)
+#### [vim-plug](https://junegunn.github.io/vim-plug/)
 
 ```vim
 Plug "blmayer/tai"
@@ -95,16 +124,12 @@ Plug "blmayer/tai"
 
 #### Native / Manual Installation
 
-Clone or place `lua/tai/` into your Neovim config directory and add to `init.lua`:
-
 ```lua
 local tai = require("tai")
 tai.setup({})
 
--- Recommended keybindings
 vim.keymap.set("n", "<leader>tt", tai.chat, { noremap = true })
 vim.keymap.set("n", "<leader>tc", tai.reload, { noremap = true })
-vim.keymap.set("n", "<leader>ta", tai.switch_agent, { noremap = true })
 vim.keymap.set("n", "<leader>tr", tai.clear_history, { noremap = true })
 vim.keymap.set("n", "<leader>ts", tai.stop, { noremap = true })
 vim.keymap.set("n", "<C-W><C-T>", tai.toggle_chat_window, { noremap = true })
@@ -118,16 +143,16 @@ tai reads configuration from a `.tai` JSON file in your project root:
 |---|---|---|---|
 | `provider` | string | — | Provider name (see table above) |
 | `model` | string | — | Model identifier (e.g. `"gemini-2.0-flash"`) |
-| `options` | object | `{}` | Provider-specific options (`temperature`, `max_tokens`, etc.) |
+| `options` | object | `{}` | Provider-specific options |
 | `stream` | boolean | `false` | Enable streaming responses |
 | `use_tools` | boolean | `true` | Enable/disable agent tools |
-| `think` | string | — | Reasoning effort level for supporting models |
+| `think` | string | — | Reasoning effort for supporting models |
 | `rpm` | number | `60` | Max requests per minute |
 | `tpm` | number | — | Max tokens per minute |
 | `provider_tools` | array | — | Provider-side tools (e.g. `["web_search"]`) |
-| `system_prompt` | string | — | Override the default planner system prompt |
-| `custom_prompt` | string | — | Extra instructions appended to the system prompt |
-| `allowed_commands` | object | *(defaults)* | Map of allowed shell commands (`{"git": true, ...}`) |
+| `system_prompt` | string | — | Override the default main system prompt |
+| `custom_prompt` | string | — | Extra instructions appended to the main prompt |
+| `allowed_commands` | object | *(defaults)* | Map of allowed shell commands |
 
 Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`,
 `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`,
@@ -157,19 +182,17 @@ Example `.tai` file:
 
 ## Agent Tools
 
-The agents have access to these tools:
-
-| Tool | Available to | Description |
+| Tool | Who | Description |
 |---|---|---|
-| `read` | planner, coder | Read file contents (with optional line range) |
-| `shell` | planner, coder | Run shell commands in the project root |
-| `edit` | coder | Edit files with search-and-replace (supports `multi` flag) |
-| `write` | coder | Create new files |
-| `send_image` | planner, coder | Send images for visual analysis |
-| `coder` | planner | Delegate implementation tasks to the coder agent |
-| `planner` | coder | Escalate back to the planner for guidance |
-| `todos` | planner, coder | Manage an in-memory todo list (add/update/list) |
-| `notes` | planner, coder | Read/write a scratchpad for discoveries and context |
+| `read` | main, plan, code | Read file contents (optional line range) |
+| `shell` | main, plan, code | Run shell commands in the project root |
+| `send_image` | main, plan, code | Send images for visual analysis |
+| `edit` | code | Search-and-replace edit (`multi` flag supported) |
+| `write` | code | Create new files |
+| `subtask` | main | Spawn plan or code child (own history + memory) |
+| `complete` | plan, code | Finish subtask; return summary + notes + todos |
+| `todos` | all | Add/update todos (list is auto-injected) |
+| `notes` | all | Write/append notes (content is auto-injected) |
 
 ## Running Tests
 
@@ -187,4 +210,3 @@ nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_persist.lua" -c "
 ## License
 
 This project is licensed under the MIT License.
-

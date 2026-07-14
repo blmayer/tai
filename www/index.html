@@ -3,7 +3,7 @@
 <title>tai.nvim + tai</title>
 <meta name="color-scheme" content="light dark">
 <link rel=icon href=data:,>
-<style>pre{width:52ch;margin:2ch auto}a{color:#ff00ff}img{max-width:100%}</style>
+<style>pre{width:56ch;margin:2ch auto}a{color:#ff00ff}img{max-width:100%}</style>
 <pre>
 <h1>泰</h1>
 <i><b>tai.nvim</b></i>
@@ -18,18 +18,29 @@ AI coding agents directly to your editor.
 
 <b>features</b>
 
-- dual-agent architecture: planner coordinates,
-  coder implements. each has independent history.
-- session persistence: conversations auto-save and
-  restore between Neovim sessions.
-- task tracking: agents use todos and notes tools
-  to stay organized on long tasks.
-- file read/write, shell commands, image analysis.
-- rate limiting (rpm/tpm) to stay within API quotas.
+- subtask harness: main orchestrates plan/code
+  children with isolated history; only summaries
+  return to the parent.
+- working memory: per-agent notes + todos injected
+  into the system prompt every turn.
+- session persistence: auto-save/restore.
+- file read/write, shell, image analysis.
+- rate limiting (rpm/tpm).
 - streaming and non-streaming modes.
-- code folding in the chat buffer.
-- provider-side tool pass-through (web_search etc).
+- code folding (including whole subtasks).
+- provider-side tool pass-through.
 - configurable shell command safety allowlist.
+
+
+<b>harness</b>
+
+  MAIN ──subtask(plan)──► PLAN (fold)
+       ◄── complete ──── notes/todos/summary
+    │
+    ├── merge memory, auth
+    │
+    └──subtask(code)──► CODE (fold)
+       ◄── complete ──── report
 
 
 <i>providers</i>
@@ -54,20 +65,19 @@ AI coding agents directly to your editor.
 
 - read       read files (with line ranges)
 - shell      run commands in the project root
-- edit       search-and-replace (with multi flag)
-- write      create new files
+- edit       search-and-replace (code profile)
+- write      create new files (code profile)
 - send_image send images for visual analysis
-- coder      planner delegates to coder agent
-- planner    coder escalates to planner agent
-- todos      in-memory todo list (add/update/list)
-- notes      scratchpad for discoveries/context
+- subtask    spawn plan/code child agent
+- complete   finish subtask, return to parent
+- todos      add/update todos (auto-injected)
+- notes      write/append notes (auto-injected)
 
 
 <b>keybindings</b>
 
 &lt;leader&gt;tt  - open tai chat
 &lt;leader&gt;tc  - reload config
-&lt;leader&gt;ta  - switch agent
 &lt;leader&gt;tr  - clear history
 &lt;leader&gt;ts  - stop
 &lt;C-W&gt;&lt;C-T&gt; - toggle chat window
@@ -83,7 +93,6 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
 
   vim.keymap.set("n", "&lt;leader&gt;tt", tai.chat)
   vim.keymap.set("n", "&lt;leader&gt;tc", tai.reload)
-  vim.keymap.set("n", "&lt;leader&gt;ta", tai.switch_agent)
   vim.keymap.set("n", "&lt;leader&gt;tr", tai.clear_history)
   vim.keymap.set("n", "&lt;leader&gt;ts", tai.stop)
   vim.keymap.set("n", "&lt;C-W&gt;&lt;C-T&gt;",
@@ -108,8 +117,8 @@ in your project root:
 - <i>tpm</i>: max tokens per minute
 - <i>provider_tools</i>: provider-side tools array
   (e.g., ["web_search"] for OpenAI)
-- <i>system_prompt</i>: override planner system prompt
-- <i>custom_prompt</i>: append to system prompt
+- <i>system_prompt</i>: override main system prompt
+- <i>custom_prompt</i>: append to main system prompt
 - <i>allowed_commands</i>: override allowed shell
   commands (default: cat, grep, ag, rg, ls, head,
   tail, wc, diff, sort, uniq, find, file, stat,
@@ -135,35 +144,12 @@ example .tai file:
 }
 
 
-<b>usage</b>
+<b>screenshots</b>
 
-1. set the correct env var for your provider.
-2. create a .tai file at the root of your project.
-3. open any file in that project to start tai.
-4. use the keybindings to chat, switch agents, etc.
-
-sessions are automatically saved and restored, so
-you can close Neovim and pick up where you left off.
-use <i>:Tai clear</i> to start fresh.
+<img src="screenshot.png" alt="tai.nvim in action"></img>
+<img src="2025-08-05-174307_1372x1415_scrot.png" alt="side panel"></img>
+<img src="folding.png" alt="side panel with folding"></img>
 
 
-<b>testing</b>
-
-nvim --headless -u NONE -c "set rtp+=." \
-  -c "luafile tests/test_edit.lua" -c "qa!"
-nvim --headless -u NONE -c "set rtp+=." \
-  -c "luafile tests/test_persist.lua" -c "qa!"
-
-
-<i>screenshots</i>
-
-- <a href="2025-08-05-174307_1372x1415_scrot.png">side panel</a>
-- <a href="folding.png">side panel with folding</a>
-
-
-<b>license</b>
-
-MIT License
-
-(C) 2025-2026 Brian Mayer
+source: <a href="https://github.com/blmayer/tai">github.com/blmayer/tai</a>
 </pre>

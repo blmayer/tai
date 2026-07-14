@@ -40,12 +40,9 @@ local mock_io_open = {
 }
 
 describe("tools module", function()
+  local frame
   before_each(function()
-    -- Reset tools state before each test
-    tools.todos_store = {}
-    tools.todos_next_id = 1
-    tools.notes_store = ""
-    
+    frame = { notes = "", todos = {}, todos_next_id = 1 }
     -- Reset config state
     config.allowed_commands = nil
   end)
@@ -254,47 +251,44 @@ describe("tools module", function()
 
   describe("run_todos", function()
     it("should add todo items", function()
-      local result = tools.run_todos({ action = "add", text = "Test todo" })
+      local result = tools.run_todos({ action = "add", text = "Test todo" }, frame)
       assert.are.match("Added todo #%d+: %[pending%] Test todo", result)
+      assert.are.equal(1, #frame.todos)
     end)
 
     it("should update todo items", function()
-      -- Add a todo first
-      tools.run_todos({ action = "add", text = "Test todo" })
-      
-      -- Update it
-      local result = tools.run_todos({ action = "update", id = 1, status = "done" })
+      tools.run_todos({ action = "add", text = "Test todo" }, frame)
+      local result = tools.run_todos({ action = "update", id = 1, status = "done" }, frame)
       assert.are.match("Updated todo #1: %[done%] Test todo", result)
     end)
 
-    it("should list todo items", function()
-      -- Add a todo first
-      tools.run_todos({ action = "add", text = "Test todo" })
-      
-      -- List it
-      local result = tools.run_todos({ action = "list" })
-      assert.are.match("#1 %[pending%] Test todo", result)
+    it("should format todos", function()
+      tools.run_todos({ action = "add", text = "Test todo" }, frame)
+      assert.are.match("#1 %[pending%] Test todo", tools.format_todos(frame.todos))
     end)
   end)
 
   describe("run_notes", function()
     it("should write notes", function()
-      local result = tools.run_notes({ action = "write", content = "Test note" })
-      assert.are.equal("Notes updated.", result)
-      assert.are.equal("Test note", tools.notes_store)
+      local result = tools.run_notes({ action = "write", content = "Test note" }, frame)
+      assert.are.match("Notes updated", result)
+      assert.are.equal("Test note", frame.notes)
     end)
 
     it("should append notes", function()
-      tools.notes_store = "Initial note"
-      local result = tools.run_notes({ action = "append", content = "Appended note" })
-      assert.are.equal("Notes appended.", result)
-      assert.are.equal("Initial note\nAppended note", tools.notes_store)
+      frame.notes = "Initial note"
+      local result = tools.run_notes({ action = "append", content = "Appended note" }, frame)
+      assert.are.match("Notes appended", result)
+      assert.are.equal("Initial note\nAppended note", frame.notes)
     end)
 
-    it("should read notes", function()
-      tools.notes_store = "Test note"
-      local result = tools.run_notes({ action = "read" })
-      assert.are.equal("Test note", result)
+    it("should render memory", function()
+      frame.notes = "hello"
+      tools.run_todos({ action = "add", text = "t1" }, frame)
+      local mem = tools.render_memory(frame)
+      assert.are.match("Working memory", mem)
+      assert.are.match("hello", mem)
+      assert.are.match("t1", mem)
     end)
   end)
 end)

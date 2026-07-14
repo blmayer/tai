@@ -10,52 +10,60 @@ These notes are intended for **automated coding agents** working in this reposit
 - `lua/tai/` — Neovim plugin implementation (all core logic)
   - `init.lua` — plugin entrypoint
   - `config.lua` — defaults + user configuration
-  - `agent.lua` — orchestration of chat/task flow
-  - `openai.lua` / `groq.lua` / `openrouter.lua` / `mistral.lua` / `gemini.lua` — provider adapters
-  - `tools.lua` — tool definitions + tool execution plumbing
-  - `ui.lua` — buffers/windows and UX
+  - `agent.lua` — profiles (main/plan/code), system prompts, `new_frame`
+  - `providers.lua` / `provider_common.lua` — provider adapters
+  - `tools.lua` — tool schemas + execution helpers (notes/todos/memory)
+  - `ui.lua` — agent stack, chat UI, tool runner, subtask folds
+  - `context.lua` — session persistence (stack + chat_lines)
   - `log.lua` — logging
 - `www/` — static website assets
 - `README.md` — user documentation
 - `TODO.md` — rough roadmap / scratchpad
 
+## Agent harness (runtime)
+
+```
+stack[1] = MAIN frame (history + notes + todos)
+stack[2] = optional PLAN or CODE subtask
+
+each request:
+  system = base_prompt + render_memory(frame)   -- ephemeral, not stored
+```
+
+- `subtask` pushes a frame and opens `{{{ SUBTASK …`
+- `complete` pops, closes `}}}`, returns summary+notes+todos as the parent tool result
+- Max depth: 2
+
 ## How to orient quickly (when debugging)
 
 1. Start at the entrypoint: `lua/tai/init.lua`.
-2. Trace configuration flow: `config.lua` → where it’s read/merged.
+2. Trace configuration: `config.lua` → where it’s read/merged.
 3. Trace a request:
-   - prompt/task setup: `agent.lua`
-   - provider selection + request formatting: specific provider file
-   - tool calls: `tools.lua`
-   - user-visible output: `ui.lua`
+   - frame + prompts: `agent.lua`
+   - injection + stack: `ui.lua` (`prepare_messages`, `finish_subtask`)
+   - provider formatting: `providers.lua`
+   - tools: `tools.lua`
 
 ## Common tasks
 
 - **Add a new provider**
-  - Create `lua/tai/<provider>.lua` similar to existing providers.
-  - Update `README.md` with document config keys and provider list.
-  - Update `www/index.html` page to keep it in sync.
+  - Extend `providers.lua` (or the provider registry there).
+  - Update `README.md` and `www/index.html`.
 
 - **Add/adjust a tool**
-  - Update `lua/tai/tools.lua`.
-  - Add tool details to system prompt in `lua/tai/agent.lua`
-  - Ensure the tool schema and the execution function stay in sync.
-  - Consider UX impact (how results are shown) in `lua/tai/ui.lua`.
-
-- **Change default behavior**
+  - Update `lua/tai/tools.lua` (schema + runner).
+  - Give the tool to the right profile(s) in `agent.lua`.
+  - Wire execution in `ui.lua` `run_tools` if needed.
+  - Update docs.
 
 - **Add provider-side tools (e.g., web_browser)**
-  - Tools that the provider runs on their side (not executed locally).
-  - Add the tool name to `config.provider_tools` in `.tai` file.
-  - Provider implementations add these tools to the request body.
-  - Update `README.md` and `www/index.html` to document the config field.
-  - Update defaults in `config.lua`.
-  - If user-facing, update `README.md`.
+  - Add the tool name to `config.provider_tools` in `.tai`.
+  - Document in README / www.
 
 ## Development notes
 
-- This repo is primarily Lua (Neovim plugin). Keep code idiomatic Lua.
-- Prefer explicit, readable code over cleverness.
-- Avoid adding new dependencies unless necessary.
+- Prefer small, explicit Lua. Avoid new dependencies.
+- Keep system prompts compact (small models).
+- Working memory must stay request-ephemeral (never append into history).
 
 (Agent reminder) You are editing the Tai plugin’s own code—double-check changes for regressions.

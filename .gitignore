@@ -1,0 +1,28 @@
+# Tai session files
+.tai-session.json
+
+# Neovim swap files
+*.swp
+*.swo
+
+# Backup files
+*~
+
+# Local configuration
+lua/tai/local_config.lua
+
+# Build artifacts
+build/
+*.o
+*.so
+
+# IDE specific files
+.idea/
+.vscode/
+
+# Node.js
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
