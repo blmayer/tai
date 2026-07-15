@@ -36,7 +36,13 @@ end
 local function prepare_messages(frame)
 	local msgs = vim.deepcopy(frame.history)
 	if msgs[1] and msgs[1].role == "system" then
-		msgs[1].content = frame.system_prompt .. "\n\n" .. tools_subtask.render_memory(frame)
+		local live = tools_subtask.render_memory(frame)
+		if live ~= "" then
+			-- Single system message (providers that allow only one); never stored in history.
+			msgs[1].content = frame.system_prompt .. "\n\n" .. live
+		else
+			msgs[1].content = frame.system_prompt
+		end
 	end
 	return msgs
 end
@@ -450,7 +456,7 @@ local function finish_subtask(status, summary)
 	end
 	local child = top()
 	local result = tools_subtask.format_complete(status, summary, child)
-	M.append(string.format("\n[complete %s] %s\n}}}\n", status or "ok", summary or ""))
+	M.append(string.format("\n[subtask %s] %s\n}}}\n", status or "ok", summary or ""))
 	refresh_and_close_folds()
 	table.remove(stack)
 	local parent = top()
@@ -576,51 +582,51 @@ local function run_tools(tool_calls, frame, start_index, on_done)
 			if not args.goal or args.goal == "" then
 				M.append("{{{ Subtask failed: no goal.\n}}}\n")
 				res.content = "missing goal"
+			elseif type(args.tools) ~= "table" or #args.tools == 0 then
+				M.append("{{{ Subtask failed: tools list required.\n}}}\n")
+				res.content = "missing tools list"
 			elseif #stack >= (agent.MAX_DEPTH or 2) then
 				M.append("{{{ Subtask failed: max depth.\n}}}\n")
 				res.content = "max subtask depth reached"
 			else
-				local profile = args.profile or "code"
-				if profile ~= "plan" and profile ~= "code" then
-					profile = "code"
+				local child_tools = agent.sanitize_subtask_tools(args.tools)
+				if #child_tools == 0 then
+					M.append("{{{ Subtask failed: no valid tools after sanitize.\n}}}\n")
+					res.content = "no valid tools"
+				else
+					local label = args.system_prompt and "custom" or "default"
+					M.append("{{{ SUBTASK (" .. label .. ")\nGoal: " .. args.goal
+						.. "\nTools: " .. table.concat(child_tools, ", ") .. "\n")
+					local child = agent.new_frame({
+						profile = "subtask",
+						system_prompt = args.system_prompt,
+						tools = child_tools,
+						goal = args.goal,
+						notes = args.notes or "",
+						todos = args.todos,
+						depth = #stack,
+						parent_call_id = call.id,
+					})
+					table.insert(stack, child)
+					stop = true
+					M.update_chat_name()
+					update_input_name()
+					maybe_auto_save()
+					M.continue()
+					on_done(true)
+					return
 				end
-				M.append("{{{ SUBTASK " .. profile .. "\nGoal: " .. args.goal .. "\n")
-				local child = agent.new_frame({
-					profile = profile,
-					goal = args.goal,
-					notes = args.notes or "",
-					todos = args.todos,
-					depth = #stack,
-					parent_call_id = call.id,
-				})
-				table.insert(stack, child)
-				stop = true
-				M.update_chat_name()
-				update_input_name()
-				maybe_auto_save()
-				M.continue()
-				on_done(true)
-				return
-			end
-		elseif name == "complete" then
-			if #stack <= 1 then
-				M.append("{{{ complete only valid inside a subtask\n}}}\n")
-				res.content = "complete only valid inside a subtask"
-			else
-				res.content = "handed back to parent"
-				table.insert(history, res)
-				finish_subtask(args.status or "ok", args.summary or "")
-				on_done(true)
-				return
 			end
 		elseif name == "todos" then
 			local out = tools_subtask.run_todos(args, frame)
 			res.content = out
-			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+			local todos_content = tools_subtask.format_todos(frame.todos)
+			M.append("{{{ Todos (" .. (args.action or "?") .. ")\nAction result: " .. out .. "\n\nCurrent todos:\n" .. todos_content .. "\n}}}\n")
 		elseif name == "notes" then
 			local out = tools_subtask.run_notes(args, frame)
 			res.content = out
-			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+			local notes_content = frame.notes ~= "" and frame.notes or "(empty)"
+			M.append("{{{ Notes (" .. (args.action or "?") .. ")\nAction result: " .. out .. "\n\nNotes content:\n" .. notes_content .. "\n}}}\n")
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Adding image failed: no file field.\n}}}")
@@ -826,9 +832,9 @@ function M.continue()
 	update_input_name()
 
 	local function on_idle_no_tools(content)
-		-- Subtask ended without complete → auto-handback
+		-- Subtask finished: final assistant text (+ notes/todos) returns to parent
 		if #stack > 1 then
-			finish_subtask("partial", content or "(no summary)")
+			finish_subtask("ok", content or "(no output)")
 			return
 		end
 		current_state = "idle"

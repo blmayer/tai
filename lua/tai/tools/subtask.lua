@@ -1,6 +1,6 @@
 local M = {}
+local log = require("tai.log")
 
--- Export helper functions
 function M.format_todos(todos)
 	if not todos or #todos == 0 then
 		return "(none)"
@@ -16,7 +16,7 @@ end
 function M.format_notes(notes, max_chars)
 	notes = notes or ""
 	if notes == "" then
-		return "(empty)"
+		return ""
 	end
 	max_chars = max_chars or 6000
 	if #notes <= max_chars then
@@ -28,25 +28,33 @@ function M.format_notes(notes, max_chars)
 		.. notes:sub(#notes - half + 1)
 end
 
---- Working memory block appended to the system prompt each request (not stored in history).
+--- Live context injected into the system prompt each request (never stored in history).
+--- Returns "" when empty so callers can skip injection.
 function M.render_memory(frame)
-	return table.concat({
-		"## Working memory (auto-injected; mutate via notes/todos tools)",
-		"### Todos",
-		M.format_todos(frame.todos),
-		"### Notes",
-		M.format_notes(frame.notes),
-	}, "\n")
+	local parts = {}
+	if frame.todos and #frame.todos > 0 then
+		table.insert(parts, "## Current Todos\n" .. M.format_todos(frame.todos))
+	end
+	local notes = M.format_notes(frame.notes)
+	if notes ~= "" then
+		table.insert(parts, "## Notes\n" .. notes)
+	end
+	if #parts == 0 then
+		return ""
+	end
+	return "--- Live Context (updated every turn, not part of history) ---\n"
+		.. table.concat(parts, "\n\n")
+		.. "\n--- End Live Context ---"
 end
 
---- Payload returned to parent on subtask complete.
+--- Payload returned to parent when a subtask finishes (final text + child memory).
 function M.format_complete(status, summary, frame)
 	return table.concat({
 		"status: " .. (status or "ok"),
-		"summary: " .. (summary or ""),
+		"summary: " .. (summary or "(no output)"),
 		"",
 		"## Subtask notes",
-		(frame.notes ~= "" and frame.notes) or "(empty)",
+		(frame.notes and frame.notes ~= "" and frame.notes) or "(empty)",
 		"",
 		"## Subtask todos",
 		M.format_todos(frame.todos),

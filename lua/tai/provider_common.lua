@@ -208,20 +208,6 @@ function M.extract_fields(message)
 	return fields, nil
 end
 
--- Decode tool call arguments if they are JSON strings
-function M.decode_tool_call_arguments(calls)
-	if not calls then return end
-	for _, call in ipairs(calls) do
-		local args = call["function"].arguments
-		if type(args) == "string" then
-			local decoded = vim.json.decode(args)
-			if decoded then
-				call["function"].arguments = decoded
-			end
-		end
-	end
-end
-
 -- Streaming HTTP client using vim.uv process
 -- Reads curl output line-by-line for true streaming support
 function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_complete)

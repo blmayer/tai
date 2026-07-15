@@ -18,11 +18,13 @@ AI coding agents directly to your editor.
 
 <b>features</b>
 
-- subtask harness: main orchestrates plan/code
-  children with isolated history; only summaries
-  return to the parent.
-- working memory: per-agent notes + todos injected
-  into the system prompt every turn.
+- subtask harness: main agent can implement or
+  spawn children with clean history; only the
+  final report (+ notes/todos) returns.
+- live context: per-agent notes + todos injected
+  into the system prompt every turn (not history).
+- flexible subtasks: goal, tools, optional
+  system_prompt and notes/todos seed.
 - session persistence: auto-save/restore.
 - file read/write, shell, image analysis.
 - rate limiting (rpm/tpm).
@@ -34,13 +36,22 @@ AI coding agents directly to your editor.
 
 <b>harness</b>
 
-  MAIN ──subtask(plan)──► PLAN (fold)
-       ◄── complete ──── notes/todos/summary
+  MAIN (edit/write + subtask)
     │
-    ├── merge memory, auth
+    ├── subtask(goal, tools, system_prompt?)
+    │      {{{ fold, own history + notes
+    │      final text reply
+    │   ◄── summary + notes + todos
     │
-    └──subtask(code)──► CODE (fold)
-       ◄── complete ──── report
+    └── verify → answer user
+
+
+<subtask params>
+
+- goal           required charter for the child
+- tools          required tool allowlist
+- system_prompt  optional persona/constraints
+- notes, todos   optional seed memory
 
 
 <i>providers</i>
@@ -65,11 +76,10 @@ AI coding agents directly to your editor.
 
 - read       read files (with line ranges)
 - shell      run commands in the project root
-- edit       search-and-replace (code profile)
-- write      create new files (code profile)
+- edit       search-and-replace (multi flag)
+- write      create new files
 - send_image send images for visual analysis
-- subtask    spawn plan/code child agent
-- complete   finish subtask, return to parent
+- subtask    spawn child agent (goal + tools)
 - todos      add/update todos (auto-injected)
 - notes      write/append notes (auto-injected)
 
@@ -86,7 +96,8 @@ AI coding agents directly to your editor.
 <b>installation</b>
 
 clone or place <i>lua/tai/</i> into your Neovim config dir
-<i>~/.config/nvim/lua/</i> and add keymaps to <i>init.lua</i>:
+<i>~/.config/nvim/lua/</i> and add keymaps to <i>init.lua</i>.
+For :Tai commands, also install <i>plugin/tai.lua</i>.
 
   local tai = require("tai")
   tai.setup({})
@@ -98,7 +109,8 @@ clone or place <i>lua/tai/</i> into your Neovim config dir
   vim.keymap.set("n", "&lt;C-W&gt;&lt;C-T&gt;",
     tai.toggle_chat_window)
 
-or use lazy.nvim, packer, vim-plug, etc.
+requires Neovim 0.10+, a project <i>.tai</i> file, and
+an API key. or use lazy.nvim / packer / vim-plug.
 
 
 <b>configuring</b>
@@ -119,6 +131,7 @@ in your project root:
   (e.g., ["web_search"] for OpenAI)
 - <i>system_prompt</i>: override main system prompt
 - <i>custom_prompt</i>: append to main system prompt
+- <i>auto_approve</i>: auto-approve unsafe shell cmds
 - <i>allowed_commands</i>: override allowed shell
   commands (default: cat, grep, ag, rg, ls, head,
   tail, wc, diff, sort, uniq, find, file, stat,

@@ -104,7 +104,7 @@ function M.finish_subtask(status, summary, M_core, M_session)
 	end
 	local child = M_session.get_stack()[#M_session.get_stack()]
 	local result = tools_module.format_complete(status, summary, child)
-	M_core.append(string.format("\n[complete %s] %s\n}}}\n", status or "ok", summary or ""))
+	M_core.append(string.format("\n[subtask %s] %s\n}}}\n", status or "ok", summary or ""))
 	refresh_and_close_folds(M_core)
 	table.remove(M_session.get_stack())
 	local parent = M_session.get_stack()[#M_session.get_stack()]
@@ -224,47 +224,44 @@ local function run_tools(tool_calls, frame, start_index, on_done, M_core, M_sess
 				M_core.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
 			end
 		elseif name == "subtask" then
+			local agent = require("tai.agent")
 			if not args.goal or args.goal == "" then
 				M_core.append("{{{ Subtask failed: no goal.\n}}}\n")
 				res.content = "missing goal"
-			elseif #M_session.get_stack() >= (require("tai.agent").MAX_DEPTH or 2) then
+			elseif type(args.tools) ~= "table" or #args.tools == 0 then
+				M_core.append("{{{ Subtask failed: tools list required.\n}}}\n")
+				res.content = "missing tools list"
+			elseif #M_session.get_stack() >= (agent.MAX_DEPTH or 2) then
 				M_core.append("{{{ Subtask failed: max depth.\n}}}\n")
 				res.content = "max subtask depth reached"
 			else
-				local profile = args.profile or "code"
-				if profile ~= "plan" and profile ~= "code" then
-					profile = "code"
+				local child_tools = agent.sanitize_subtask_tools(args.tools)
+				if #child_tools == 0 then
+					M_core.append("{{{ Subtask failed: no valid tools.\n}}}\n")
+					res.content = "no valid tools"
+				else
+					local label = args.system_prompt and "custom" or "default"
+					M_core.append("{{{ SUBTASK (" .. label .. ")\nGoal: " .. args.goal
+						.. "\nTools: " .. table.concat(child_tools, ", ") .. "\n")
+					local child = agent.new_frame({
+						profile = "subtask",
+						system_prompt = args.system_prompt,
+						tools = child_tools,
+						goal = args.goal,
+						notes = args.notes or "",
+						todos = args.todos,
+						depth = #M_session.get_stack(),
+						parent_call_id = call.id,
+					})
+					table.insert(M_session.get_stack(), child)
+					stop = true
+					M_core.update_chat_name()
+					M_core.update_input_name()
+					M_session.maybe_auto_save(M_core)
+					M_core.continue()
+					on_done(true)
+					return
 				end
-				M_core.append("{{{ SUBTASK " .. profile .. "\nGoal: " .. args.goal .. "\n")
-				local child = require("tai.agent").new_frame({
-					profile = profile,
-					goal = args.goal,
-					notes = args.notes or "",
-					todos = args.todos,
-					depth = #M_session.get_stack(),
-					parent_call_id = call.id,
-				})
-				table.insert(M_session.get_stack(), child)
-				stop = true
-				-- Tool result delivered later via complete (finish_subtask)
-				M_core.update_chat_name()
-				M_core.update_input_name()
-				M_session.maybe_auto_save(M_core)
-				M_core.continue()
-				on_done(true)
-				return
-			end
-		elseif name == "complete" then
-			if #M_session.get_stack() <= 1 then
-				M_core.append("{{{ complete only valid inside a subtask\n}}}\n")
-				res.content = "complete only valid inside a subtask"
-			else
-				-- Record complete on child history, then hand back
-				res.content = "handed back to parent"
-				table.insert(history, res)
-				M.finish_subtask(args.status or "ok", args.summary or "", M_core, M_session)
-				on_done(true)
-				return
 			end
 		elseif name == "todos" then
 			local out = tools_module.run_todos(args, frame)

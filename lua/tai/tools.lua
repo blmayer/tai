@@ -56,15 +56,15 @@ M.defs = {
 		type = "function",
 		["function"] = {
 			name = "shell",
-			description =
-			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&), and chaining (;) are allowed. Redirects (>, >>, <, <<, 2>&1 etc.) are NOT allowed. Returns the stdout and stderr of the command.",
+		description =
+			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&), and chaining (;) are allowed. Redirects (>, >>, <, <<, 2>&1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
 			parameters = {
 				type = "object",
 				properties = {
 					command = {
 						type = "string",
 						description =
-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc. 2>&1 is added to the end of the command."
+						"The pipeline to be interpreted by the shell in the project's folder. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc. 2>&1 is added to the end of the command."
 					}
 				},
 				additionalProperties = false,
@@ -77,26 +77,39 @@ M.defs = {
 		["function"] = {
 			name = "subtask",
 			description =
-			"Run a child agent with its own history and notes/todos. Profiles: plan (read-only planning), code (implement). Optional initial notes/todos seed the child. Returns when the child calls complete (summary + its notes/todos).",
+			"Spawn a focused subtask with its own history so the main chat stays clean. "
+				.. "When it finishes (final text reply), only that summary plus its notes/todos "
+				.. "return as the tool result. Provide goal, tools, and optionally system_prompt, "
+				.. "notes, and todos to seed the child.",
 			parameters = {
 				type = "object",
 				properties = {
 					goal = {
 						type = "string",
-						description = "Short task charter for the child agent.",
+						description =
+						"What the subtask must accomplish. Include all context it needs "
+							.. "(paths, lines, constraints). It cannot see prior conversation.",
 					},
-					profile = {
+					tools = {
+						type = "array",
+						items = { type = "string" },
+						description =
+						"Tools for the child. Read-only: [\"read\",\"shell\",\"send_image\",\"todos\",\"notes\"]. "
+							.. "Read-write: add \"edit\",\"write\". Minimal set preferred.",
+					},
+					system_prompt = {
 						type = "string",
-						description = "Agent profile: plan or code.",
-						enum = { "plan", "code" },
+						description =
+						"Optional system prompt override (persona/constraints). "
+							.. "Defaults to the focused subtask agent prompt.",
 					},
 					notes = {
 						type = "string",
-						description = "Initial notes for the child (e.g. plan snapshot).",
+						description = "Optional initial notes for the child (e.g. plan snapshot).",
 					},
 					todos = {
 						type = "array",
-						description = "Initial todo items (strings or {text, status}).",
+						description = "Optional initial todos (strings or {text, status}).",
 						items = {
 							type = "object",
 							properties = {
@@ -110,31 +123,7 @@ M.defs = {
 					},
 				},
 				additionalProperties = false,
-				required = { "goal", "profile" },
-			},
-		},
-	},
-	complete = {
-		type = "function",
-		["function"] = {
-			name = "complete",
-			description =
-			"Finish a subtask and return control to the parent. Pass a short summary; notes and todos are attached automatically.",
-			parameters = {
-				type = "object",
-				properties = {
-					summary = {
-						type = "string",
-						description = "What the parent needs to know (outcome, files, blockers).",
-					},
-					status = {
-						type = "string",
-						description = "Outcome status.",
-						enum = { "ok", "blocked", "partial" },
-					},
-				},
-				additionalProperties = false,
-				required = { "summary" },
+				required = { "goal", "tools" },
 			},
 		},
 	},
