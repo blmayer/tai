@@ -57,14 +57,14 @@ M.defs = {
 		["function"] = {
 			name = "shell",
 		description =
-			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &&), and chaining (;) are allowed. Redirects (>, >>, <, <<, 2>&1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
+			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Do NOT prefix with `cd` to the project root — the shell already starts there. Arguments, pipes (|), conditionals (||, &&), and chaining (;) are allowed. Redirects (>, >>, <, <<, 2>&1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
 			parameters = {
 				type = "object",
 				properties = {
 					command = {
 						type = "string",
 						description =
-						"The pipeline to be interpreted by the shell in the project's folder. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc. 2>&1 is added to the end of the command."
+						"The pipeline to be interpreted by the shell in the project's folder. Already cwd is the project root — do not `cd` there first. All paths are relative to the project's folder. Avoid redirections like >, >>, <, <<, 2>&1 etc. 2>&1 is added to the end of the command."
 					}
 				},
 				additionalProperties = false,
