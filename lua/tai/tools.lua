@@ -7,6 +7,7 @@ local tools_io = require("tai.tools.io")
 local tools_shell = require("tai.tools.shell")
 local tools_edit = require("tai.tools.edit")
 local tools_subtask = require("tai.tools.subtask")
+local tools_skill = require("tai.tools.skill")
 
 -- Re-export functions from submodules
 M.read_file = tools_io.read_file
@@ -24,6 +25,7 @@ M.render_memory = tools_subtask.render_memory
 M.format_complete = tools_subtask.format_complete
 M.run_todos = tools_subtask.run_todos
 M.run_notes = tools_subtask.run_notes
+M.run_skill = tools_skill.run
 
 -- Tool definitions (API schema)
 M.defs = {
@@ -260,6 +262,32 @@ M.defs = {
 				},
 				additionalProperties = false,
 				required = { "action", "content" },
+			},
+		},
+	},
+	skill = {
+		type = "function",
+		["function"] = {
+			name = "skill",
+			description =
+			"Manage Agent Skills (SKILL.md with required YAML frontmatter name + description). "
+				.. "Actions: list (available skills), status (inspect one), "
+				.. "load (inject full skill instructions into context), unload (deactivate).",
+			parameters = {
+				type = "object",
+				properties = {
+					action = {
+						type = "string",
+						description = "list, status, load, or unload",
+						enum = { "list", "status", "load", "unload" },
+					},
+					id = {
+						type = "string",
+						description = "Skill name (must match directory / frontmatter name). Required for status/load/unload.",
+					},
+				},
+				additionalProperties = false,
+				required = { "action" },
 			},
 		},
 	},

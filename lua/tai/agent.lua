@@ -1,6 +1,7 @@
 local M = {}
 
 local config = require("tai.config")
+local skills = require("tai.skills")
 
 if not config.root then
 	return M
@@ -106,8 +107,14 @@ if config.custom_prompt and config.custom_prompt ~= "" then
 	M.system_prompt = M.system_prompt .. "\n" .. config.custom_prompt
 end
 
+-- Append skill catalog (compact listing) so the model knows what's available.
+local catalog = skills.render_catalog()
+if catalog ~= "" then
+	M.system_prompt = M.system_prompt .. "\n\n" .. catalog
+end
+
 M.main_tools = {
-	"read", "shell", "send_image", "edit", "write", "todos", "notes", "subtask",
+	"read", "shell", "send_image", "edit", "write", "todos", "notes", "subtask", "skill",
 }
 
 -- Allowed tools a parent may grant a subtask (never subtask itself).

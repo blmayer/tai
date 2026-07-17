@@ -40,8 +40,11 @@ subtask ends when the child returns with no tool_calls:
   UI fold closes (}}} )
 ```
 
-- Main tools: `read`, `shell`, `send_image`, `edit`, `write`, `todos`, `notes`, `subtask`
+- Main tools: `read`, `shell`, `send_image`, `edit`, `write`, `todos`, `notes`, `subtask`, `skill`
 - Child tools: only those listed in `subtask.tools` (never `subtask` itself)
+- Skills (Agent Skills spec): dirs under `~/.config/tai/skills/` and `<project>/.tai-skills/`, each with `SKILL.md`
+  - Required frontmatter: `name` (1–64, `[a-z0-9-]+`, match dir name) + `description` (1–1024, non-empty)
+  - Invalid skills are skipped; catalog = name+description; `skill` load injects markdown body only
 - Max depth: 2
 - No `complete` tool — final assistant text is the handoff
 

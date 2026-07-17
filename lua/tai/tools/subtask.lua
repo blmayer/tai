@@ -1,5 +1,6 @@
 local M = {}
 local log = require("tai.log")
+local skills = require("tai.skills")
 
 function M.format_todos(todos)
 	if not todos or #todos == 0 then
@@ -38,6 +39,11 @@ function M.render_memory(frame)
 	local notes = M.format_notes(frame.notes)
 	if notes ~= "" then
 		table.insert(parts, "## Notes\n" .. notes)
+	end
+	-- Inject loaded skill content (markdown body only; frontmatter is discovery metadata)
+	local loaded = skills.render_loaded()
+	if loaded ~= "" then
+		table.insert(parts, "## Loaded Skills\n\n" .. loaded)
 	end
 	if #parts == 0 then
 		return ""

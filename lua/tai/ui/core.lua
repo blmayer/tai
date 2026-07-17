@@ -8,6 +8,7 @@ local tools_io = require("tai.tools.io")
 local tools_shell = require("tai.tools.shell")
 local tools_edit = require("tai.tools.edit")
 local tools_subtask = require("tai.tools.subtask")
+local tools_skill = require("tai.tools.skill")
 
 if not config.provider then
 	return M
@@ -627,6 +628,10 @@ local function run_tools(tool_calls, frame, start_index, on_done)
 			res.content = out
 			local notes_content = frame.notes ~= "" and frame.notes or "(empty)"
 			M.append("{{{ Notes (" .. (args.action or "?") .. ")\nAction result: " .. out .. "\n\nNotes content:\n" .. notes_content .. "\n}}}\n")
+		elseif name == "skill" then
+			local out = tools_skill.run(args)
+			res.content = out
+			M.append("{{{ Skill (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Adding image failed: no file field.\n}}}")
