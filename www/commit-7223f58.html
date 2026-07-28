@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 7223f58</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 7223f58
+parent <a href=commit-c643d53.html>c643d53</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-06T18:57:41-03:00
+
+    implement folding in the chat panel
+
+    - also improved patch calls a bit
+
+<a href=tree-7223f58.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 2c29565..c32ac6f 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -24,10 +24,13 @@ Output rules:
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+   assumptions.
++  - If you can't continue because the task is unclear ask for clarification.
+ - Map the scope: identify the important codebase regions, files, functions,
+   or libraries likely involved. If unknown, plan and perform targeted searches.
+   - Use `ls -Rl`, `find` or similar command to start exploring the repo.
+   - If you find an agents file (e.g. AGENTS.md), read it.
++  - Avoid gathering unrelated context and drifting from the task at hand.
++  - Implement ONLY what is strictly needed to fullfil the request.
+ - Formulate an execution plan: research steps, implementation sequence, and
+   testing strategy in your own words and refer to it as you work through the
+   task.
+@@ -37,7 +40,9 @@ Workflow:
+ - Routinely verify your code works as you work through the task, especially any
+   deliverables to ensure they run properly.
+ - After applying a patch you should re-read afected files to ensure the patch was
+-  applied correctly. Don't run commands if you didn't verify the patch.
++  applied correctly.
++  - Don't run commands if you didn't verify the patch.
++  - Read the changed files ONLY ONE TIME.
+   - Stop after 3 attempts with failure.
+ - In the final response present a summary.
+ ]]
+@@ -71,9 +76,11 @@ content of a file from the file system, or if given, a range of lines, and
+ returns the content. To use it call the `read_file` with the following
+ example parameters:
+ {
+-	"file_path": "&lt;path/to/file&gt;",
++	"fileth": "&lt;path/to/file&gt;",
+ 	"range": "&lt;range of lines to read or empty for full file&gt;"
+ }
++IMPORTANT: reading files repeateadly is useless, read need files only once or
++if they have changed.
+ 
+ ## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
+@@ -90,9 +97,14 @@ write/edit files, so pay careful attention to these instructions. To use the
+ 		}
+ 	]
+ }
+-IMPORTANT: ALWAYS generate the smallest possible patch, send ONLY the NEW lines.
+-You can also send multiple patches, so you change multiple places individualy.
+-Also inform the user what are you changing and why.
++IMPORTANT:
++- ALWAYS generate the smallest possible patch, don't include unchanged
++(context) lines, only the new lines.
++- You can also send multiple patches in the same response, so you send many
++  small changes.
++- Changes consider the files in the same original state of the patch.
++- Each patch gets the files at the current state, so later patches are affected
++  by previous ones.
+ 
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 794945a..82307e3 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -24,7 +24,7 @@ M.defs = {
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+-					file_path = {
++					file = {
+ 						type = "string",
+ 						description = "The path to the file to read."
+ 					},
+@@ -35,7 +35,7 @@ M.defs = {
+ 					}
+ 				},
+ 				additionalProperties = false,
+-				required = { "file_path", "range" }
++				required = { "file", "range" }
+ 			}
+ 		}
+ 	},
+@@ -44,7 +44,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Edits files using line-based operations. CRITICAL: Read the file FIRST with read_file to get current line numbers. All 'lines' values are 1-based and reference the ORIGINAL file state. Multiple changes in ONE call all reference the SAME original state - do NOT adjust for other changes in the same call.",
++			"Edits files using line-based operations. All 'lines' values are 1-based and reference the current file state. So a patch is affected by previous ones. All changes in a patch the the same file state.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -61,7 +61,7 @@ M.defs = {
+ 					changes = {
+ 						type = "array",
+ 						description =
+-						"List of changes to be made. Each change is applied in order",
++						"List of changes to be made. All changes will use the ORIGINAL state of the file.",
+ 						items = {
+ 							type = "object",
+ 							properties = {
+@@ -127,31 +127,6 @@ M.defs = {
+ 	}
+ }
+ 
+-function M.pretty_info(tools)
+-	if not tools or #tools == 0 then
+-		return ""
+-	end
+-
+-	local pre = "You can use the following tool calls:\n"
+-	local tools_desc = vim.tbl_map(
+-		function(t)
+-			if not M.defs[t] then
+-				return ""
+-			end
+-
+-			local desc = M.defs[t]["function"].description
+-			local props = M.defs[t]["function"].parameters.properties
+-			local args = "Arguments:\n"
+-			for k, v in pairs(props) do
+-				args = args .. "- " .. k .. " (" .. v.type .. "): " .. v.description
+-			end
+-			return t .. ": " .. desc .. "\n" .. args
+-		end,
+-		tools
+-	)
+-	return pre .. table.concat(tools_desc, "\n") .. "\n"
+-end
+-
+ -- indexes are 1 based
+ local function parse_lines(range)
+ 	-- Handle "$" (last line)
+@@ -338,10 +313,10 @@ local function apply_patch(name, file, changes)
+ 		local adjusted_end = end_line + line_shift
+ 
+ 		-- Clamp to valid ranges
++		if end_line == -1 then adjusted_end = - 1 end
+ 		if adjusted_start &lt; 0 then adjusted_start = 0 end
+ 		if adjusted_end &gt;= total_lines then adjusted_end = total_lines - 1 end
+ 
+-
+ 		if operation == "add" then
+ 			-- Insert content after the specified line
+ 			local new_lines = vim.split(content, '\n')
+@@ -375,10 +350,10 @@ function M.run(tool, args)
+ 	log.debug("Running tool call")
+ 
+ 	if tool == "read_file" then
+-		if not args.file_path then
+-			return "[sys] missing read_file argument"
++		if not args.file then
++			return "[sys] missing file argument"
+ 		end
+-		return read_file(args.file_path)
++		return read_file(args.file)
+ 	elseif tool == "shell" then
+ 		if not args.command then
+ 			return "[sys] missing command argument"
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index bc06007..92b49a6 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -22,10 +22,10 @@ end
+ 
+ M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+-vim.bo[M.input_buffer_nr].buftype = 'nofile'
+-vim.bo[M.input_buffer_nr].bufhidden = 'hide'
++vim.bo[M.input_buffer_nr].buftype = "nofile"
++vim.bo[M.input_buffer_nr].bufhidden = "hide"
+ vim.bo[M.input_buffer_nr].swapfile = false
+-vim.bo[M.input_buffer_nr].filetype = 'text'
++vim.bo[M.input_buffer_nr].filetype = "text"
+ vim.bo[M.input_buffer_nr].modifiable = true
+ 
+ M.buffer_nr = vim.api.nvim_create_buf(false, true)
+@@ -36,6 +36,23 @@ vim.bo[M.buffer_nr].swapfile = false
+ vim.bo[M.buffer_nr].modifiable = true
+ vim.bo[M.buffer_nr].filetype = "text"
+ 
++-- When typing fold end marker in the chat buffer, refresh/close fold immediately.
++vim.keymap.set("i", "}", function()
++	if vim.wo.foldmethod ~= "marker" then
++		return "}"
++	end
++
++	local line = vim.fn.getline(".")
++	local c = vim.fn.col(".")
++	local new_line = line:sub(1, c - 1) .. "}" .. line:sub(c)
++
++	if new_line:match("}}}%s*$") then
++		local tc = vim.api.nvim_replace_termcodes
++		return "}" .. tc("&lt;C-o&gt;zx&lt;C-o&gt;zc", true, false, true)
++	end
++	return "}"
++end, { buffer = M.buffer_nr, expr = true, noremap = true })
++
+ -- Autoclose TAI UI buffers on Neovim exit
+ vim.api.nvim_create_autocmd("VimLeavePre", {
+ 	group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
+@@ -51,7 +68,8 @@ vim.api.nvim_create_autocmd("VimLeavePre", {
+ 
+ function M.append_to_buffer(content)
+ 	local new_lines = vim.split(content, "\n")
+-	vim.schedule(function()
++
++	local function do_append()
+ 		local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
+ 		if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
+ 			-- If buffer is essentially empty (one empty line), replace it
+@@ -61,11 +79,20 @@ function M.append_to_buffer(content)
+ 			vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false,
+ 				new_lines)
+ 		end
+-	end)
++	end
++
++	if vim.in_fast_event() then
++		vim.schedule(do_append)
++	else
++		do_append()
++	end
+ end
+ 
+ local function scroll_down()
+ 	vim.schedule(function()
++		if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
++			return
++		end
+ 		local original_win = vim.api.nvim_get_current_win()
+ 		vim.api.nvim_set_current_win(chat_win)
+ 		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
+@@ -77,12 +104,23 @@ end
+ local function add_sep()
+ 	local width = vim.api.nvim_win_get_width(chat_win)
+ 	local result = ""
+-	for i = 1, width do
++	for _ = 1, width do
+ 		result = result .. "_"
+ 	end
+ 	M.append_to_buffer(result .. "\n")
+ end
+ 
++local function refresh_and_close_folds()
++	if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
++		return
++	end
++
++	vim.api.nvim_win_call(chat_win, function()
++		pcall(vim.cmd, "silent! normal! zx")
++		pcall(vim.cmd, "silent! normal! zM")
++	end)
++end
++
+ local function run_tools(tool_calls)
+ 	local results = {}
+ 	for _, call in ipairs(tool_calls or {}) do
+@@ -92,43 +130,52 @@ local function run_tools(tool_calls)
+ 		local res = {
+ 			role = "tool",
+ 			name = name,
+-			tool_call_id = call.id
++			tool_call_id = call.id,
+ 		}
++
+ 		if name == "shell" then
+ 			log.debug("Asking for confirmation")
+ 			local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n\n&amp;s (stop)", 1)
+ 			if input == 1 then
+ 				log.debug("Confirmed")
+-				M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+-				res.content = tools.run(name, args)
++				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
++				local out = tools.run(name, args)
++				M.append_to_buffer((out or "") .. "\n")
++				M.append_to_buffer("}}}\n")
++				refresh_and_close_folds()
++				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+-				M.append_to_buffer("[tai] Declined " .. args.command .. "\n")
++				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}\n")
+ 				res.content = "[sys] User declined running this command"
+ 			else
+-				M.append_to_buffer("[tai] Stopped at " .. args.command .. "\n")
++				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
+ 				res.content = "[sys] User stopped the conversation"
+ 				table.insert(results, res)
+ 				return results
+ 			end
+ 		elseif name == "read_file" then
+-			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
++			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
+ 			res.content = tools.run(name, args)
+-			res.file_path = args.file_path
++			res.file_path = args.file
++			M.append_to_buffer(res.content .. "\n")
++			M.append_to_buffer("}}}\n")
+ 		elseif name == "patch" then
+-			M.append_to_buffer("[tai] Patching " .. args.file .. "\n")
+-			if args.name then
+-				M.append_to_buffer("[tai] " .. args.name .. "\n")
+-			end
+-			for _, change in ipairs(args.changes) do
++			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
++			for _, change in ipairs(args.changes or {}) do
+ 				M.append_to_buffer(string.format(
+-					"Operation: %s, Lines: %s\nContent:\n%s\n",
++					"File: %s\nOperation: %s\nLines: %s\nContent:\n%s\n",
++					args.file,
+ 					change.operation,
+ 					change.lines,
+ 					change.content
+ 				))
+ 			end
+-			res.content = tools.run(name, args)
++			local out = tools.run(name, args)
++			res.content = out
++			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
++			M.append_to_buffer("}}}\n")
++			refresh_and_close_folds()
+ 		elseif name == "summarize" then
+ 			M.append_to_buffer("[tai] Summarizing\n")
+ 			tai.task(
+@@ -146,6 +193,7 @@ local function run_tools(tool_calls)
+ 			)
+ 			return nil
+ 		end
++
+ 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
+ 		table.insert(results, res)
+ 	end
+@@ -174,16 +222,20 @@ local function process_response(fields)
+ 		end
+ 	end)
+ end
++
+ local function send_input()
+ 	vim.schedule(function()
+ 		scroll_down()
+ 		local input = table.concat(
+ 			vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
+-			'\n'
++			"\n"
+ 		)
+ 		vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
+ 
+-		if not input or input == "" then return end
++		if not input or input == "" then
++			return
++		end
++
+ 		vim.schedule(function()
+ 			add_sep()
+ 			M.append_to_buffer(input .. "\n")
+@@ -194,8 +246,8 @@ local function send_input()
+ 	end)
+ end
+ 
+-vim.keymap.set('n', '&lt;CR&gt;', send_input, { buffer = M.input_buffer_nr })
+-vim.keymap.set('i', '&lt;S-CR&gt;', send_input, { buffer = M.input_buffer_nr })
++vim.keymap.set("n", "&lt;CR&gt;", send_input, { buffer = M.input_buffer_nr })
++vim.keymap.set("i", "&lt;S-CR&gt;", send_input, { buffer = M.input_buffer_nr })
+ 
+ function M.toggle_chat_window()
+ 	local winid = vim.fn.bufwinnr(M.buffer_nr)
+@@ -229,10 +281,23 @@ function M.open()
+ 			vim.api.nvim_win_set_config(chat_win, { fixed = true })
+ 
+ 			-- Open input buffer in horizontal split below the output
+-			vim.cmd("below split") -- horizontal split below
++			vim.cmd("below split")
+ 			input_win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
+-			vim.api.nvim_win_set_height(input_win, 8) -- 8 lines for input
++			vim.api.nvim_win_set_height(input_win, 8)
++		else
++			chat_win = vim.fn.win_getid(chat_window_nr)
++			local input_window_nr = vim.fn.bufwinnr(M.input_buffer_nr)
++			if input_window_nr ~= -1 then
++				input_win = vim.fn.win_getid(input_window_nr)
++			end
++		end
++
++		-- Folding is window-local; configure it here so tool output/details can be collapsed.
++		if chat_win and vim.api.nvim_win_is_valid(chat_win) then
++			vim.wo[chat_win].foldmethod = "marker"
++			vim.wo[chat_win].foldenable = true
++			vim.wo[chat_win].foldlevel = 0
+ 		end
+ 	end)
+ end
+</pre>

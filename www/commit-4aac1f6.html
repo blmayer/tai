@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 4aac1f6</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 4aac1f6
+parent <a href=commit-6d48dca.html>6d48dca</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-16T16:25:59-03:00
+
+    improve prompt and reasoning text suport
+
+<a href=tree-4aac1f6.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 9df8b22..3d0dce0 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -61,55 +61,109 @@ You do NOT have access to tools in this session.
+ else
+ 	M.system_prompt = M.system_prompt .. [[
+ # Tools
+-You have access to tools that runs in the project's root folder, their result
+-is sent back to you. Choose the most appropriate tool based on the task and the
+-tool descriptions provided. Use your native tool-calling mechanism to emit the
+-tool calls. Do not confuse it with output or reasoning text or your tool calls
+-will not be executed.
++
++You have access to tools that run in the project's root folder. Their results
++are returned to you after execution.
++
++When a tool is needed, you MUST emit a tool call using the native tool calling
++mechanism of the model runtime.
++
++CRITICAL RULES:
++- Tool calls MUST NOT appear inside normal text.
++- Tool calls MUST NOT be written using XML, markdown, or pseudo-code.
++- NEVER simulate a tool call.
++- NEVER print things like &lt;tool_call&gt;, &lt;function=...&gt;, or JSON examples.
++- If a tool is needed, emit the tool call directly.
++- Do NOT explain the tool call before or after emitting it.
++
++If a tool is not required, respond with normal assistant text.
++
++If you accidentally output a tool call as text, immediately correct yourself
++by emitting the proper tool call.
++
++
++# Tool Selection Rules
++
++Use tools whenever the task requires:
++
++- reading files
++- writing files
++- modifying files
++- executing shell commands
++- exploring the repository
++
++Prefer tools over guessing file contents.
++
++
++# Available Tools
+ 
+ ## track_file
+-Use `track_file` to track files that are being actively worked on. It works
+-like `cat -n` but keeps the file connected so its content stays updated in
+-the conversation as you make changes. This is useful for files you're editing
+-or referencing frequently throughout a task. The content will automatically
+-refresh when you make changes to the file.
++
++Use `track_file` to track files that are actively worked on.
++
++It behaves similarly to `cat -n`, but keeps the file connected so its content
++remains updated as changes occur.
++
++Use this when:
++- editing a file
++- repeatedly referencing a file
++- verifying patches
++
+ 
+ ## patch
+-Use the `patch` tool when you need to make changes to a file. To use the `patch`
+-tool, you should call the tool with the following structure:
++
++Use `patch` to modify files.
++
++Arguments:
++
+ {
+-	"name": "&lt;name for the patch&gt;",
+-	"file": "&lt;path/to/file&gt;",
+-	"changes": [
+-		{
+-			"operation": "&lt;add|change|delete&gt;",
+-			"lines": "&lt;range of lines&gt;",
+-			"content": "&lt;new content&gt;"
+-		}
+-	]
++  "name": "&lt;name for the patch&gt;",
++  "file": "&lt;path/to/file&gt;",
++  "changes": [
++    {
++      "operation": "&lt;add|change|delete&gt;",
++      "lines": "&lt;range of lines&gt;",
++      "content": "&lt;new content&gt;"
++    }
++  ]
+ }
+-IMPORTANT:
+-- ALWAYS generate the smallest possible patch, don't include unchanged
+-(context) lines, only the new lines.
+-- You can also send multiple patches in the same response, so send many
+-  small changes.
+-- Each change gets the files at the current state, so later changes or patches
+-  are affected by previous ones.
+-- After applying a patch you should check the affected files to ensure the patch
+-  was applied correctly.
+-  - Stop after 3 attempts with failure.
++
++Rules:
++
++- ALWAYS generate the smallest possible patch.
++- NEVER include unchanged context lines.
++- Multiple patches can be sent in one response.
++- Each change sees the file in its current state.
++- After applying a patch, verify the file if necessary.
++- Stop after 3 failed attempts.
++
++Never use shell to edit files.
++
+ 
+ ## shell
+-To run commands ALWAYS use the `shell` tool. You can use this tool to explore
+-the codebase, read files, run builds, do file operations like renaming,
+-changing permissions, etc. To use it call the `shell` tool with the parameters:
++
++Use `shell` to run commands in the project root.
++
++Arguments:
++
+ {
+-	"command": "shell pipeline"
++  "command": "shell pipeline"
+ }
+ 
+-- Don't use this tool to edit files. 
+-- Each tool execution gives you a clean env and paths are set to the current
+-  working folder: ]] .. vim.uv.cwd() .. [[ 
++Use this tool for:
++
++- reading files
++- searching the codebase
++- running builds
++- file operations
++- inspecting directories
++
++Do NOT use shell to edit files.
++
++Each execution runs in a clean environment.
++
++Working directory:
++]] .. vim.uv.cwd() .. [[
+ 
+ ## summarize
+ Use the `summarize` tool when you think the conversation context is getting too
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 14e79fe..1ae2888 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -121,7 +121,10 @@ function M.extract_fields(parsed, format)
+ 	local content = message.content
+ 	if content and content ~= "" then
+ 		if format ~= nil then
+-			local decoded = vim.json.decode(content)
++			local ok_decode, decoded = pcall(vim.json.decode, content)
++			if not ok_decode then
++				return nil, "Failed to decode message content as JSON: " .. tostring(decoded)
++			end
+ 			if not decoded then
+ 				return nil, "Failed to decode message content as JSON"
+ 			end
+@@ -140,20 +143,21 @@ function M.extract_fields(parsed, format)
+ 		if reasoning_text and reasoning_text ~= "" then
+ 			fields.reasoning_details = { { text = reasoning_text } }
+ 		end
++	end
+ 
+-		-- Some providers offer a more detailed reasoning response
+-		if message.reasoning_details then
+-			fields.reasoning_details = message.reasoning_details
+-		end
++	-- Some providers (e.g., MiniMax) return reasoning_details directly
++	if message.reasoning_details and #message.reasoning_details &gt; 0 then
++		fields.reasoning_details = message.reasoning_details
+ 	end
+ 
++	-- Some providers offer a more detailed reasoning response
+ 	if message.tool_calls and message.tool_calls ~= vim.NIL then
+ 		fields.tool_calls = message.tool_calls
+ 		for _, call in ipairs(fields.tool_calls) do
+ 			local args = call["function"].arguments
+ 			if type(args) == "string" then
+-				local decoded = vim.json.decode(args)
+-				if decoded then
++				local ok_decode, decoded = pcall(vim.json.decode, args)
++				if ok_decode and decoded then
+ 					call["function"].arguments = decoded
+ 				end
+ 			end
+</pre>

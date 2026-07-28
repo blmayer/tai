@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai c33b86b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit c33b86b
+parent <a href=commit-586a2d4.html>586a2d4</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-09T16:43:53-03:00
+
+    nvim: added options config option
+
+<a href=tree-c33b86b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 97eb14b..860c654 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -30,8 +30,9 @@ M.system_prompt = [[
+ You are a Coder Tai, an excelent coding agent. Your task is to execute coding tasks."
+ 
+ INSTRUCTIONS
+-You will receive a list of implementation instructions, your job is to implement them successfully
+-in the user's codebase. 
++You will receive a list of implementation instructions, your job is to generate
++a set of instructions to the patcher agent in order to implement them
++successfully in the user's codebase. 
+ 
+ You have access to other agents that will help you fullfill the user's goal:
+ - patcher: takes code changes and formats them in the correct format.
+@@ -48,9 +49,10 @@ Supply the list of commands to be executed on the user's machine for the writer
+   - Don't use commands for code changes, use the patcher agent.
+ 
+ RESPONSE FORMAT
+-After figuring out the needed code changes generate intructions to the patcher agent so it can correctly
+-apply the changes in the original files. The patcher agent needs detailed instructions of how code was
+-changed so remember to pass file name, line number and the new code.
++After figuring out the needed code changes generate intructions to the patcher
++agent so it can correctly apply the changes in the original files. The patcher
++agent needs detailed instructions of how to change the code so remember to pass
++file name, line numbers and the new code.
+ 
+ To the writer agent you can pass intructions about what the user needs to do, eg. executing commands.
+ Return only the JSON object, no markdown or code fences (```) in the format:
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 4d28a64..ef4bad2 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -1,5 +1,7 @@
+ local M = {}
+ 
++local log = require("tai.log")
++
+ M.allowed_commands = {
+ 	["cat"] = true,
+ 	["echo"] = true,
+@@ -59,6 +61,9 @@ if file then
+ 			M.patcher_thinks = data.patcher_thinks or false
+ 			M.writer_thinks = data.writer_thinks or false
+ 		end
++		if data.options then
++			M.options = data.options
++		end
+ 		if data.allowed_commands then
+ 			M.allowed_commands = {}
+ 			-- Convert the list to a map for quick lookup
+diff --git a/lua/tai/providers/local.lua b/lua/tai/providers/local.lua
+index e5adef7..f80996c 100644
+--- a/lua/tai/providers/local.lua
++++ b/lua/tai/providers/local.lua
+@@ -69,6 +69,10 @@ function M.request(model, think, system, prompt, format, callback)
+ 	if think ~= nil then
+ 		body.think = think
+ 	end
++	if config.options then
++		body.options = config.options
++	end
++
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. url .. " with " .. request_body)
+</pre>

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 59de1ea</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 59de1ea
+parent <a href=commit-5f02321.html>5f02321</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-07-29T15:23:51-03:00
+
+    improved response handling and logs
+
+    - nvim: added function to respond to omnifunc
+    - server: improved logging and prompt
+
+<a href=tree-59de1ea.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/ide-mode.go b/ide-mode.go
+index 603ae83..4232083 100644
+--- a/ide-mode.go
++++ b/ide-mode.go
+@@ -26,7 +26,7 @@ var (
+ 
+ 			### Intructions
+ 			Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
+-			The response must start with MIME-version and boundary headers, vary and do not use spaces or special characters for the boundary. 
++			The response must start with MIME-version and boundary headers, vary it and use **ONLY** alphanumeric characters for the boundary. 
+ 			- Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
+ 			- Always use \r\n (CRLF) for line endings.
+ 			- For user-facing text, use a plain/text part named 'text'. 
+@@ -34,6 +34,7 @@ var (
+ 			- If you need to execute commands, include them in a part named 'commands'. 
+ 			- If your response involves multiple steps, include them in a part named 'plan'. 
+ 			- Do not nest MIME messages.
++			- Do not add blank lines or other separators before the boundary
+ 
+ 			#### patch
+ 			For the patch part return a valid patch text to be used by the patch program. Use correct file and locations based on
+@@ -70,7 +71,6 @@ var (
+ 			Content-Disposition: form-data; name="text"
+ 
+ 			I'm considering you want a doc string.
+-
+ 			--asdfasdfasdf
+ 			Content-Type: text/x-patch; charset="utf-8"
+ 			Content-Disposition: form-data; name="patch"
+diff --git a/nvim-tai/tai.lua b/nvim-tai/tai.lua
+index df55fdb..b1b8a6d 100644
+--- a/nvim-tai/tai.lua
++++ b/nvim-tai/tai.lua
+@@ -3,12 +3,13 @@ local tai = {}
+ local uv = vim.loop
+ local sock_path = "/tmp/tai.sock"
+ local sock = nil
++local response_callback = nil
+ 
+ -- returns header, body
+ local function read_until_blank_line(chunk)
+   local i, j = chunk:find("\r?\n\r?\n")
+   if i and j then
+-    return chunk:sub(1, i - 1), chunk:sub(j)
++    return chunk:sub(1, i - 1), chunk:sub(j+1)
+   else
+     return chunk, ""
+   end
+@@ -107,23 +108,14 @@ function tai.connect()
+       return
+     end
+ 
+-    if fields == {} then
++    if not fields or fields == {} then
+       vim.schedule(function()
+         vim.notify("[tai] Parse error: empty fields", vim.log.levels.ERROR)
+       end)
+       return
+     end
+ 
+-    if fields.text then
+-      vim.schedule(function()
+-          tai.show_output_in_split(fields.text)
+-      end)
+-    end
+-    if fields.patch then
+-      vim.schedule(function()
+-          tai.show_output_in_vsplit(fields.patch)
+-      end)
+-    end
++    if response_callback then response_callback(fields) end
+   end)
+ end
+ 
+@@ -139,46 +131,33 @@ vim.api.nvim_create_user_command("TaiApplyPatch", function(opts)
+   end)
+ end, { nargs = 0 })
+ 
+-function tai.show_output_in_split(content)
+-  local lines = vim.split(content or "", "\n", { trimempty = true })
+-
+-  -- Create a new horizontal split
+-  vim.cmd("botright 8new")
+-  local bufnr = vim.api.nvim_get_current_buf()
+-
+-  -- Set buffer options to make it a scratch window
+-  vim.bo[bufnr].buftype = "nofile"
+-  vim.bo[bufnr].bufhidden = "wipe"
+-  vim.bo[bufnr].swapfile = false
+-  vim.bo[bufnr].modifiable = true
+-  vim.bo[bufnr].filetype = "tai-output"
+-
+-  -- Insert content
+-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+-
+-  -- Optional: prevent accidental edits
+-  vim.bo[bufnr].modifiable = false
+-end
+-
+-function tai.show_output_in_vsplit(content)
+-  local lines = vim.split(content or "", "\n", { trimempty = true })
+-
+-  -- Create a new vertical split
+-  vim.cmd("vnew")
+-  local bufnr = vim.api.nvim_get_current_buf()
+-
+-  -- Set buffer options to make it a scratch window
+-  vim.bo[bufnr].buftype = "nofile"
+-  vim.bo[bufnr].bufhidden = "wipe"
+-  vim.bo[bufnr].swapfile = false
+-  vim.bo[bufnr].modifiable = true
+-  vim.bo[bufnr].filetype = "tai-output"
+-
+-  -- Insert content
+-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+-
+-  -- Optional: prevent accidental edits
+-  vim.bo[bufnr].modifiable = false
++function tai.show_response(fields)
++  if not fields.text and not fields.patch then
++    return
++  end
++  local lines = vim.split(fields.text .. fields.patch or "", "\n", { trimempty = true })
++
++  vim.schedule(function()
++    -- Create a new horizontal split
++    vim.cmd("vnew")
++    local new_win = vim.api.nvim_get_current_win()
++    local bufnr = vim.api.nvim_get_current_buf()
++    vim.api.nvim_win_set_width(new_win, 40)
++
++    -- Set buffer options to make it a scratch window
++    vim.bo[bufnr].buftype = "nofile"
++    vim.bo[bufnr].bufhidden = "wipe"
++    vim.bo[bufnr].swapfile = false
++    vim.bo[bufnr].modifiable = true
++    vim.bo[bufnr].filetype = "tai-output"
++
++    -- Insert content
++    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++    vim.api.nvim_command("au BufDelete &lt;buffer&gt; lua require('tai').apply_patch('"..fields.patch.."')")
++
++    -- Optional: prevent accidental edits
++    vim.bo[bufnr].modifiable = false
++  end)
+ end
+ 
+ -- Get visual selection
+@@ -217,12 +196,66 @@ function tai.send_text(text)
+   sock:write(text .. "\n")
+ end
+ 
++-- Replace visual selection with response
++function tai.replace_visual()
++  local start_pos = vim.fn.getpos("'&lt;")
++  local end_pos = vim.fn.getpos("'&gt;")
++  local bufnr = vim.api.nvim_get_current_buf()
++  local lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
++  local text = table.concat(lines, "\n")
++
++  response_callback = function(response)
++    vim.api.nvim_buf_set_lines(bufnr, start_pos[2] - 1, end_pos[2], false, vim.split(response, "\n"))
++  end
++  tai.send_text(text)
++end
++
++-- Append response at cursor (insert mode)
++function tai.insert_response()
++  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++  local bufnr = vim.api.nvim_get_current_buf()
++  local line = vim.api.nvim_get_current_line()
++
++  local filename = vim.fn.expand("%:p")
++
++  local location = string.format("line %d, column %d", row, col)
++  local payload = string.format(
++    "I'm edditing %s with cursor at %s, the current line content is (inside backticks): ```%s```. Please continue that line, send **ONLY** the new text, don't send commentary or instructions. Your response is appended to the end of the cursor.", filename, location, line)
++
++  response_callback = function(response)
++    -- In insert mode: insert each line at cursor
++    local before = line:sub(1, col)
++    local after  = line:sub(col + 1)
++    local lines = vim.split(response.text, "\n", { plain = true })
++
++    local insert_lines = {}
++    if #lines == 1 then
++      insert_lines = { before .. lines[1] .. after }
++    else
++      insert_lines[1] = before .. lines[1]
++      for i = 2, #lines - 1 do
++        table.insert(insert_lines, lines[i])
++      end
++      insert_lines[#insert_lines + 1] = lines[#lines] .. after
++    end
++
++    vim.schedule(function()
++      vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, insert_lines)
++      vim.api.nvim_win_set_cursor(0, { row, col + #response })
++    end)
++  end
++  tai.send_text(payload)
++end
++
++
+ function tai.prompt_input()
+   vim.ui.input({ prompt = "Tai Input:" }, function(input)
+     if input and input ~= "" then
+       if sock then
+ 	local filename = vim.fn.expand("%:p")                -- absolute path
+ 	local preamble = string.format("I'm edditing %s, please consider:\n", filename)
++
++	response_callback = tai.show_response
+         tai.send_text(preamble .. input .. "\n")
+       else
+         vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+@@ -240,7 +273,6 @@ function tai.prompt_full_file()
+     local text = table.concat(lines, "\n")
+ 
+     local filename = vim.fn.expand("%:p")                -- absolute path
+-    local filetype = vim.bo.filetype
+     local cursor = vim.api.nvim_win_get_cursor(0)
+     local row, col = cursor[1], cursor[2] + 1
+ 
+@@ -250,6 +282,7 @@ function tai.prompt_full_file()
+     local payload = preamble .. "\n" .. input .. "\n***\nFile content:\n\n" .. text
+ 
+     if sock then
++      response_callback = tai.show_response
+       tai.send_text(payload .. "\n")
+     else
+       vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+@@ -281,6 +314,7 @@ function tai.operator_send(type)
+ 
+   local preamble = string.format("I'm edditing %s at %s, consider the selection:\n", filename, location)
+ 
++  response_callback = tai.show_response
+   tai.send_text(preamble .. text)
+ end
+ 
+@@ -308,6 +342,7 @@ function tai.operator_send_with_prompt(type)
+     filename, location, text, input)
+ 
+     if sock then
++      response_callback = tai.show_response
+       tai.send_text(payload .. "\n")
+     else
+       vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+diff --git a/socket.go b/socket.go
+index ff0a35c..5675ed7 100644
+--- a/socket.go
++++ b/socket.go
+@@ -26,10 +26,9 @@ func taiSocket(sockPath string) error {
+ 	for {
+ 		conn, err := ln.Accept()
+ 		if err != nil {
+-			log.Println("accept error:", err)
++			log.Println("[tai] accept error:", err)
+ 			continue
+ 		}
+-		log.Println("Got a client")
+ 		go handleSocketConnection(conn)
+ 	}
+ }
+@@ -39,14 +38,12 @@ func handleSocketConnection(conn net.Conn) {
+ 		buf := make([]byte, 2&lt;&lt;20)
+ 		n, err := conn.Read(buf)
+ 		if err == io.EOF {
+-			log.Println("client disconnected")
+ 			break
+ 		}
+ 		if err != nil {
+-			log.Println("read error:", err)
++			log.Println("[tai] read error:", err)
+ 			continue
+ 		}
+-		log.Printf("[tai] read %s\n", buf)
+ 
+ 		prompt := strings.TrimSpace(string(buf[:n]))
+ 		if prompt == "" {
+@@ -54,14 +51,14 @@ func handleSocketConnection(conn net.Conn) {
+ 		}
+ 		reply, err := processRequest(prompt)
+ 		if err != nil {
+-			log.Println("process error:", err)
++			log.Println("[tai] process error:", err)
+ 			continue
+ 		}
+ 		
+-		log.Printf("Sending reply %s\n", reply)
++		log.Printf("[tai] Sending reply %s\n", reply)
+ 		_, err = conn.Write([]byte(reply))
+ 		if err != nil {
+-			log.Println("write error:", err)
++			log.Println("[tai] write error:", err)
+ 			continue
+ 		}
+ 	}
+</pre>

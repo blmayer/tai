@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 108baba</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 108baba
+parent <a href=commit-46f6eb8.html>46f6eb8</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-06-17T22:52:57-03:00
+
+    feat: Improved agent prompts, context persistence, and UI functionality
+
+    - Updated planner and coder system prompts to include dynamic date/time and improved tool usage instructions.
+    - Added context persistence configuration to save and resume agent state.
+    - Refactored UI to improve folding, scrolling, agent switching, and tool execution.
+    - Enhanced  and  functions to handle edge cases and binary files.
+    - Improved shell command validation and unsafe command detection.
+    - Updated rate estimator test to reflect changes in token estimation.
+    - Made minor documentation and formatting updates in README.md and www/index.html.
+
+<a href=tree-108baba.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/.luacheckrc b/.luacheckrc
+new file mode 100644
+index 0000000..6af4190
+--- /dev/null
++++ b/.luacheckrc
+@@ -0,0 +1,27 @@
++-- Luacheck configuration for Tai project
++
++-- Global variables from Neovim
++std = "lua51"
++
++-- Ignore warnings about unused global variables from Neovim
++globals = {
++  vim = true,
++  package = true,
++  _G = true,
++  -- Allow unused arguments (common in Lua)
++  unused_args = false,
++  -- Allow redefined locals (common in tests)
++  redefined = false,
++  -- Allow setting non-standard globals (for tests)
++  allow_defined = true,
++  allow_defined_top = true,
++}
++
++-- Enable all warnings
++warnings = {
++  "all",
++}
++
++-- Disable specific warnings
++no_max_line_length = false
++no_unused_secondaries = false
+diff --git a/.tai b/.tai
+new file mode 100644
+index 0000000..8b9f34d
+--- /dev/null
++++ b/.tai
+@@ -0,0 +1,7 @@
++{
++	"provider": "mistral",
++	"model": "mistral-small-latest",
++	"rpm": 49,
++	"tpm": 40000,
++	"stream": true
++}
+diff --git a/.tai.bak b/.tai.bak
+new file mode 100644
+index 0000000..3c25211
+--- /dev/null
++++ b/.tai.bak
+@@ -0,0 +1,8 @@
++{
++	"provider": "minimax",
++	"model": "MiniMax-M2.7",
++	"stream": true,
++	"options": {
++		"reasoning_split": true
++	}
++}
+diff --git a/README.md b/README.md
+index 1e1cd95..63ad326 100644
+--- a/README.md
++++ b/README.md
+@@ -134,6 +134,7 @@ Tai reads configuration from a `.tai` JSON file in your project root. The follow
+ | `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
+ | `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
+ | `allowed_commands` | object | (see below) | Override allowed shell commands |
++| `auto_approve` | boolean | `false` | Automatically approve and run *all* shell commands without the interactive y/n/s confirmation prompt (bypasses `allowed_commands`). Use with caution. |
+ 
+ Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+ 
+@@ -170,7 +171,8 @@ Tai agents have access to the following tools:
+ | `edit` | Coder | Edit existing files via old/new text replacement |
+ | `write` | Coder | Create new files |
+ | `send_image` | Planner, Coder | Send images for visual analysis |
+-| `coder_agent` | Planner | Delegate implementation to the coder agent |
++| `coder` | Planner | Delegate implementation tasks to the coder agent (pass prompt); receives immediate "coder is working on the task." ack. Coder uses independent history. |
++| `planner` | Coder | Hand off at end of task: coder calls planner with detailed report (prompt); receives immediate ack. Planner uses independent history and receives the report as context. |
+ | `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
+ | `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
+ 
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 8e30984..0810e48 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -79,7 +79,7 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+      any other information that can help the agent to correcty implement the
+      task. If changes are not needed go to 6.
+   3. Show the plan and REQUEST AUTHORIZATION.
+-     - In positive case call the `coder_agent` tool with the detailed list to
++     - In positive case call the `coder` tool with the detailed list to
+      start the implementation.
+   4. When the coder finishes the task you MUST do a code review of the affected
+      files, including:
+@@ -88,7 +88,7 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+      - Verify if the solution implemented works by running builds or programs.
+      - Check if the solution satisfies the user's request.
+   5. If it passes go to 6. Else generate a new plan based on the current state,
+-     with the fixes needed and call the `coder_agent` tool with the new plan.
++     with the fixes needed and call the `coder` tool with the new plan.
+   6. Write a summary of what changed and how the solution works to the user.
+ - Each call to the coder agent starts with a clean context, so if you want the
+   agent to consider past interactions include the content in the prompt.
+@@ -123,11 +123,16 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - Check if your changes are correct by reading the affected parts, building the
+   project or checking linter etc.
+ - If tests are avaliable run the necessary ones, be clever to not take too long.
+-- When you finish all tasks tell which files and lines you changed, what you
+-  changed in the functions, be detailed.
+-- Respond without any tool calls to indicate you finished your job, in your last
+-  response you MUST report your failures, things that need improvement, and task
+-  implementation details.
++- When you finish all tasks, call the `planner` tool (instead of a plain final
++  response). Pass a single `prompt` string containing a detailed report:
++  - Which files/lines were changed and exactly what was modified in each function.
++  - Verification performed (builds, tests run, manual checks, reads of results).
++  - Any failures encountered or areas needing improvement.
++  - How the implemented changes satisfy the original request from the planner.
++- The `planner` tool returns immediately with "planner is working on the task.";
++  your report will be delivered to the planner (in its own history) so it can
++  review, summarize to the user, or call you again with fixes if needed.
++- Always use the planner handoff to conclude a task delegation.
+ 
+ ]] .. tool_usage
+ 
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index c3a1dff..bb032de 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -86,6 +86,7 @@ function M.reload()
+ 	M.custom_prompt = data.custom_prompt or nil
+ 	M.rpm = data.rpm or 60
+ 	M.tpm = data.tpm
++	M.auto_approve = data.auto_approve or false
+ 
+ 	-- Context persistence settings
+ 	M.context.enabled = data.context and data.context.enabled ~= false
+diff --git a/lua/tai/tests/rate_estimator_test.lua b/lua/tai/tests/rate_estimator_test.lua
+index 52fc03a..3a88655 100644
+--- a/lua/tai/tests/rate_estimator_test.lua
++++ b/lua/tai/tests/rate_estimator_test.lua
+@@ -24,7 +24,7 @@ local providers = dofile("./lua/tai/providers.lua")
+ local planner_system = agent.planner_system_prompt
+ 
+ -- Planner tools (from ui.lua planner_config.tools)
+-local planner_tool_names = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
++local planner_tool_names = { "read", "shell", "send_image", "coder", "todos", "notes" }
+ local planner_tools = {}
+ for _, name in ipairs(planner_tool_names) do
+   if tools.defs[name] then
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 3f3c143..2631f4e 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -53,12 +53,12 @@ M.defs = {
+ 			}
+ 		}
+ 	},
+-	coder_agent = {
++	coder = {
+ 		type = "function",
+ 		["function"] = {
+-			name = "coder_agent",
++			name = "coder",
+ 			description =
+-			"This tool calls the coder agent to start working on the tasks sent. The return is the last response sent by the coder agent.",
++			"Call the coder agent (implementer with read/write access) to perform code changes. Pass a detailed prompt describing the tasks, plan, target files, and any context. This tool returns immediately with an ack message; the coder runs with its own independent history and will hand back via the planner tool when finished.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -73,6 +73,26 @@ M.defs = {
+ 			}
+ 		}
+ 	},
++	planner = {
++		type = "function",
++		["function"] = {
++			name = "planner",
++			description =
++			"Call the planner agent (architect, read-only) typically at the end of a coding task to hand back a detailed report for review and coordination. Pass the summary of work done as the prompt. Returns immediately with an ack; planner uses its own history.",
++			parameters = {
++				type = "object",
++				properties = {
++					prompt = {
++						type = "string",
++						description =
++						"Detailed report/summary for the planner: files changed, specific edits, verification performed, issues found, etc. This becomes the handoff message the planner sees.",
++					},
++				},
++				additionalProperties = false,
++				required = { "prompt" }
++			}
++		}
++	},
+ 	send_image = {
+ 		type = "function",
+ 		["function"] = {
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 416f38b..e6f5ebf 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -22,24 +22,36 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
+ 
+ local planner_config = vim.deepcopy(config)
+ local coder_config = vim.deepcopy(config)
+-planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
+-coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
++planner_config.tools = { "read", "shell", "send_image", "coder", "todos", "notes" }
++coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes", "planner" }
+ -- Global stop flag for hard stop command
+ local hard_stop = false
+ local pending_tools = nil
+-local coder_call = nil
+ local current_agent = "planner"  -- Default to planner
+-local last_ctx = nil  -- last reported token usage for ctx display in input name
++local current_job = nil  -- for live shell commands (long-running / progress)
++
++local function get_agent_ctx()
++	local hist = (current_agent == "coder") and coder_history or planner_history
++	for i = #hist, 1, -1 do
++		local msg = hist[i]
++		if msg and type(msg.token_usage) == "number" then
++			return msg.token_usage
++		end
++	end
++	return nil
++end
+ 
+ local function update_input_name(token_count)
+-	if token_count then
+-		last_ctx = token_count
+-	end
++	-- Derive ctx from the last assistant message in the *current agent's* history
++	-- (the authoritative source). No separate per-agent storage.
++	-- Responses already insert the assistant message (which carries token_usage)
++	-- before update_input_name is called in completion paths.
++	local current_ctx = get_agent_ctx()
+ 	local name = input_bufname
+ 	local stats = providers_factory.get_rate_limits()
+ 	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
+-	if last_ctx then
+-		name = string.format("%s (ctx: %u | %s)", input_bufname, last_ctx, rate_part)
++	if current_ctx then
++		name = string.format("%s (ctx: %u | %s)", input_bufname, current_ctx, rate_part)
+ 	else
+ 		name = string.format("%s (%s)", input_bufname, rate_part)
+ 	end
+@@ -149,6 +161,7 @@ function M.switch_agent()
+ 		current_agent = "planner"
+ 	end
+ 	M.update_chat_name()
++	update_input_name()
+ end
+ 
+ function M.focus_input()
+@@ -204,6 +217,59 @@ local function refresh_and_close_folds()
+ 	end)
+ end
+ 
++-- Run a shell command using an async job but block the caller (via jobwait slices)
++-- so that stdout/stderr is streamed live via M.append as it is produced.
++-- This gives progress output for long-running commands (downloads, builds, etc.)
++-- inside the usual fold, while preserving the original sync control flow for
++-- tool sequencing and when to call M.continue.
++-- The caller must write the opening "{{{ Running: ..." line (and the closing later).
++-- Returns the full collected output (for the tool result sent back to the LLM).
++local function run_live_shell(command)
++	local chunks = {}
++	local exit_code = 0
++	local shell = vim.o.shell or "sh"
++	local flag = vim.o.shellcmdflag or "-c"
++	local full_cmd = command .. " 2&gt;&amp;1"
++
++	local job = vim.fn.jobstart({ shell, flag, full_cmd }, {
++		on_stdout = function(_, data, _)
++			if data then
++				local text = table.concat(data, "\n")
++				if text ~= "" then
++					M.append(text)
++					table.insert(chunks, text)
++				end
++			end
++		end,
++		on_exit = function(_, code, _)
++			exit_code = code or 0
++		end,
++	})
++
++	current_job = job
++	if job &lt;= 0 then
++		current_job = nil
++		return "Failed to start: " .. command
++	end
++
++	-- Small timeouts let scheduled appends (from on_stdout) and other events run,
++	-- so the user sees progress live in the buffer even though we are logically "blocking".
++	while vim.fn.jobwait({ job }, 100)[1] == -1 do
++		if hard_stop then
++			pcall(vim.fn.jobstop, job)
++			break
++		end
++	end
++
++	current_job = nil
++
++	local full = table.concat(chunks, "")
++	if exit_code ~= 0 then
++		full = full .. "\n[exit " .. tostring(exit_code) .. "]"
++	end
++	return full
++end
++
+ local function run_tools(tool_calls, history)
+ 	M.append("\n")
+ 	local stop = false
+@@ -223,11 +289,12 @@ local function run_tools(tool_calls, history)
+ 			goto continue
+ 		end
+ 		if name == "shell" then
+-			if not tools.unsafe_command(args.command) then
++			local unsafe = tools.unsafe_command(args.command)
++			if not unsafe or config.auto_approve then
+ 				log.debug("Executing allowed command: " .. args.command)
+-				M.append("{{{ Running: " .. args.command .. "\n")
+-				local out = tools.exec_command(args.command)
+-				M.append(out or "")
++				local label = unsafe and "Auto-approved" or "Running"
++				M.append("{{{ " .. label .. ": " .. args.command .. "\n")
++				local out = run_live_shell(args.command)
+ 				M.append("\n}}}\n")
+ 				res.content = out
+ 			else
+@@ -281,7 +348,7 @@ local function run_tools(tool_calls, history)
+ 			local out = tools.write(args.file, args.content)
+ 			res.content = out
+ 			M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
+-		elseif name == "coder_agent" then
++		elseif name == "coder" then
+ 			if not args.prompt then
+ 				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
+ 				res.content = "Missing prompt field"
+@@ -292,16 +359,41 @@ local function run_tools(tool_calls, history)
+ 			add_sep("___ CODER AGENT ")
+ 
+ 			stop = true
+-			coder_call = vim.deepcopy(res)
++			res.content = "coder is working on the task."
+ 			coder_history = {
+ 				{ role = "system", content = agent.coder_system_prompt },
+ 				{ role = "user", content = args.prompt }
+ 			}
+ 			current_agent = "coder"
+ 			M.update_chat_name()
++			update_input_name()
++
++			M.continue()
++			-- fall through to insert the stub res.content into caller's (planner) history
++		elseif name == "planner" then
++			if not args.prompt then
++				M.append("{{{ Calling planner failed: no prompt field.\n}}}\n")
++				res.content = "Missing prompt field"
++				goto continue
++			end
++
++			M.append("{{{ Calling planner agent\nReport:\n" .. args.prompt .. "\n}}}\n")
++			add_sep("___ PLANNER AGENT ")
++
++			res.content = "planner is working on the task."
++			-- Deliver the coder's final report into the planner's independent history
++			-- as a fresh user message so planner can review / summarize / re-task.
++			table.insert(planner_history, {
++				role = "user",
++				content = "Coder agent has completed its work and handed back. Report from coder:\n\n" .. args.prompt
++			})
++			current_agent = "planner"
++			M.update_chat_name()
++			update_input_name()
+ 
+-			M.code()
+-			goto next
++			M.continue()
++			-- fall through to insert the stub res.content into caller's (coder) history
++			stop = true
+ 		elseif name == "todos" then
+ 			local out = tools.run_todos(args)
+ 			res.content = out
+@@ -388,24 +480,25 @@ local function send_input()
+ 			}
+ 			local response = input:lower():gsub("^%s*(.-)%s*$", "%1")
+ 
++			M.append(input .. "\n")
++
+ 			if response == "y" or response == "yes" then
+ 				log.debug("Confirmed")
+ 				M.append("Confirmed...\n")
+ 				M.append("{{{ Running: " .. args.command .. "\n")
+-				local out = tools.exec_command(args.command)
+-				M.append(out or "")
++				local out = run_live_shell(args.command)
+ 				M.append("\n}}}\n")
+ 				res.content = out
+ 			elseif response == "s" or response == "stop" then
+ 				log.debug("Stopped")
+ 				M.append("Stopped\n")
+-				M.append("{{{ Stopped at " .. args.command .. "\n}}}\n")
++				M.append("{{{ Stopped at " .. args.command .. " (user: " .. input .. ")\n}}}\n")
+ 				-- Add to history
+ 				hard_stop = true
+ 				res.content = "User stopped execution."
+ 			else
+ 				log.debug("Declined")
+-				M.append("{{{ Declined " .. args.command .. "\n\n}}}\n")
++				M.append("{{{ Declined " .. args.command .. " (user: " .. input .. ")\n}}}\n")
+ 				-- Add to history
+ 				res.content = "User declined running this command"
+ 				-- Treat any other input as decline
+@@ -428,17 +521,20 @@ local function send_input()
+ 		log.debug("[UI] got user input: " .. input)
+ 		if current_agent == "coder" then
+ 			add_sep("___ CODER AGENT ")
+-			M.code()
+ 		else
+ 			add_sep("___ PLANNER AGENT ")
+-			M.task()
+ 		end
++		M.continue()
+ 		update_input_name()
+ 	end)
+ end
+ 
+ function M.stop()
+ 	hard_stop = true
++	if current_job then
++		pcall(vim.fn.jobstop, current_job)
++		current_job = nil
++	end
+ 	pcall(function()
+ 		providers_factory.cancel_pending_waits()
+ 	end)
+@@ -505,7 +601,6 @@ function M.clear()
+ 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
+ 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
+ 	current_agent = "planner"
+-	last_ctx = nil
+ 	pcall(function()
+ 		providers_factory.cancel_pending_waits()
+ 	end)
+@@ -513,15 +608,20 @@ function M.clear()
+ 	update_input_name()
+ end
+ 
+-function M.task()
++function M.continue()
++	local is_coder = current_agent == "coder"
++	local hist = is_coder and coder_history or planner_history
++	local cfg = is_coder and coder_config or planner_config
++	local agent_label = is_coder and "Coder Agent" or "Agent"
++
+ 	if config.stream then
+-		log.info("Agent executing streaming task")
++		log.info(agent_label .. " executing streaming task")
+ 
+ 		local think_start = true
+ 		local content_start = true
+ 		provider.request_stream(
+-			planner_config,
+-			planner_history,
++			cfg,
++			hist,
+ 			function(chunk, err)
+ 				if err then
+ 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+@@ -553,59 +653,62 @@ function M.task()
+ 				log.debug("[UI] got message completed: " .. vim.inspect(data))
+ 				if err then
+ 					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
+-					table.insert(planner_history, { role = "assistant", content = err })
++					table.insert(hist, { role = "assistant", content = err })
+ 					return
+ 				end
+ 				local response = { role = "assistant" }
+ 				for k, v in pairs(data) do
+ 					response[k] = v
+ 				end
+-				table.insert(planner_history, response)
++				table.insert(hist, response)
+ 
+ 				if not think_start and content_start then
+ 					M.append("\n}}}\n")
+ 				end
+ 				if data.token_usage then
+-					update_input_name(data.token_usage)
++					update_input_name()
+ 				end
+ 				if data.error then
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 				end
+ 				if not data.tool_calls or #data.tool_calls == 0 then
++					if is_coder then
++						log.debug("[UI] coder finished (no more tool calls)")
++					end
+ 					return
+ 				end
+ 
+ 				log.debug("[UI] running tools")
+-				local stop = run_tools(data.tool_calls, planner_history)
++				local stop = run_tools(data.tool_calls, hist)
+ 				if stop or hard_stop then
+ 					log.debug("[UI] stopped")
+ 					return
+ 				end
+-				M.task()
++				M.continue()
+ 			end
+ 		)
+ 	else
+-		log.info("Agent executing task")
++		log.info(agent_label .. " executing task")
+ 		provider.request(
+-			planner_config,
+-			planner_history,
++			cfg,
++			hist,
+ 			function(fields, err)
+ 				if err then
+ 					M.append("{{{ Error\n" .. err .. "\n}}}")
+-					table.insert(planner_history, { role = "assistant", content = err })
++					table.insert(hist, { role = "assistant", content = err })
+ 					return
+ 				end
+ 				local response = { role = "assistant" }
+ 				for k, v in pairs(fields) do
+ 					response[k] = v
+ 				end
+-				table.insert(planner_history, response)
++				table.insert(hist, response)
+ 
+ 				log.debug("[UI] processing response: " .. vim.inspect(fields))
+ 				M.open()
+ 
+ 				if fields.token_usage then
+-					update_input_name(fields.token_usage)
++					update_input_name()
+ 				end
+ 				if fields.error then
+ 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+@@ -622,159 +725,20 @@ function M.task()
+ 				end
+ 
+ 				if not fields.tool_calls or #fields.tool_calls == 0 then
+-					return
+-				end
+-
+-				vim.schedule(function()
+-					log.debug("[UI] running tools")
+-					local stop = run_tools(fields.tool_calls, planner_history)
+-					if stop or hard_stop then
+-						log.debug("[UI] stopped")
+-						return
+-					end
+-					M.task()
+-				end)
+-			end
+-		)
+-	end
+-end
+-
+-function M.code()
+-	if config.stream then
+-		log.info("Coder Agent executing streaming task")
+-
+-		local think_start = true
+-		local content_start = true
+-		provider.request_stream(
+-			coder_config,
+-			coder_history,
+-			function(chunk, err)
+-				if err then
+-					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+-					return
+-				end
+-
+-				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+-				if chunk.reasoning and #chunk.reasoning &gt; 0 then
+-					if think_start then
+-						M.append("{{{ Thinking \n" .. chunk.reasoning)
+-						think_start = false
+-					else
+-						M.append(chunk.reasoning)
+-					end
+-				end
+-
+-				if chunk.content and chunk.content ~= "" then
+-					if content_start and not think_start then
+-						M.append("\n}}}\n")
+-						refresh_and_close_folds()
+-						content_start = false
++					if is_coder then
++						log.debug("[UI] coder finished (no more tool calls)")
+ 					end
+-
+-					M.append(chunk.content)
+-				end
+-				log.debug("[UI] updated chat")
+-			end,
+-			function(data, err)
+-				log.debug("[UI] got message completed: " .. vim.inspect(data))
+-				if err then
+-					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
+-					table.insert(coder_history, { role = "assistant", content = err })
+-					return
+-				end
+-				local response = { role = "assistant" }
+-				for k, v in pairs(data) do
+-					response[k] = v
+-				end
+-				table.insert(coder_history, response)
+-
+-				if not think_start and content_start then
+-					M.append("\n}}}\n")
+-				end
+-				if data.token_usage then
+-					update_input_name(data.token_usage)
+-				end
+-				if data.error then
+-					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+-				end
+-				if (not data.tool_calls or #data.tool_calls == 0) and coder_call then
+-					log.debug("[UI] coder finished, handing back to planner")
+-					-- worker finished the job
+-					coder_call.content = coder_history[#coder_history].content
+-					table.insert(planner_history, coder_call)
+-					coder_call = nil
+-					add_sep("___ PLANNER AGENT ")
+-					current_agent = "planner"
+-					M.update_chat_name()
+-					M.task()
+-					return
+-				end
+-
+-				log.debug("[UI] running tools")
+-				local stop = run_tools(data.tool_calls, coder_history)
+-				if stop or hard_stop then
+-					log.debug("[UI] stopped")
+-					return
+-				end
+-				M.code()
+-			end
+-		)
+-	else
+-		log.info("Coder Agent executing task")
+-		provider.request(
+-			coder_config,
+-			coder_history,
+-			function(fields, err)
+-				if err then
+-					M.append("{{{ Error\n" .. err .. "\n}}}")
+-					table.insert(coder_history, { role = "assistant", content = err })
+-					return
+-				end
+-				local response = { role = "assistant" }
+-				for k, v in pairs(fields) do
+-					response[k] = v
+-				end
+-				table.insert(coder_history, response)
+-
+-				log.debug("[UI] processing response: " .. vim.inspect(fields))
+-				M.open()
+-
+-				if fields.token_usage then
+-					update_input_name(fields.token_usage)
+-				end
+-				if fields.error then
+-					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+-				end
+-
+-				if fields.reasoning then
+-					M.append("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
+-					refresh_and_close_folds()
+-				end
+-
+-				-- For non-streaming responses, append the content to the buffer
+-				if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+-					M.append(fields.content .. "\n")
+-				end
+-
+-				if not fields.tool_calls or #fields.tool_calls == 0 and coder_call then
+-					log.debug("[UI] coder finished, handing back to planner")
+-					-- worker finished the job
+-					coder_call.content = coder_history[#coder_history].content
+-					table.insert(planner_history, coder_call)
+-					coder_call = nil
+-					add_sep("___ PLANNER AGENT ")
+-					M.task()
+ 					return
+ 				end
+ 
+ 				vim.schedule(function()
+ 					log.debug("[UI] running tools")
+-					local stop = run_tools(fields.tool_calls, coder_history)
++					local stop = run_tools(fields.tool_calls, hist)
+ 					if stop or hard_stop then
+ 						log.debug("[UI] stopped")
+ 						return
+ 					end
+-					M.code()
++					M.continue()
+ 				end)
+ 			end
+ 		)
+diff --git a/task.patch b/task.patch
+new file mode 100644
+index 0000000..ed0ebef
+--- /dev/null
++++ b/task.patch
+@@ -0,0 +1,527 @@
++diff --git a/README.md b/README.md
++index 4091ccf..1e1cd95 100644
++--- a/README.md
+++++ b/README.md
++@@ -10,37 +10,38 @@
++ 
++ ## Providers
++ 
++-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
++-
++-       GROQ_API_KEY=your_api_key_here
++-
++-for Groq, or:
++-
++-       GEMINI_API_KEY=your_api_key_here
++-
++-for Gemini, or:
++-
++-       ZAI_API_KEY=your_api_key_here
++-
++-for Z.AI, or:
++-
++-       OPENAI_API_KEY=your_api_key_here
++-
++-for OpenAI, or:
++-
++-       MINIMAX_API_KEY=your_api_key_here
++-
++-for Minimax, or configure a local Ollama server (localhost:11434).
++-
++-
++-## Integrated workflow
++-
++-Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
++-
++-- Opens a side panel to display input and responses
++-- Minimal, dependency-free Lua code for Neovim
++-- Can run commands with safety validation
++-- Follows plans for complex tasks
+++Tai supports the following providers. Set the corresponding environment variable for your chosen provider:
+++
+++| Provider | Config value | Environment variable |
+++|---|---|---|
+++| Gemini | `gemini` | `GEMINI_API_KEY` |
+++| Groq | `groq` | `GROQ_API_KEY` |
+++| Minimax | `minimax` | `MINIMAX_API_KEY` |
+++| Mistral | `mistral` | `MISTRAL_API_KEY` |
+++| Ollama (local) | `ollama` | — |
+++| llama.cpp (local) | `llama_cpp` | — |
+++| OpenAI | `openai_responses` | `OPENAI_API_KEY` |
+++| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+++| StepFun | `stepfun` | `STEPFUN_API_KEY` |
+++| xAI | `xai` | `XAI_API_KEY` |
+++| Z.AI | `z_ai` | `ZAI_API_KEY` |
+++| Custom | `custom` | — |
+++
+++Local providers (Ollama, llama.cpp) don't need an API key. The custom provider uses the URL from `options.url` in your `.tai` file.
+++
+++
+++## Features
+++
+++- **Side panel UI** — responses display in a split buffer with code folding
+++- **Planner + Coder agents** — an architect agent plans tasks, a coder agent implements them
+++- **Tool use** — agents can read/write files, run shell commands, and send images
+++- **In-memory todos &amp; notes** — agents track progress and record discoveries during long tasks
+++- **Rate limiting** — configurable requests-per-minute (`rpm`) and tokens-per-minute (`tpm`)
+++- **Streaming** — optional streaming responses for real-time output
+++- **Extended thinking** — reasoning/thinking support for compatible models
+++- **Provider tools** — server-side tools like `web_search` (provider-dependent)
+++- **Safety validation** — shell commands go through an allow-list before execution
+++- **Minimal, dependency-free** Lua code for Neovim
++ 
++ 
++ ## Installation
++@@ -117,39 +118,66 @@ and load it in your `init.lua`:
++ 
++ ## Project Configuration
++ 
++-tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
++-
++-- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
++-- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
++-- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
++-- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
++-- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
++-- `think`: Enable extended thinking/reasoning for models that support it.
++-- `system_prompt`: Custom system prompt to override the default agent instructions.
++-- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
++-- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+++Tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
+++
+++| Option | Type | Default | Description |
+++|---|---|---|---|
+++| `model` | string | — | Model used for chat completions (e.g., `"grok-4.3"`, `"gemini-2.0-flash"`) |
+++| `provider` | string | — | API provider (see Providers table above) |
+++| `options` | object | `{}` | Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`) |
+++| `provider_tools` | array | `nil` | Provider-side tools (e.g., `["web_search"]`) |
+++| `use_tools` | boolean | `true` | Enable/disable agent tools (read, write, edit, shell, todos, notes) |
+++| `think` | string | `nil` | Enable extended thinking/reasoning (`"low"`, `"medium"`, `"high"`) |
+++| `stream` | boolean | `false` | Enable streaming responses for real-time output |
+++| `rpm` | number | `60` | Rate limit: max requests per minute |
+++| `tpm` | number | `nil` | Rate limit: max tokens per minute |
+++| `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
+++| `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
+++| `allowed_commands` | object | (see below) | Override allowed shell commands |
+++
+++Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
++ 
++ Example `.tai` file:
++ 
++ ```json
++ {
++-	"provider": "groq",
++-	"model": "llama-3.1-70b-versatile",
+++	"provider": "xai",
+++	"model": "grok-4.3",
++ 	"options": {
++ 		"temperature": 0.7,
++ 		"max_tokens": 4096
++ 	},
+++	"stream": true,
++ 	"use_tools": true,
++-	"system_prompt": "You are a senior python programmer. Always write tests.",
++-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+++	"rpm": 30,
+++	"custom_prompt": "Prefer using rust over python for performance-critical code.",
++ 	"allowed_commands": {
++ 		"git": true,
++ 		"npm": true,
++-        "make": true
++-    }
+++		"make": true
+++	}
++ }
++ ```
++ 
+++## Agent Tools
+++
+++Tai agents have access to the following tools:
+++
+++| Tool | Available to | Description |
+++|---|---|---|
+++| `read` | Planner, Coder | Read file contents with optional line range |
+++| `shell` | Planner, Coder | Run shell commands (allow-listed) |
+++| `edit` | Coder | Edit existing files via old/new text replacement |
+++| `write` | Coder | Create new files |
+++| `send_image` | Planner, Coder | Send images for visual analysis |
+++| `coder_agent` | Planner | Delegate implementation to the coder agent |
+++| `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
+++| `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
+++
+++The **todos** tool supports actions: `add`, `update`, `list`. Items have statuses: `pending`, `in_progress`, `done`, `cancelled`.
+++
+++The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
+++
++ ## Screenshots
++ 
++ - ![tai.nvim in action](www/screenshot.png)
++diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
++index d5d99e5..856d635 100644
++--- a/lua/tai/agent.lua
+++++ b/lua/tai/agent.lua
++@@ -27,6 +27,34 @@ You can use tools to help on your task.
++   calls.
++ - Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
++   previous to yours.
+++
+++### Progress Tracking (todos &amp; notes)
+++
+++For any task with **3 or more steps**, you MUST use the `todos` and `notes`
+++tools to stay organized. Follow this strategy:
+++
+++1. **At the start**: Use `todos` (action: "add") to break the task into steps.
+++   Use `notes` (action: "write") to record the overall goal and any context.
+++
+++2. **Before starting a step**: Use `todos` (action: "update") to mark it
+++   "in_progress". Only one item should be in_progress at a time.
+++
+++3. **After completing a step**: Use `todos` (action: "update") to mark it
+++   "done" immediately — never batch completions.
+++
+++4. **After a discovery**: When you learn something important from a tool call
+++   (e.g. file structure, error output, a key decision), use `notes`
+++   (action: "append") to record it. This prevents losing context.
+++
+++5. **Periodically**: Use `todos` (action: "list") to review remaining work
+++   after completing a step or before deciding what to do next.
+++
+++6. **On new findings**: If you discover additional work is needed, use `todos`
+++   (action: "add") to add new items rather than forgetting them.
+++
+++The `notes` tool is your scratchpad — use it to record: key file paths found,
+++decisions made, patterns observed, error messages, and anything you'd want to
+++remember later in a long task.
++ ]]
++ 
++ M.planner_system_prompt = [[
++diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
++index 3d5c6ae..da39db2 100644
++--- a/lua/tai/providers.lua
+++++ b/lua/tai/providers.lua
++@@ -77,6 +77,11 @@ local providers_config = {
++ 		api_key_env = "Z_AI_API_KEY",
++ 		api_format = "chat_completions",
++ 	},
+++	xai = {
+++		url = "https://api.x.ai/v1/chat/completions",
+++		api_key_env = "XAI_API_KEY",
+++		api_format = "chat_completions",
+++	},
++ 	-- Generic/custom provider
++ 	custom = {
++ 		url = config.options.url,
++diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
++index b23c357..72ee757 100644
++--- a/lua/tai/tools.lua
+++++ b/lua/tai/tools.lua
++@@ -2,6 +2,11 @@ local M = {}
++ local log = require('tai.log')
++ local config = require("tai.config")
++ 
+++-- In-memory stores for agent tools
+++M.todos_store = {}  -- list of {id, text, status}
+++M.todos_next_id = 1
+++M.notes_store = ""  -- single string notepad
+++
++ M.defs = {
++ 	read = {
++ 		type = "function",
++@@ -143,6 +148,63 @@ M.defs = {
++ 			}
++ 		}
++ 	},
+++	todos = {
+++		type = "function",
+++		["function"] = {
+++			name = "todos",
+++			description =
+++			"In-memory todo list to track progress on multi-step tasks. Use for tasks with 3+ steps. Actions: 'add' creates a new item, 'update' changes status/text of an existing item, 'list' returns all items.",
+++			parameters = {
+++				type = "object",
+++				properties = {
+++					action = {
+++						type = "string",
+++						description = "The action to perform: 'add', 'update', or 'list'.",
+++						enum = { "add", "update", "list" }
+++					},
+++					text = {
+++						type = "string",
+++						description = "Description of the todo item. Required for 'add', optional for 'update' (to change text)."
+++					},
+++					id = {
+++						type = "number",
+++						description = "ID of the todo item. Required for 'update'."
+++					},
+++					status = {
+++						type = "string",
+++						description = "Status of the item. For 'add' defaults to 'pending'. For 'update' changes the status.",
+++						enum = { "pending", "in_progress", "done", "cancelled" }
+++					}
+++				},
+++				additionalProperties = false,
+++				required = { "action" }
+++			}
+++		}
+++	},
+++	notes = {
+++		type = "function",
+++		["function"] = {
+++			name = "notes",
+++			description =
+++			"In-memory scratchpad for registering discoveries, important thoughts, decisions, and context gathered during the task. Use this to persist insights across tool calls so you don't lose track. Actions: 'read' returns current notes, 'write' overwrites with new content, 'append' adds to existing notes.",
+++			parameters = {
+++				type = "object",
+++				properties = {
+++					action = {
+++						type = "string",
+++						description = "The action: 'read', 'write', or 'append'.",
+++						enum = { "read", "write", "append" }
+++					},
+++					content = {
+++						type = "string",
+++						description = "The content to write or append. Required for 'write' and 'append'."
+++					}
+++				},
+++				additionalProperties = false,
+++				required = { "action" }
+++			}
+++		}
+++	},
++ }
++ 
++ -- indexes are 1 based
++@@ -466,4 +528,72 @@ function M.edit(file, old_text, new_text)
++ 	return "Patched " .. file
++ end
++ 
+++function M.run_todos(args)
+++	local action = args.action
+++	if action == "add" then
+++		if not args.text or args.text == "" then
+++			return "Error: 'text' is required for 'add'"
+++		end
+++		local item = {
+++			id = M.todos_next_id,
+++			text = args.text,
+++			status = args.status or "pending",
+++		}
+++		table.insert(M.todos_store, item)
+++		M.todos_next_id = M.todos_next_id + 1
+++		return string.format("Added todo #%d: [%s] %s", item.id, item.status, item.text)
+++	elseif action == "update" then
+++		if not args.id then
+++			return "Error: 'id' is required for 'update'"
+++		end
+++		for _, item in ipairs(M.todos_store) do
+++			if item.id == args.id then
+++				if args.status then item.status = args.status end
+++				if args.text then item.text = args.text end
+++				return string.format("Updated todo #%d: [%s] %s", item.id, item.status, item.text)
+++			end
+++		end
+++		return "Error: todo #" .. tostring(args.id) .. " not found"
+++	elseif action == "list" then
+++		if #M.todos_store == 0 then
+++			return "No todos yet."
+++		end
+++		local lines = {}
+++		for _, item in ipairs(M.todos_store) do
+++			table.insert(lines, string.format("#%d [%s] %s", item.id, item.status, item.text))
+++		end
+++		return table.concat(lines, "\n")
+++	else
+++		return "Error: unknown action '" .. tostring(action) .. "'"
+++	end
+++end
+++
+++function M.run_notes(args)
+++	local action = args.action
+++	if action == "read" then
+++		if M.notes_store == "" then
+++			return "(empty)"
+++		end
+++		return M.notes_store
+++	elseif action == "write" then
+++		if not args.content then
+++			return "Error: 'content' is required for 'write'"
+++		end
+++		M.notes_store = args.content
+++		return "Notes updated."
+++	elseif action == "append" then
+++		if not args.content then
+++			return "Error: 'content' is required for 'append'"
+++		end
+++		if M.notes_store == "" then
+++			M.notes_store = args.content
+++		else
+++			M.notes_store = M.notes_store .. "\n" .. args.content
+++		end
+++		return "Notes appended."
+++	else
+++		return "Error: unknown action '" .. tostring(action) .. "'"
+++	end
+++end
+++
++ return M
++diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
++index 05b60b4..7de771f 100644
++--- a/lua/tai/ui.lua
+++++ b/lua/tai/ui.lua
++@@ -22,8 +22,8 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
++ 
++ local planner_config = vim.deepcopy(config)
++ local coder_config = vim.deepcopy(config)
++-planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
++-coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
+++planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
+++coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
++ -- Global stop flag for hard stop command
++ local hard_stop = false
++ local pending_tools = nil
++@@ -289,6 +289,14 @@ local function run_tools(tool_calls, history)
++ 
++ 			M.code()
++ 			goto next
+++		elseif name == "todos" then
+++			local out = tools.run_todos(args)
+++			res.content = out
+++			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+++		elseif name == "notes" then
+++			local out = tools.run_notes(args)
+++			res.content = out
+++			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
++ 		elseif name == "send_image" then
++ 			if not args.file then
++ 				M.append("{{{ Addind image failed: no file field.\n}}}")
++diff --git a/www/index.html b/www/index.html
++index bc811cd..b8394b5 100644
++--- a/www/index.html
+++++ b/www/index.html
++@@ -18,11 +18,15 @@ agents directly to your editor.
++ 
++ &lt;b&gt;features&lt;/b&gt;
++ 
++-- agents can read files and run commands
++-- responses show up in a split buffer in Neovim
++-- apply patches or run commands
++-- agents create plans for big code changes
++-- code folding in the chat
+++- planner + coder agents for complex tasks
+++- read/write files and run shell commands
+++- in-memory todos &amp;amp; notes for tracking progress
+++- rate limiting (rpm/tpm)
+++- streaming responses
+++- extended thinking/reasoning support
+++- provider-side tools (e.g. web_search)
+++- safety validation for shell commands
+++- code folding in the chat buffer
++ 
++ 
++ &lt;i&gt;providers&lt;/i&gt;
++@@ -31,12 +35,13 @@ agents directly to your editor.
++ - groq
++ - minimax
++ - mistral
++-- local
++-- ollama
+++- ollama / llama.cpp (local)
++ - openai
++ - openrouter
++ - stepfun
+++- xai
++ - z.ai
+++- custom
++ 
++ 
++ &lt;b&gt;keybindings&lt;/b&gt;
++@@ -83,42 +88,53 @@ tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file
++ in your project root. the following options are
++ supported:
++ 
++-- &lt;i&gt;model&lt;/i&gt;: the model used for chat completions
++-- &lt;i&gt;provider&lt;/i&gt;: one of: groq, gemini, mistral,
++-  z_ai, openai, openrouter, stepfun, local, minimax.
+++- &lt;i&gt;model&lt;/i&gt;: the model for chat completions
+++- &lt;i&gt;provider&lt;/i&gt;: see providers list above
++ - &lt;i&gt;options&lt;/i&gt;: provider-specific options passed
++-  to the API (e.g., temperature, max_tokens). See
++-  the provider's API docs.
+++  to the API (e.g., temperature, max_tokens)
++ - &lt;i&gt;provider_tools&lt;/i&gt;: array of provider-side
++-  tools (e.g., ["web_browser"] for OpenAI).
++-- &lt;i&gt;use_tools&lt;/i&gt;: boolean to enable/disable agent
++-  tools. default is true. if false, the agent won't
++-  have access to file read/write or the shell tool.
++-- &lt;i&gt;think&lt;/i&gt;: enable extended thinking/reasoning
++-  for models that support it.
++-- &lt;i&gt;system_prompt&lt;/i&gt;: custom system prompt to
++-  override the default agent instructions.
++-- &lt;i&gt;custom_prompt&lt;/i&gt;: additional prompt text
++-  appended to the system prompt. useful for adding
++-  extra instructions without replacing the default.
++-- &lt;i&gt;allowed_commands&lt;/i&gt;: override the default
++-  list of allowed shell commands. by default, tai
++-  allows: cat, grep, ag, rg, ls, head, tail, wc,
++-  diff, sort, uniq, find, file, stat, date, echo,
++-  tree, pwd, which, type.
+++  tools (e.g., ["web_search"])
+++- &lt;i&gt;use_tools&lt;/i&gt;: enable/disable agent tools
+++  (default: true)
+++- &lt;i&gt;stream&lt;/i&gt;: enable streaming responses
+++  (default: false)
+++- &lt;i&gt;think&lt;/i&gt;: extended thinking/reasoning level
+++  ("low", "medium", "high")
+++- &lt;i&gt;rpm&lt;/i&gt;: max requests per minute (default: 60)
+++- &lt;i&gt;tpm&lt;/i&gt;: max tokens per minute
+++- &lt;i&gt;system_prompt&lt;/i&gt;: replace default agent prompt
+++- &lt;i&gt;custom_prompt&lt;/i&gt;: append to default prompt
+++- &lt;i&gt;allowed_commands&lt;/i&gt;: override allowed shell
+++  commands
+++
+++
+++&lt;b&gt;agent tools&lt;/b&gt;
+++
+++- &lt;i&gt;read&lt;/i&gt;: read files with optional line range
+++- &lt;i&gt;shell&lt;/i&gt;: run allow-listed shell commands
+++- &lt;i&gt;edit&lt;/i&gt;: edit files via old/new replacement
+++- &lt;i&gt;write&lt;/i&gt;: create new files
+++- &lt;i&gt;send_image&lt;/i&gt;: send images for analysis
+++- &lt;i&gt;coder_agent&lt;/i&gt;: delegate to coder agent
+++- &lt;i&gt;todos&lt;/i&gt;: in-memory todo list (add/update/list)
+++  with statuses: pending, in_progress, done, cancelled
+++- &lt;i&gt;notes&lt;/i&gt;: in-memory scratchpad (read/write/append)
+++  for tracking discoveries and context
+++
++ 
++ example .tai file:
++ 
++ {
++-	"provider": "groq",
++-	"model": "llama-3.1-70b-versatile",
+++	"provider": "xai",
+++	"model": "grok-4.3",
++ 	"options": {
++ 		"temperature": 0.7,
++ 		"max_tokens": 4096
++ 	},
+++	"stream": true,
++ 	"use_tools": true,
++-	"system_prompt": "You are a senior python programmer. Always write tests.",
++-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+++	"rpm": 30,
+++	"custom_prompt": "Prefer rust for performance.",
++ 	"allowed_commands": {
++ 		"git": true,
++ 		"npm": true,
++@@ -131,8 +147,8 @@ example .tai file:
++ 
++ &lt;b&gt;usage&lt;/b&gt;
++ 
++-make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
++-for Groq or &lt;i&gt;GEMINI_API_KEY&lt;/i&gt; for Gemini etc.
+++make sure the correct env var is set for your provider:
+++&lt;i&gt;XAI_API_KEY&lt;/i&gt;, &lt;i&gt;GROQ_API_KEY&lt;/i&gt;, &lt;i&gt;GEMINI_API_KEY&lt;/i&gt;, etc.
++ create a .tai file at the root or your project.
++ editting any file in that project should start tai.
++ then just use the keybindings above.
+diff --git a/www/index.html b/www/index.html
+index b8394b5..9ba3bba 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -106,6 +106,8 @@ supported:
+ - &lt;i&gt;custom_prompt&lt;/i&gt;: append to default prompt
+ - &lt;i&gt;allowed_commands&lt;/i&gt;: override allowed shell
+   commands
++- &lt;i&gt;auto_approve&lt;/i&gt;: if true, auto-run shell commands
++  without the y/n/s confirmation prompt (use with care)
+ 
+ 
+ &lt;b&gt;agent tools&lt;/b&gt;
+@@ -115,7 +117,8 @@ supported:
+ - &lt;i&gt;edit&lt;/i&gt;: edit files via old/new replacement
+ - &lt;i&gt;write&lt;/i&gt;: create new files
+ - &lt;i&gt;send_image&lt;/i&gt;: send images for analysis
+-- &lt;i&gt;coder_agent&lt;/i&gt;: delegate to coder agent
++- &lt;i&gt;coder&lt;/i&gt;: (for planner) delegate to coder agent with prompt (gets "coder is working..." ack; coder has own history)
++- &lt;i&gt;planner&lt;/i&gt;: (for coder) hand back report to planner at end of task (gets ack; planner receives report in its history)
+ - &lt;i&gt;todos&lt;/i&gt;: in-memory todo list (add/update/list)
+   with statuses: pending, in_progress, done, cancelled
+ - &lt;i&gt;notes&lt;/i&gt;: in-memory scratchpad (read/write/append)
+</pre>

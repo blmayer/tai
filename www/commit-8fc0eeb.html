@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 8fc0eeb</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 8fc0eeb
+parent <a href=commit-5ca4996.html>5ca4996</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-30T09:26:50-03:00
+
+    simplified reasoning field
+
+    - fixed tool calls in stopped iteraction
+
+<a href=tree-8fc0eeb.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+index c909006..89c8f06 100644
+--- a/lua/tai/minimax.lua
++++ b/lua/tai/minimax.lua
+@@ -22,7 +22,7 @@ function M.add_to_history(message)
+ 		local args = call["function"].arguments
+ 		call["function"].arguments = vim.json.encode(args)
+ 	end
+-	if msg.reasoning_details then
++	if msg.reasoning then
+ 		msg.reasoning_details = { {
+ 			text = msg.reasoning_details
+ 		}}
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 966e950..d7945ad 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -98,7 +98,7 @@ function M.request(model_config, msgs, format, callback)
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
+ 
+ 	common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+@@ -106,7 +106,7 @@ function M.request(model_config, msgs, format, callback)
+ 			return
+ 		end
+ 
+-		log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+ 		if parsed.error then
+ 			local error = parsed.error
+@@ -131,7 +131,7 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 	local body = build_body(model_config, msgs, format)
+ 	body.stream = true
+ 
+-	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+ 	local request_body = vim.json.encode(body)
+ 
+ 	local fields = {
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 26aabee..6c81cbe 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -138,13 +138,13 @@ function M.extract_fields(message, format)
+ 	if message.reasoning or message.reasoning_content then
+ 		local reasoning_text = message.reasoning or message.reasoning_content
+ 		if reasoning_text and reasoning_text ~= "" and reasoning_text ~= vim.NIL then
+-			fields.reasoning_details = { { text = reasoning_text } }
++			fields.reasoning = reasoning_text
+ 		end
+ 	end
+ 
+ 	-- Some providers (e.g., MiniMax) return reasoning_details directly
+ 	if message.reasoning_details and #message.reasoning_details &gt; 0 then
+-		fields.reasoning_details = message.reasoning_details[1].text
++		fields.reasoning = message.reasoning_details[1].text
+ 	end
+ 
+ 	-- Some providers offer a more detailed reasoning response
+@@ -255,7 +255,7 @@ function M.parse_chunk(chunk)
+ 	if not ok then
+ 		return nil, "failed to decode JSON"
+ 	end
+-	log.debug("parsed chunk: " .. vim.inspect(decoded))
++	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
+ 
+ 	local message = decoded.choices[1].delta
+ 	local fields, err = M.extract_fields(message, nil)
+@@ -273,7 +273,7 @@ function M.update_fields(fields, chunk)
+ 
+ 	if chunk.reasoning_details and #chunk.reasoning_details &gt; 0 then
+ 		local text = chunk.reasoning_details[1].text
+-		fields.reasoning_details[1].text = fields.reasoning_details[1].text .. text
++		fields.reasoning = fields.reasoning_details[1].text .. text
+ 	end
+ 
+ 	if chunk.tool_calls then
+@@ -286,14 +286,16 @@ function M.update_fields(fields, chunk)
+ 
+ 			if not saved_call then
+ 				fields.tool_calls[idx] = call
++				log.debug("[API] created new tool call")
+ 			else
+ 				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
+-				if type(fn.arguments) == "string" then
+-					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+-					    fn.arguments
+-				else
++				if type(fn.arguments) == "table" then
+ 					fields.tool_calls[idx]["function"].arguments = fn.arguments
++				else
++					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
++					    tostring(fn.arguments)
+ 				end
++				log.debug("[API] updated tool call: " .. vim.inspect(fields.tool_calls[idx]))
+ 			end
+ 		end
+ 	end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 6311ec9..f25b875 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -375,19 +375,15 @@ local function process_response(fields)
+ 		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+ 	end
+ 
+-	if not config.stream then
+-		-- Display reasoning details (interleaved thinking) folded
+-		-- TODO: check if we can omit [1].text
+-		if fields.reasoning_details then
+-			M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details .. "}}}")
+-			vim.schedule(function() refresh_and_close_folds() end)
+-		end
++	if fields.reasoning then
++		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning .. "\n}}}\n")
++		vim.schedule(function() refresh_and_close_folds() end)
++	end
+ 
+-		-- For non-streaming responses, append the content to the buffer
+-		if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+-			if not config.stream then
+-				M.append_to_buffer(fields.content .. "\n")
+-			end
++	-- For non-streaming responses, append the content to the buffer
++	if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
++		if not config.stream then
++			M.append_to_buffer(fields.content .. "\n")
+ 		end
+ 	end
+ 
+@@ -399,7 +395,10 @@ local function process_response(fields)
+ 		log.debug("[UI] running tools")
+ 		local res, stop = run_tools(fields.tool_calls)
+ 		if stop or hard_stop then
+-			provider.add_to_history(res)
++			for _, msg in ipairs(res) do
++				provider.add_to_history(msg)
++			end
++			log.debug("[UI] stopped")
+ 			return
+ 		end
+ 		M.task(res, process_response)
+@@ -429,7 +428,7 @@ local function send_input()
+ 			M.append_to_buffer(input .. "\n---\n")
+ 		end)
+ 
+-		log.debug("got input: " .. input)
++		log.debug("[UI] got user input: " .. input)
+ 		if config.stream then
+ 			M.task_stream({ { role = "user", content = input } })
+ 		else
+@@ -516,7 +515,7 @@ function M.task(msgs, callback)
+ 			end
+ 			response.content = data.content
+ 			response.tool_calls = data.tool_calls
+-			response.reasoning_details = data.reasoning_details
++			response.reasoning = data.reasoning
+ 			provider.add_to_history(response)
+ 			callback(data, false) -- Pass non-streaming flag
+ 		end
+@@ -540,35 +539,12 @@ function M.task_stream(msgs)
+ 			end
+ 
+ 			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+-			if chunk.reasoning_details and #chunk.reasoning_details &gt; 0 then
++			if chunk.reasoning and #chunk.reasoning &gt; 0 then
+ 				if think_start then
+-					append_streaming("{{{ Thinking \n" .. chunk.reasoning_details[1].text)
++					append_streaming("{{{ Thinking \n" .. chunk.reasoning)
+ 					think_start = false
+-					-- Open the thinking fold for streaming responses
+-					vim.schedule(function()
+-						if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+-							return
+-						end
+-						vim.api.nvim_win_call(chat_win, function()
+-							local bufnr = M.buffer_nr
+-							local last_line = vim.api.nvim_buf_line_count(bufnr)
+-							-- Search backward for the line containing "{{{ Thinking"
+-							for l = last_line, 1, -1 do
+-								local line = vim.api.nvim_buf_get_lines(bufnr, l - 1, l,
+-									false)[1]
+-								if line and line:find("{{{ Thinking", 1, true) then
+-									local cur_pos = vim.api.nvim_win_get_cursor(
+-									chat_win)
+-									vim.api.nvim_win_set_cursor(chat_win, { l, 0 })
+-									vim.cmd("normal! zx")
+-									vim.api.nvim_win_set_cursor(chat_win, cur_pos)
+-									break
+-								end
+-							end
+-						end)
+-					end)
+ 				else
+-					append_streaming(chunk.reasoning_details[1].text)
++					append_streaming(chunk.reasoning)
+ 				end
+ 			end
+ 
+@@ -609,7 +585,10 @@ function M.task_stream(msgs)
+ 			log.debug("[UI] running tools")
+ 			local res, stop = run_tools(data.tool_calls)
+ 			if stop or hard_stop then
+-				provider.add_to_history(res)
++				for _, msg in ipairs(res) do
++					provider.add_to_history(msg)
++				end
++				log.debug("[UI] stopped")
+ 				return
+ 			end
+ 			M.task_stream(res)
+</pre>

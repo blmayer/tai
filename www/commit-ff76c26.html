@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ff76c26</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ff76c26
+parent <a href=commit-ae86ae1.html>ae86ae1</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-19T21:33:31-03:00
+
+    simplified tools and agents
+
+<a href=tree-ff76c26.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/TODO.md b/TODO.md
+index c55c589..8806d03 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -1,7 +1,6 @@
+ # TODO
+ 
+-- tools must be per agent, not provider:
+-  - instantiate a tool new_tools(agent_config)
++- fix patch tool's poor performance
+ 
+ 
+ # DONE
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agent.lua
+similarity index 86%
+rename from lua/tai/agents/tai.lua
+rename to lua/tai/agent.lua
+index 48d2890..622e26d 100644
+--- a/lua/tai/agents/tai.lua
++++ b/lua/tai/agent.lua
+@@ -19,7 +19,7 @@ requests or general questions. Your job is to address/implement them in the
+ current project code base.
+ 
+ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+-    vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
++    vim.uv.cwd() .. [[, you have full access to the project folder, in a ]] ..
+     host.machine .. " " .. host.sysname .. [[ machine.
+ 
+ ]] .. tools.pretty_info(config.tai.tools) .. [[
+@@ -37,9 +37,12 @@ If the demand is specific to the current project then:
+   - The imports help you understand the code organization and structure.
+   - Re-read files if you think they changed after the patch. 
+ If code changes are needed:
++- To implement the changes call the patch tool.
+ - Patches need precise line numbering, you must know the files you're changing.
++- Organize patches so that small changes can be sent on the same patch, but
++  group many small changes by function/method/class.
++- For changes multiple files better send them separately.
+ - Don't use the shell tool to change or read files unless explicitly told to.
+-- Call the patch tool to implement the changes you want.
+ 
+ RESPONSE FORMAT
+ For text use ASCII/ANSI, be concise, avoid lines &gt; 60 columns, don't quote or
+@@ -57,14 +60,14 @@ function M.task(msgs, callback)
+ 		function(data, err)
+ 			local response = { role = "assistant" }
+ 			if err then
+-				response.content = err
++				return callback({error = err})
+ 			else
+ 				response.content = vim.json.encode(data.content)
+ 				response.tool_calls = data.tool_calls
+ 			end
+ 			provider.add_to_history(response)
+ 
+-			callback(data, err)
++			callback(data)
+ 		end
+ 	)
+ end
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+deleted file mode 100644
+index bbfdfa5..0000000
+--- a/lua/tai/agents/coder.lua
++++ /dev/null
+@@ -1,142 +0,0 @@
+--- coder.lua: Coder agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-local tools = require('tai.agents.tools')
+-
+-if not config.root or not config.coder then
+-	return M
+-end
+-
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-M.system_prompt = [[
+-SYSTEM
+-You are a Coder Tai, an excelent coding agent. You are in charge of implementing
+-the tasks requested in the current project. You will receive high level
+-instructions from the software architect that should be a starting point for
+-the implementation. Your job is to correctly generate and implement code
+-changes for the code base.
+-
+-You have full access to the project's code base, and a terminal in your machine,
+-but you can't apply code changes.
+-
+-You have access to other agents that will help you fullfil the task:
+-- patcher: will take your code changes and apply them in the code base.
+-- writer: will inform the user what you want.
+-After figuring out the needed code changes generate intructions to the patcher
+-agent so it can correctly apply the changes in the original files.
+-
+-]] .. tools.pretty_info(config.coder.tools) .. [[
+-
+-INSTRUCTIONS
+-Consider these guiding tips:
+-- Understand the code base by reading files and running commands you need.
+-  - Use the tools if you have access: start by looking at the current folder.
+-  - You can use multiple turns, e.g. listing files, then reading a file.
+-  - You can ask the user for more info.
+-- You can use multiple turns to run tools or asking the user for clarification.
+-- Consider the imports to understand the code organization.
+-- Implement the task considering the constraints given.
+-- Before finishing ask yourself if you correctly implemented the task.
+-- Separate the changes by file making it clear what have changed.
+-- Communicate the patcher agent of your changes.
+-- If you receive a plan, stick to it, but you can add more detailed steps.
+-
+-The patcher agent will create an ed script from the code changes you send. So
+-you MUST explain your changes, including:
+-- the file name
+-- line numbers affected
+-- the new content
+-In other words: you MUST know the content of the files you are changing!
+-Only use the patcher to implement code changes that are complete, don't issue
+-partial solutions. If no changes are needed don't call it. The only thing the
+-pacher can do is to create the patch, it can't run commands or code.
+-
+-To the writer agent you can pass intructions about what the user needs to do,
+-eg. executing commands that are not allowed, or general comments/details.
+-
+-COMPLEX TASKS
+-Sometimes the task will be too complex to be solved at once, in those cases you
+-can inform the writer agent of the need, you can also ask the user to run commands
+-on its machine to send you the output.
+-
+-RESPONSE FORMAT
+-Return ONLY a JSON object, no markdown, no code fences (```), with the format:
+-{
+-	"patcher": string,
+-	"writer": string
+-}
+-IMPORTANT: Don't include the field if it is empty.
+-]]
+-
+-local response_format = {
+-	name = "coder response",
+-	type = "object",
+-	properties = {
+-		patcher = {
+-			description = "Intructions for the patcher agent",
+-		      	type = "string",
+-		},
+-		writer = {
+-			description = "Text for the writer agent",
+-			type = "string",
+-		},
+-	},
+-}
+-
+-function M.task(task, callback)
+-	log.info("Coder executing task: " .. task)
+-	local messages = {
+-		{ role = "system", content = M.system_prompt },
+-		{ role = "user", content = task },
+-	}
+-	provider.request(
+-		config.coder,
+-		messages,
+-		response_format,
+-		function(data, err) callback(data, err) end
+-	)
+-end
+-
+-function M.run_tools(tool_calls, callback)
+-	log.info("Planner running tooks")
+-
+-	local out = tools.run(tool_calls)
+-	local messages = {
+-		{ role = "system", content = M.system_prompt },
+-		{ role = "tool", content = out },
+-	}
+-
+-	provider.request(
+-		config.coder,
+-		messages,
+-		response_format,
+-		function(data, err)
+-			table.insert(
+-				history,
+-				{
+-					role = "assistant",
+-					content = vim.json.encode(data.content),
+-					tool_calls = data.tool_calls,
+-				}
+-			)
+-			callback(data, err)
+-		end
+-	)
+-end
+-return M
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+deleted file mode 100644
+index d3518e9..0000000
+--- a/lua/tai/agents/patcher.lua
++++ /dev/null
+@@ -1,139 +0,0 @@
+--- patcher.lua: Patcher agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-
+-if not config.root or not config.patcher then
+-	return M
+-end
+-
+--- Load the appropriate provider
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-M.system_prompt = [[
+-You are Patcher Tai, an agent that created patches. Your task is to create
+-patches in ed script format from code changes.
+-
+-INSTRUCTIONS
+-You will receive a list of code changes, you job is to correctly format them in
+-a **VALID** ed script that the user can apply with `ed -s &lt; patch`.
+-If there are no changes output nothing.
+-
+-OUTPUT FORMAT
+-**IMPORTANT**: The content **MUST** be **VALID** ed script.
+-- Specify the file affected at start of the patch with `e file_name`.
+-- **ALWAYS** finish the script with `w` and `q`. Intermediaries don't need `q`.
+-- Make sure you get the line numbers correct.
+-- Generally preffer using line numbers.
+-- Output ONLY the script, don't add prose, preambles or code fences (```).
+-
+-ED FORMAT
+-
+-General Rules
+-- A script is a sequence of ed commands followed by w.
+-- To input a dot only it must be escaped like `..`.
+-- Lines are addressed by number or by special symbols.
+-- Ranges can apply to a single line, multiple lines, or the whole file.
+-- When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
+-- To return to command mode, you enter a line containing only a single `.`.
+-- After a command the current position
+-
+-Addressing and Ranges
+-1 	first line
+-$ 	last line
+-. 	current line
+-0 	line before the first line (only valid with a to prepend)
+-N,M 	lines N through M (inclusive)
+-% 	shorthand for 1,$ (the whole file)
+-/regex/ first line matching regex
+-?regex? search backwards for regex
+-
+-Editing Commands
+-a		append after the addressed line
+-  		0a appends at the start of the file (prepending), use it for empty files.
+-i		insert before the addressed line
+-c		change (replace) the addressed line(s)
+-d		delete the addressed line(s)
+-s/pat/repl/	substitute text in the current line (use g at the end for global)
+-m		move addressed line(s) to after another line (e.g. 1,3m$)
+-t		copy addressed line(s) after another line (like m, but duplicate)
+-
+-File Commands
+-e filename	open file (if it doesn’t exist, buffer is empty)
+-r filename	read contents of file into current buffer (after current line)
+-w [filename]	write buffer to file (creates if missing)
+-q		quit
+-
+-EXAMPLES
+-- Addind text at start of file:
+-e test.py
+-0a
+-print("Hello, world!")
+-.
+-w
+-q
+-
+-- Replace line 5 with new content:
+-e foo.lua
+-5c
+-print("Hello, world")
+-.
+-w
+-q
+-
+-- Delete all lines containing “DEBUG”:
+-e foo.lua
+-g/DEBUG/d
+-w
+-q
+-
+-- Substitute globally in whole file:
+-e foo.lua
+-%s/foo/bar/g
+-w
+-q
+-
+-- A content line with escaped `.`:
+-e foo.lua
+-15a
+-new line
+-next line is only a dot.
+-..
+-some text
+-.
+-w
+-q
+-]]
+-
+-function M.create_patch(changes, callback)
+-	log.info("Patcher creating patch from changes: " .. changes)
+-
+-	provider.request(
+-	    	config.patcher,
+-		{
+-			{ role = "system", content = M.system_prompt },
+-	    		{ role = "user", content = changes },
+-		},
+-	    	nil,
+-	    	function(data, err) callback(data, err) end
+-	)
+-end
+-
+-return M
+-
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+deleted file mode 100644
+index 1825f2e..0000000
+--- a/lua/tai/agents/planner.lua
++++ /dev/null
+@@ -1,226 +0,0 @@
+--- planner.lua: Planner agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-local client = require('tai.agents.client')
+-local tools = require('tai.agents.tools')
+-
+-if not config.root or not config.planner then
+-	return M
+-end
+-
+--- Load the appropriate provider
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-M.system_prompt = [[
+-SYSTEM
+-You are Planner Tai, an experienced software architect. You are coordinating a
+-team of agents on the current project. Users will inquire you with questions
+-about anything, specially about the project, they may ask for refactors or
+-smaller code changes. Your job is to plan and coordinate the agents to fullfil
+-the user's requests.
+-
+-You and the team have access to the project's code base.
+-
+-You have access to AI agents that can assist you:
+-- coder: knows how to code, it will take your instructions and code them.
+-- writer: receives text intended for the user and format it.
+-After your response the other agents will be called.
+-
+-]] .. tools.pretty_info(config.planner.tools) .. [[
+-
+-INSTRUCTIONS
+-- Understand the user request, the problem and the context.
+-  - Use you knowledge and past context
+-- Evaluate if the user wants to change the code base.
+-- Think on the path to the solution and the constraints, and elaborate a plan.
+-- Include the plan (if any) so agents can follow.
+-- Before giving an answer ask yourself if it actualy solves the user's demand.
+-
+-USING THE CODER AGENT
+-If code changes are needed send instructions to the coder agent:
+-- Make sure you have concrete evidence that your plan will implement the demand.
+-- Generate a detailed set of instructions to the coder agent:
+-  - Indicate the files that are a good starting point if you know their content.
+-  - Give tips about the implementation, like imports, good pratices and style.
+-  - Include a description of the user's task.
+-  - Try to facilitate its job by giving more context.
+-  - Give boundaries and goals so the agent can steer to the right direction.
+-- Don't use other tools or agents to make changes, only the coder can do it.
+-
+-USING THE WRITER AGENT
+-Write to the writer agent the text for the user.
+-The writer agent only shows text to the user, don't use it for anything else.
+-
+-USING PLANS
+-For solutions that will need many steps, generate a step by step plan and
+-send it to the agents, so they can keep track of progress. Be explicit about
+-the plan so agents can understand it.
+-- use [ ] and [X] for todo and done steps
+-- use identation to make sub steps
+-
+-RESPONSE FORMAT
+-Return ONLY a JSON object, no code fences (```), no markdown, with the format:
+-{
+-	"coder": string,
+-	"writer": string
+-}
+-IMPORTANT: Never send empty responses and ALWAYS format it correctly.
+-]]
+-
+-
+-local response_format = {
+-	type = "object",
+-	properties = {
+-		coder = {
+-			description = "Intructions for the coder agent",
+-		      	type = "string",
+-		},
+-		writer = {
+-			description = "Text for the writer agent",
+-			type = "string",
+-		},
+-	},
+-}
+-
+-local history = { { role = "system", content = M.system_prompt } }
+-
+-function M.plan(prompt, callback)
+-	log.info("Planner received prompt: " .. prompt)
+-
+-	local msg = { role = "user", content = prompt }
+-	table.insert(history, msg)
+-
+-	provider.request(
+-		config.planner,
+-		history,
+-		response_format,
+-		function(data, err)
+-			if err then
+-				callback(nil, err)
+-				return
+-			end
+-
+-			table.insert(
+-				history,
+-				{
+-					role = "assistant",
+-					content = vim.json.encode(data.content),
+-					tool_calls = data.tool_calls,
+-				}
+-			)
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+-function M.run_tools(tool_calls, callback)
+-	log.info("Planner running tooks")
+-
+-	local out = tools.run(tool_calls)
+-	local msg = { role = "tool", content = out }
+-	table.insert(history, msg)
+-
+-	provider.request(
+-		config.planner,
+-		history,
+-		"json",
+-		function(data, err)
+-			table.insert(
+-				history,
+-				{
+-					role = "assistant",
+-					content = vim.json.encode(data.content),
+-					tool_calls = data.tool_calls,
+-				}
+-			)
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+--- Function to receive a prompt and request implementation
+-function M.receive_prompt(prompt, callback)
+-	log.info("Planner received prompt: " .. prompt)
+-	if M.conversation_id then
+-		log.debug("Using existing conversation id: " .. M.conversation_id)
+-		client.request("POST", 'conversations/' .. M.conversation_id, {
+-			inputs = prompt,
+-			handoff_execution = "server"
+-		}, function(response, err)
+-			if err then
+-				log.error("Planner request failed: " .. err)
+-				callback(nil, err)
+-				return
+-			end
+-
+-			local outputs = response["outputs"]
+-			local content = outputs[#outputs]["content"]
+-			if not content then
+-				callback(nil)
+-				return
+-			end
+-			local res = content
+-			callback(vim.json.decode(res))
+-		end)
+-		return
+-	end
+-
+-	log.debug("conversarion id not set")
+-	client.request("GET", 'conversations', nil, function(response, err)
+-		if err then
+-			log.error("Planner request failed: " .. err)
+-			callback(nil, err)
+-			return
+-		end
+-
+-		if #response &gt; 0 then
+-			M.conversation_id = response[1]["id"]
+-			log.debug("Found conversarion id: " .. M.conversation_id)
+-			return M.receive_prompt(prompt, callback)
+-		end
+-
+-		log.debug("Creating new conversarion id")
+-		client.request("POST", 'conversations', {
+-			agent_id = M.id,
+-			inputs = prompt,
+-			handoff_execution = "server"
+-		}, function(response, err)
+-			if err then
+-				log.error("Planner request failed: " .. err)
+-				callback(nil, err)
+-				return
+-			end
+-
+-			M.conversation_id = response["conversation_id"]
+-			log.debug("Created new conversarion id: " .. M.conversation_id)
+-
+-			local outputs = response["outputs"]
+-			local content = outputs[#outputs]["content"]
+-			if not content then
+-				callback(nil)
+-				return
+-			end
+-			local res = content
+-			callback(vim.json.decode(res))
+-		end)
+-	end)
+-end
+-
+-return M
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+deleted file mode 100644
+index de05924..0000000
+--- a/lua/tai/agents/writer.lua
++++ /dev/null
+@@ -1,110 +0,0 @@
+--- writer.lua: Writer agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-local client = require('tai.agents.client')
+-
+-if not config.root or not config.writer then
+-	return M
+-end
+-
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-M.system_prompt = [[
+-You are Writer Tai, a writer assistant running inside a Neovim session.
+-Your job is to format the incoming content in a short and professional tone.
+-
+-INSTRUCTIONS
+-Agents will send you text, your goal is to gather and format them.
+-Gather all text from the user that is not a plan, process and generate concise
+-and friendly user-facing text in the `text` field.
+-- Use maximum of 80 characters per line.
+-- You can include ASCII tables, diagrams, art etc if needed.
+-- Format the commands and plan as lists on the respective fields.
+-
+-Collect the plan steps (if any), agents will be explicit about plans, don't
+-assume anything, and format then correctly in the `plan` field:
+-- use [ ] and [X] for todo and done steps
+-- don't add numbering or bullets
+-- use identation to make sub steps
+-
+-RESPONSE FORMAT
+-Return ONLY a JSON object, no code fences(```), no file type indication,
+-no markdown, with the format:
+-{
+-       "plan": []string,
+-       "text": string
+-}
+-The only required field is text. Don't add fields if they are empty. Don't
+-send plans with only 1 step.
+-]]
+-
+-local response_format = {
+-	name = "writer response",
+-	type = "object",
+-	properties = {
+-		plan = {
+-			description = "Plan to be followed by the user.",
+-			type = "array",
+-			items = {
+-				type = "string"
+-			},
+-		},
+-		text = {
+-			description = "Text intended you the user.",
+-		      	type = "string",
+-		},
+-	},
+-}
+-
+-function M.write(text, callback)
+-    log.info("Writer received prompt: " .. text)
+-	provider.request(
+-		config.writer,
+-		{
+-			{ role = "system", content = M.system_prompt },
+-			{ role = "user", content = text },
+-		},
+-		response_format,
+-		function(data, err)
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+--- Function to receive a prompt and request implementation
+-function M.receive_prompt(prompt, callback)
+-    log.info("Planner received prompt: " .. prompt)
+-    client.request("POST", 'conversations', {
+-        agent_id = M.id,
+-        messages = {
+-            { role = "user", content = prompt }
+-        }
+-    }, function(response, err)
+-        if err then
+-            log.error("Planner request failed: " .. err)
+-            callback(nil, err)
+-        else
+-            callback(response)
+-        end
+-    end)
+-end
+-
+-return M
+-
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 37caa4f..29835ff 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -20,7 +20,7 @@ M.defs = {
+ 					range = {
+ 						type = "string",
+ 						description =
+-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d-$: get last lines. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$; last 5 lines: -5-$.",
++						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+ 					}
+ 				},
+ 				required = { "file_path" }
+@@ -68,7 +68,7 @@ M.defs = {
+ 											lines = {
+ 												type = "string",
+ 												description =
+-												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$.",
++												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
+ 											},
+ 											content = {
+ 												type = "string",
+@@ -142,14 +142,14 @@ local function parse_lines(range)
+ 		return -1, -1
+ 	end
+ 
+-	-- Handle negative ranges (e.g., -5-$ for last 5 lines)
+-	local start, end_line = range:match("^(-%d+)-%$")
++	-- Handle negative ranges (e.g., -5:$ for last 5 lines)
++	local start, end_line = range:match("^(-%d+):%$")
+ 	if start and end_line then
+ 		return tonumber(start), -1
+ 	end
+ 
+-	-- Handle range (e.g., "2-5")
+-	start, end_line = range:match("^(%d+)-(%d+)$")
++	-- Handle range (e.g., "2:5")
++	start, end_line = range:match("^(%d+):(%d+)$")
+ 	if start and end_line then
+ 		return tonumber(start) - 1, tonumber(end_line) - 1
+ 	end
+@@ -228,55 +228,9 @@ local function read_file(file_path, range)
+ 	return numbered_content
+ end
+ 
+-local function dangerous_command(cmd)
+-	local parts = vim.split(cmd, "%s+")
+-	if #parts == 0 then return false end
+-
+-	local base = parts[1]:match("^([^/]+)$")
+-	if not base then
+-		return nil
+-	end
+-
+-	local ok = false
+-	for _, c in ipairs(config.allowed_commands) do
+-		if c == base then
+-			ok = true
+-			break
+-		end
+-	end
+-
+-	if not ok then
+-		return "[sys] Command not allowed."
+-	end
+-
+-	for _, arg in ipairs(parts) do
+-		if arg:sub(1, 1) == "-" then
+-			goto continue
+-		end
+-		if arg:sub(1, 1) == "/" then
+-			return "[sys] Paths cannot start from root (/). Use relative."
+-		end
+-		if arg:match("%.%.") then
+-			return false
+-		end
+-		if arg:match("[*?]") then
+-			return false
+-		end
+-		::continue::
+-	end
+-
+-	return nil
+-end
+-
+ local function run_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
+-	local danger = dangerous_command(cmd)
+-	if danger then
+-		log.debug("command is not allowed: " .. danger)
+-		return "[sys] Command not executed because: " .. danger
+-	end
+-
+ 	local env = {}
+ 	for _, name in ipairs({ "PATH" }) do
+ 		env[#env + 1] = name .. "=" .. (os.getenv(name) or "")
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index d6bb804..741ed72 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,6 +1,6 @@
+ local M = {}
+ local log = require("tai.log")
+-local tai = require("tai.agents.tai")
++local tai = require("tai.agent")
+ local tools = require("tai.tools")
+ 
+ local bufname = "tai-chat"
+@@ -72,97 +72,73 @@ local function add_sep()
+ 	M.append_to_buffer(result .. "\n")
+ end
+ 
+-local function show_response(fields)
++local function process_response(fields)
++	vim.schedule(function()
+ 	log.debug("Showing response")
+ 	M.open()
+ 
+-	local content = ""
+ 	if fields.error then
+-		content = content .. "[tai] " .. fields.error .. "\n"
+-		M.append_to_buffer(content)
++		M.append_to_buffer("[tai] " .. fields.error .. "\n")
+ 		return
+ 	end
+ 	if fields.content and fields.content ~= "" then
+-		content = content .. fields.content .. "\n"
++		M.append_to_buffer(fields.content .. "\n")
+ 	end
+ 
+ 	if fields.tool_calls then
++		local results = {}
+ 		for _, call in ipairs(fields.tool_calls or {}) do
++			local name = call["function"].name
+ 			local args = call["function"].arguments
+ 
+-			if call["function"].name == "shell" then
+-				content = content .. "[tai] Running " .. args.command .. "\n"
+-			elseif call["function"].name == "read_file" then
+-				content = content .. "[tai] Reading " .. args.file_path .. "\n"
+-			elseif call["function"].name == "patch" then
+-				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
++			if name == "shell" then
++				log.debug("Asking for confirmation")
++				local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
++				if input == 1 then
++					log.debug("Confirmed")
++					M.append_to_buffer("[tai] Running " .. args.command .. "\n")
++					out = tools.run(name, args)
++				else
++					log.debug("Declined")
++					out = "[sys] User declined"
++				end
++			elseif name == "read_file" then
++				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
++				out = tools.run(name, args)
++			elseif name == "patch" then
++				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
++				out = tools.run(name, args)
+ 				for _, change in ipairs(args.changes) do
+-					content = content .. "\t" .. change.file .. ":\n"
++					M.append_to_buffer("\t" .. change.file .. ":\n")
+ 					for _, hunk in ipairs(change.hunks) do
+ 						if hunk.operation == "delete" then
+-							content = content .. "\tdelete " .. hunk.lines .. "\n"
++							M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
+ 						else
+-							content = content ..
+-							    "\t" ..
+-							    hunk.operation ..
+-							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
++							M.append_to_buffer(
++								"\t" ..
++								hunk.operation ..
++								" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
++							)
+ 						end
+ 					end
+ 				end
+ 			end
++			table.insert(
++				results,
++				{
++					role = "tool",
++					name = name,
++					content = out,
++					tool_call_id = call.id
++				}
++			)
+ 		end
++		return tai.task(results, process_response)
+ 	end
+ 	if not fields.tool_calls and not fields.content then
+-		content = content .. "[tai] Received empty reply."
++		M.append_to_buffer("[tai] Received empty reply.")
+ 	end
+-
+-	M.append_to_buffer(content)
+-end
+-
+-local function handle_chat_reply(reply, err)
+-	vim.schedule(function()
+-		log.info("handling chat reply: " .. vim.json.encode(reply))
+-		if err then
+-			log.error("received error from agent: " .. err)
+-			show_response({ error = err })
+-			return
+-		end
+-
+-		show_response(reply)
+-		if reply.tool_calls then
+-			local results = {}
+-			for _, call in ipairs(reply.tool_calls) do
+-				local name = call["function"].name
+-				local args = call["function"].arguments
+-
+-				local out
+-				if name == "shell" then
+-					log.debug("Asking for confirmation")
+-					local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
+-					if input == 1 then
+-						log.debug("Confirmed")
+-						out = tools.run(name, args)
+-					else
+-						log.debug("Declined")
+-						out = "[sys] User declined"
+-					end
+-				else
+-					out = tools.run(name, args)
+-				end
+-
+-				table.insert(
+-					results,
+-					{
+-						role = "tool",
+-						name = name,
+-						content = out,
+-						tool_call_id = call.id
+-					}
+-				)
+-			end
+-			return tai.task(results, handle_chat_reply)
+-		end
+-	end)
++end)
+ end
+ 
+ local function send_input()
+@@ -181,7 +157,7 @@ local function send_input()
+ 		end)
+ 
+ 		log.debug("got input: " .. input)
+-		tai.task({{ role = "user", content = input }}, handle_chat_reply)
++		tai.task({ { role = "user", content = input } }, process_response)
+ 	end)
+ end
+ 
+</pre>

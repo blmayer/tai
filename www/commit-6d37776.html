@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 6d37776</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 6d37776
+parent <a href=commit-e7238d8.html>e7238d8</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-29T23:38:27-03:00
+
+    improved patch by using context lines
+
+<a href=tree-6d37776.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/TODO.md b/TODO.md
+index 8806d03..008d85f 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -1,6 +1,8 @@
+ # TODO
+ 
+-- fix patch tool's poor performance
++[ ] fix patch tool's poor performance
++    [ ] test a bit more
++[ ] add folding for displaying patches
+ 
+ 
+ # DONE
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 5d7e567..51b3310 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -20,24 +20,16 @@ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+     vim.uv.cwd() .. [[, you have full access to the project folder, in a ]] ..
+     host.machine .. " " .. host.sysname .. [[ machine.
+ You MUST adhere to the following criteria when executing the task:
+-&lt;instructions&gt;
++
++# Instructions
+ - User instructions may overwrite the _CODING GUIDELINES_ section in this
+   developer message.
+ - Use `ls -R` or `find` to explore the project and gather context.
+ - Use `patch` to edit files:
+ {
+-	"changes": [
+-		{
+-			"file": "path/to/file",
+-			"hunks": [
+-				{
+-					"operation": "the operation",
+-					"lines": "line range of operation",
+-					"content": "the new content"
+-				}
+-			]
+-		}
+-	]
++	"name": "optional name for the patch",
++	"file": "path/to/file",
++	"diff": "&lt;patch content&gt;"
+ }
+ - If completing the user's task requires writing or modifying files:
+  - Your code and final answer should follow these _CODING GUIDELINES_:
+@@ -63,8 +55,16 @@ You MUST adhere to the following criteria when executing the task:
+    reference the file as already saved.
+  - Do NOT show the full contents of large files you have already written,
+    unless the user explicitly asks for them.
+-&lt;/instructions&gt;
+-&lt;read_file&gt;
++
++# Tools
++You have access to tools that can help you accomplish the goal, their result
++is sent back to you. Choose the most appropriate tool based on the task and the
++tool descriptions provided. Use the provider-native tool-calling mechanism.
++
++All file paths must be relative to the project's directory and don't start
++paths with `/` or `./`.
++
++## read_file
+ To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+ content of a file from the file system, or if given, a range of lines. And
+ returns the content with numberred lines. To use it call the `read_file` with
+@@ -77,38 +77,74 @@ Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
+ Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
+ lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
+ last 5 lines: -5:$.",
+-&lt;/read_file&gt;
+-&lt;patch&gt;
++
++## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively
+ allows you to write/edit files, so pay careful attention to these instructions.
+ To use the `patch` tool, you should call the tool with the following
+ structure:
+ {
+-	"changes": [
+-		{
+-			"file": "path/to/file",
+-			"hunks": [
+-				{
+-					"operation": "the operation",
+-					"lines": "line range of operation",
+-					"content": "the new content"
+-				}
+-			]
+-		}
+-	]
++	"file": "path/to/file",
++	"diff": "&lt;contextual diff format&gt;"
+ }
+-The changes will be applied in the order you supply them. So changes to the
+-same file may interact: line numbers may change due to your opearations, so
+-you need so supply them considering that.
++
++The contextual diff format is:
++
++&lt;optional context (anchor) lines&gt;
++-&lt;old content&gt;
+++&lt;new content&gt;
++
++or
++
++-&lt;old content&gt;
+++&lt;new content&gt;
++&lt;optional context (anchor) lines&gt;
++
++Context lines are only optional if the changes are unambiguous. If there's any
++ambiguity, add enough context lines to make the location clear. In that case
++context must be before or after the changes, never both.
++
+ Operations available are:
+-- add: adds the content after the line in the range
+-- change: substitutes the file's content in the range by the text in content
+-- delete: delete the file's content in the range.
+-IMPORTANT: range is inclusive and starts at 1. To add text to the start of the
+-file use operation: add and lines: 0.
+-The format of the lines is the same as the `read_file` range.
+-&lt;/patch&gt;
+-&lt;shell&gt;
++- Lines starting with `-` indicate old content to be removed
++- Lines starting with `+` indicate new content to be added
++- Lines without `-` or `+` prefix are context lines that help locate where the
++  change should be applied
++
++### Examples:
++
++Suppose the file contains:
++
++some text
++more text
++and more text
++and more text
++
++Change the line "more text":
++-more text
+++new text
++
++Adding new content after "and more text":
++and more text
++and more text
+++new line 1
+++new line 2
++
++Delete the line "more text":
++-more text
++
++Changing the first line:
++-some text
+++new text
++more text
++
++### Important Notes:
++- Ensure the context matches the file content and location to avoid errors.
++- If the patch fails, re-read the file and adjust the context accordingly.
++- If changes are close merge them by using the same context and doing both
++  operations.
++- Send only one set of changes per patch.
++
++## shell
+ The run commands ALWAYS use the `shell` tool. `shell` run the command in the
+ current directory. You can use this tool to explore the codebase, run builds,
+ do file operations like renaming, changing permissions, etc. To use it call the
+@@ -116,8 +152,10 @@ do file operations like renaming, changing permissions, etc. To use it call the
+ {
+ 	"command": "shell pipeline"
+ }
+-&lt;/shell&gt;
+-&lt;exploration&gt;
++Each tool execution gives you a clean env, so paths are reset to the project's
++folder and any set variables are cleared.
++
++# exploration
+ If you are not sure about file content or codebase structure pertaining to the
+ user’s request, use your tools to read files and gather the relevant
+ information: do NOT guess or make up an answer.
+@@ -135,12 +173,11 @@ Before coding, always:
+ - Formulate an execution plan: research steps, implementation sequence, and
+   testing strategy in your own words and refer to it as you work through the
+   task.
+-&lt;/exploration&gt;
+-&lt;verification&gt;
++
++# verification
+ Routinely verify your code works as you work through the task, especially any
+ deliverables to ensure they run properly. Don't hand back to the user until you
+ are sure that the problem is solved.
+-&lt;/verification&gt;
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 2be0be8..b05b7e4 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -104,7 +104,7 @@ function M.request(model_config, msgs, format, callback)
+ 			-- Mistral errors are usually at the root level, e.g., parsed.error
+ 			if parsed.error then
+ 				return callback(nil,
+-					(parsed.error.message .. ": " .. parsed.error.metadata.raw) or
++					(parsed.error.message .. (": " .. parsed.error.metadata) or "") or
+ 					"Unknown Openrouter API error")
+ 			end
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index cf4b215..79ff7b1 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -31,8 +31,7 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "patch",
+-			description =
+-			"Applies the given changes in order. Please double check the line numbers match, they ere altered by changes. Returns nil.",
++			description = "Writes a change to the file. Returns nil.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -41,50 +40,22 @@ M.defs = {
+ 						description =
+ 						"Name for this patch or description, can be used for commits."
+ 					},
+-					changes = {
+-						type = "array",
++					file = {
++						type = "string",
+ 						description =
+-						"List of changes to be made, by file. Each change is applied in order, so you must keep track of how line numbers change.",
+-						items = {
+-							type = "object",
+-							properties = {
+-								file = {
+-									type = "string",
+-									description =
+-									"File name for these changes. relative to the current folder (don't start with /)."
+-								},
+-								hunks = {
+-									type = "array",
+-									description = "List of changes for this file.",
+-									items = {
+-										type = "object",
+-										properties = {
+-											operation = {
+-												type = "string",
+-												description =
+-												"Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
+-												enum = { "add", "change", "delete" }
+-											},
+-											lines = {
+-												type = "string",
+-												description =
+-												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
+-											},
+-											content = {
+-												type = "string",
+-												description =
+-												"New content, will be pasted verbatim. Not used for delete operation. Don't add line numbers.",
+-											},
+-										},
+-										required = { "operation", "lines" }
+-									}
+-								}
+-							},
+-							required = { "file", "hunks" }
+-						}
++						"File name for these changes. relative to the current folder (don't start with /)."
++					},
++					diff = {
++						type = "string",
++						description =
++						"Content of the patch in contextual diff format:\n" ..
++						"&lt;optional context lines&gt;\n" ..
++						"-&lt;old content&gt;\n" ..
++						"+&lt;new content&gt;\n" ..
++						"Context lines are optional if changes are unambiguous."
+ 					}
+ 				},
+-				required = { "changes" }
++				required = { "file", "diff" }
+ 			}
+ 		}
+ 	},
+@@ -136,7 +107,7 @@ function M.pretty_info(tools)
+ end
+ 
+ -- indexes are 0 based
+-local function parse_lines(range)
++local function parse_range(range)
+ 	-- Handle "$" (last line)
+ 	if range == "$" then
+ 		return -1, -1
+@@ -196,7 +167,7 @@ local function read_file(file_path, range)
+ 	end
+ 
+ 	-- Parse the range
+-	local start, end_line = parse_lines(range)
++	local start, end_line = parse_range(range)
+ 	local lines = #file:lines()
+ 	if start &lt; 0 or end_line &lt; 0 then
+ 		start = lines + start + 1
+@@ -261,99 +232,159 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
+-local function apply_patch(name, changes)
+-	log.debug("Running patch in " .. #changes .. " file(s).")
+-
+-	-- Apply changes to new buffer (replace with your actual diff content)
+-	for _, change in ipairs(changes) do
+-		local file = change.file
+-		local buf = nil
+-
+-		-- Check if file is already open in a buffer
+-		for _, b in ipairs(vim.api.nvim_list_bufs()) do
+-			if vim.api.nvim_buf_is_loaded(b) then
+-				local buf_name = vim.api.nvim_buf_get_name(b)
+-				if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
+-					buf = b
+-					break
+-				end
++local function parse_diff(diff_text)
++    local hunk = {
++        lines = {},
++        old_lines = {},
++        new_lines = {}
++    }
++
++    local lines = vim.split(diff_text, '\n', { plain = true })
++
++    for i, line in ipairs(lines) do
++        -- Check for context lines (lines without - or + prefix)
++        if line:sub(1, 1) ~= "-" and line:sub(1, 1) ~= "+" then
++            hunk.order = "ctx-op"
++            table.insert(hunk.lines, line)
++            goto continue_label
++        end
++
++        -- Start of a hunk
++        if line:sub(1, 1) == "-" then
++            if #hunk.lines == 0 then
++                hunk.order = "op-ctx"
++            end
++
++            table.insert(hunk.old_lines, line:sub(2))
++        elseif line:sub(1, 1) == "+" then
++            if #hunk.lines == 0 then
++                hunk.order = "op-ctx"
++            end
++            table.insert(hunk.new_lines, line:sub(2))
++        end
++
++        ::continue_label::
++    end
++
++    -- Determine the operation type
++    if #hunk.old_lines &gt; 0 and #hunk.new_lines == 0 then
++        hunk.operation = "delete"
++    elseif #hunk.old_lines == 0 and #hunk.new_lines &gt; 0 then
++        hunk.operation = "add"
++    elseif #hunk.old_lines &gt; 0 and #hunk.new_lines &gt; 0 then
++        hunk.operation = "change"
++    else
++        -- No valid operation
++        return nil
++    end
++
++    return hunk
++end
++
++local function apply_diff(file_path, hunk)
++	local buf = nil
++
++	-- Check if file is already open in a buffer
++	for _, b in ipairs(vim.api.nvim_list_bufs()) do
++		if vim.api.nvim_buf_is_loaded(b) then
++			local buf_name = vim.api.nvim_buf_get_name(b)
++			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file then
++				buf = b
++				break
+ 			end
+ 		end
++	end
+ 
+-		local is_open = false
+-		if buf then
+-			for _, win in ipairs(vim.api.nvim_list_wins()) do
+-				if vim.api.nvim_win_get_buf(win) == buf then
+-					is_open = true
+-					break
+-				end
++	local is_open = false
++	if buf then
++		for _, win in ipairs(vim.api.nvim_list_wins()) do
++			if vim.api.nvim_win_get_buf(win) == buf then
++				is_open = true
++				break
+ 			end
+ 		end
+-		if not is_open or not buf then
+-			vim.cmd("topleft vnew " .. file)
+-			buf = vim.api.nvim_get_current_buf()
++	end
++	if not is_open or not buf then
++		vim.cmd("topleft vnew " .. file_path)
++		buf = vim.api.nvim_get_current_buf()
++	end
++
++	-- Find the location to apply the patch
++	local start_line = 1
++	local found = false
++
++	if #hunk.lines &gt; 0 then
++	    -- Search for context lines
++	    for j = 1, #lines - #hunk.lines + 1 do
++		local match = true
++		for k = 1, #hunk.lines do
++		    if lines[j + k - 1] ~= hunk.lines[k] then
++			match = false
++			break
++		    end
+ 		end
+-		-- local new_buf = vim.api.nvim_create_buf(0, false)
+-
+-		-- Copy lines from current buffer to new buffer
+-		-- local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+-		-- vim.api.nvim_buf_set_lines(new_buf, 0, -1, false, lines)
+-
+-		for _, hunk in ipairs(change.hunks) do
+-			local operation = hunk.operation
+-			local lines_str = hunk.lines
+-			local content = hunk.content
+-
+-			-- Parse line range
+-			local start, end_line = parse_lines(lines_str)
+-
+-			if operation == "add" then
+-				-- Insert content after the specified lines
+-				local new_lines = vim.split(content, '\n')
+-				if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
+-					start = start + 1
+-				end
+-				vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
+-			elseif operation == "change" then
+-				-- Replace lines with new content
+-				local new_lines = vim.split(content, '\n')
+-				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
+-			elseif operation == "delete" then
+-				-- Remove lines
+-				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
+-			end
++
++		if match then
++		    found = true
++		    if hunk.order == "ctx-op" then
++			start_line = j + #hunk.lines
++		    else
++			start_line = j
++		    end
++		    break
++		end
++	    end
++	else
++	    -- Search for old content directly
++	    for j = 1, #lines - #hunk.old_lines + 1 do
++		local match = true
++		for k = 1, #hunk.old_lines do
++		    if lines[j + k - 1] ~= hunk.old_lines[k] then
++			match = false
++			break
++		    end
+ 		end
+ 
+-		-- -- generate unified diff text directly in Lua
+-		-- local new_lines = vim.api.nvim_buf_get_lines(new_buf, 0, -1, false)
+-		-- local diff_text = vim.diff(
+-		-- 	table.concat(lines, "\n"),
+-		-- 	table.concat(new_lines, "\n"),
+-		-- 	{ result_type = "unified" }
+-		-- )
+-
+-		-- -- split into lines for display
+-		-- local diff_lines = vim.split(diff_text, "\n", { plain = true })
+-
+-		-- -- create a scratch buffer
+-		-- local diff_buf = vim.api.nvim_create_buf(false, true)
+-		-- vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, diff_lines)
+-		-- vim.bo[diff_buf].filetype = "diff"
+-		-- vim.bo[diff_buf].modifiable = false
+-
+-		-- local win = vim.api.nvim_get_current_win()
+-		-- vim.api.nvim_win_set_buf(win, new_buf)
+-
+-		vim.api.nvim_buf_create_user_command(
+-			buf,
+-			'AcceptPatch',
+-			function()
+-				-- Accept changes (this is the critical part)
+-				vim.cmd('w ' .. file)
+-			end,
+-			{ nargs = 0 }
+-		)
++		if match then
++		    start_line = j
++		    found = true
++		    break
++		end
++	    end
+ 	end
++
++	if not found then
++	    return false, "Could not find location to apply patch"
++	end
++
++	-- Apply the patch
++	if hunk.operation == "add" then
++	    -- Insert new content after context/old content
++	    for j = #hunk.new_lines, 1, -1 do
++		table.insert(lines, start_line, hunk.new_lines[j])
++	    end
++	elseif hunk.operation == "change" then
++	    -- Replace old content with new content
++	    -- Remove old lines
++	    for j = 1, #hunk.old_lines do
++		table.remove(lines, start_line)
++	    end
++
++	    -- Insert new lines
++	    for j = #hunk.new_lines, 1, -1 do
++		table.insert(lines, start_line, hunk.new_lines[j])
++	    end
++	elseif hunk.operation == "delete" then
++	    -- Remove old content
++	    for j = 1, #hunk.old_lines do
++		table.remove(lines, start_line)
++	    end
++	end
++
++	-- Write the modified content back to the buffer
++	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
++
++	return true
+ end
+ 
+ -- TODO: there must be an enum for tool names
+@@ -371,10 +402,17 @@ function M.run(tool, args)
+ 		end
+ 		return run_command(args.command)
+ 	elseif tool == "patch" then
+-		if not args.changes then
+-			return "[sys] missing changes argument"
++		if not args.file or not args.diff then
++			return "[sys] missing file or change arguments"
+ 		end
+-		vim.schedule_wrap(apply_patch(args.name, args.changes))
++
++		-- Parse the contextual diff
++		local hunk = parse_diff(args.diff)
++		if not hunk then
++			return "[sys] no valid hunks found in patch"
++		end
++
++		vim.schedule_wrap(apply_diff(args.file, hunk))
+ 		return "[sys] patch applied and submitted for user approval"
+ 	end
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 7abb669..8e1559d 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -100,22 +100,9 @@ local function run_tools(tool_calls, callback)
+ 			res.content = tools.run(name, args)
+ 			res.file_path = args.file_path
+ 		elseif name == "patch" then
+-			M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
++			M.append_to_buffer("[tai] Patching file " .. args.file .. ":\n")
++			M.append_to_buffer(args.diff .. "\n")
+ 			res.content = tools.run(name, args)
+-			for _, change in ipairs(args.changes) do
+-				M.append_to_buffer("\t" .. change.file .. ":\n")
+-				for _, hunk in ipairs(change.hunks) do
+-					if hunk.operation == "delete" then
+-						M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
+-					else
+-						M.append_to_buffer(
+-							"\t" ..
+-							hunk.operation ..
+-							" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+-						)
+-					end
+-				end
+-			end
+ 		end
+ 		table.insert(results, res)
+ 	end
+</pre>

@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ec27a7b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ec27a7b
+parent <a href=commit-108baba.html>108baba</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-06-18T12:53:59-03:00
+
+    Reworked agent handoff mechanism and improved edit tool
+
+    - Converted the internal agent calling from the fragile coder_call variable and direct output injection to proper 'coder' and 'planner' tools. Each agent now keeps its own independent conversation history.
+    - Handoffs are performed by emitting a tool call that immediately returns a short acknowledgement ("coder is working on the task.") and then switches to the target agent.
+    - Merged the near-duplicate task() and code() methods into a single continue() implementation.
+    - Made the context token count shown in the input buffer name derive from the last message that carries token_usage in the currently active agent's history instead of a global last_ctx.
+    - Fixed the edit tool's block matching. The old streaming matcher would latch onto the first occurrence of the opening line of old_text and fail (or edit the wrong region) if the full block did not follow. It now uses an exhaustive sliding-window search over whitespace-normalized lines so later valid alignments for the complete old_text are considered.
+    - Added a 'multi' boolean parameter to the edit tool. When true, every matching occurrence of the supplied block is replaced (replacements are applied from the bottom of the file upward).
+    - Added lua/tai/tests/edit_test.lua with dedicated coverage for the repeated-first-line case, multi replacement (including with whitespace differences), single vs multi semantics, prepend behaviour, and no-match errors.
+
+<a href=tree-ec27a7b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/tests/edit_test.lua b/lua/tai/tests/edit_test.lua
+new file mode 100644
+index 0000000..5d170f9
+--- /dev/null
++++ b/lua/tai/tests/edit_test.lua
+@@ -0,0 +1,286 @@
++-- Integration-style test for the `edit` tool (lua/tai/tools.lua).
++--
++-- Focuses on the tricky matching behavior and the new `multi` parameter:
++--   - When the first line of old_text appears multiple times in the file,
++--     we must not stop at the first occurrence if the full block doesn't match
++--     after it. We must continue and consider later possible alignments.
++--   - `multi = true` must replace every matching occurrence of the block.
++--
++-- Run with:
++--   nvim --headless -u NONE -c "luafile lua/tai/tests/edit_test.lua" -c "qa"
++--
++-- (Must run inside Neovim because edit() uses real vim buffers + nvim_buf_* APIs.)
++
++package.path = "./lua/?.lua;./lua/?/init.lua;" .. package.path
++
++-- Minimal stubs so we can load the tools module without a full .tai config.
++package.loaded["tai.config"] = {
++    root = vim.fn.getcwd(),
++    get_allowed_commands = function() return {} end,
++}
++package.loaded["tai.log"] = {
++    debug = function() end,
++    info  = function() end,
++    error = function() end,
++}
++
++local tools = dofile("lua/tai/tools.lua")
++
++local failures = 0
++
++local function write_file(path, content)
++    local f = io.open(path, "w")
++    assert(f, "failed to open " .. path .. " for writing")
++    f:write(content)
++    f:close()
++end
++
++local function read_file(path)
++    local f = io.open(path, "r")
++    assert(f, "failed to open " .. path .. " for reading")
++    local content = f:read("*a")
++    f:close()
++    return content
++end
++
++local function assert_contains(haystack, needle, msg)
++    if not haystack:find(needle, 1, true) then
++        print("FAIL: " .. (msg or "expected to find " .. needle))
++        failures = failures + 1
++    end
++end
++
++local function assert_not_contains(haystack, needle, msg)
++    if haystack:find(needle, 1, true) then
++        print("FAIL: " .. (msg or "did not expect to find " .. needle))
++        failures = failures + 1
++    end
++end
++
++-- Helper for plain substring search (avoids any Lua string escape issues with special chars like '(' )
++local function has_substr(haystack, needle)
++    return haystack:find(needle, 1, true) ~= nil
++end
++
++local function assert_equals(actual, expected, msg)
++    if actual ~= expected then
++        print("FAIL: " .. (msg or ""))
++        print("  expected: " .. tostring(expected))
++        print("  actual:   " .. tostring(actual))
++        failures = failures + 1
++    end
++end
++
++print("=== edit tool tests ===\n")
++
++----------------------------------------------------------------------
++-- Test 1: basic single edit, no repeated lines
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_basic.txt"
++    write_file(path, "line one\nline two\nline three\n")
++
++    local result = tools.edit(path, "line two", "LINE TWO")
++    assert_equals(result, "Patched " .. path, "basic edit should return Patched message")
++
++    local content = read_file(path)
++    assert_contains(content, "LINE TWO", "basic edit should have applied the change")
++    assert_not_contains(content, "line two\n", "original line two should be gone")
++
++    os.remove(path)
++    print("PASS: basic single edit")
++end
++
++----------------------------------------------------------------------
++-- Test 2: the important case - first line of old_text appears multiple times.
++-- The full block only matches on the *second* occurrence.
++-- Old naive streaming matcher could latch on the first "foo()" and then
++-- fail when the continuation didn't match, or pick the wrong region.
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_repeated_first.txt"
++    local original = table.concat({
++        "function a()",
++        "    process('start')",
++        "    do_first_thing()",
++        "end",
++        "",
++        "function b()",
++        "    process('start')",
++        "    do_second_thing()",
++        "end",
++    }, "\n") .. "\n"
++
++    write_file(path, original)
++
++    -- We deliberately target only the block under function b().
++    -- The first line "    process('start')" also exists under function a().
++    local old_block = "    process('start')\n    do_second_thing()"
++    local new_block = "    process('start')\n    do_second_thing_v2()"
++
++    local result = tools.edit(path, old_block, new_block)
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++
++    -- The targeted block must have been updated.
++    assert_contains(content, "do_second_thing_v2()", "should have updated the second occurrence")
++    -- The earlier similar-looking block must be untouched.
++    assert_contains(content, "do_first_thing()", "first similar block must remain unchanged")
++    assert_not_contains(content, "do_second_thing()", "old second block should no longer exist")
++
++    os.remove(path)
++    print("PASS: repeated first line of old_text (full block only later)")
++end
++
++----------------------------------------------------------------------
++-- Test 3: multi=true replaces every matching block
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_multi.txt"
++    local original = table.concat({
++        "    log('info')",
++        "    do_work(1)",
++        "",
++        "    log('info')",
++        "    do_work(2)",
++    }, "\n") .. "\n"
++
++    write_file(path, original)
++
++    local result = tools.edit(path, "    log('info')", "    log('debug')", true)
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++
++    -- Both occurrences must be changed.
++    local count = 0
++    for _ in content:gmatch("log%('debug'%)") do
++        count = count + 1
++    end
++    assert_equals(count, 2, "multi should have updated both log statements")
++
++    -- No original log('info') should remain.
++    assert_not_contains(content, "log('info')", "all matching blocks should have been replaced")
++
++    os.remove(path)
++    print("PASS: multi=true replaces every occurrence")
++end
++
++----------------------------------------------------------------------
++-- Test 4: multi omitted / false only changes the first match even when
++-- identical blocks exist.
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_single_multi.txt"
++    local original = "log('info')\nlog('info')\n"
++    write_file(path, original)
++
++    local result = tools.edit(path, "log('info')", "log('warn')")  -- multi omitted =&gt; single
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++
++    -- Only the first one should change.
++    assert_contains(content, "log('warn')\nlog('info')", "only first occurrence should be replaced when multi is not true")
++
++    os.remove(path)
++    print("PASS: default (non-multi) changes only first matching block")
++end
++
++----------------------------------------------------------------------
++-- Test 5: no match returns a clear error and does not modify the file
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_no_match.txt"
++    local original = "keep this\nand this\n"
++    write_file(path, original)
++
++    local result = tools.edit(path, "this block does not exist\nanywhere", "replacement")
++    assert_contains(result, "Error: could not find old_text block", "should report not-found error")
++
++    local content = read_file(path)
++    assert_equals(content, original, "file must be unchanged on no-match")
++
++    os.remove(path)
++    print("PASS: no match produces error and leaves file untouched")
++end
++
++----------------------------------------------------------------------
++-- Test 6: empty old_text still prepends at the top (multi should be irrelevant)
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_prepend.txt"
++    write_file(path, "existing content\n")
++
++    local result = tools.edit(path, "", "-- header added\n")
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++    -- Check that the new content appears at the very beginning of the file.
++    if content:sub(1, # "-- header added") ~= "-- header added" then
++        print("FAIL: empty old_text should insert at the very start")
++        failures = failures + 1
++    end
++
++    os.remove(path)
++    print("PASS: empty old_text prepends at start of file")
++end
++
++----------------------------------------------------------------------
++-- Test 7: whitespace normalization tolerance
++-- The old_text the agent sends may have different indentation than the file.
++-- We should still match and replace correctly.
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_norm_ws.txt"
++    local original = "    if cond then\n        do_work()\n    end\n"
++    write_file(path, original)
++
++    -- Note different leading whitespace in the old_text we supply.
++    local old_block = "  if cond then\n    do_work()\n  end"
++    local new_block = "  if cond then\n    do_work_v2()\n  end"
++
++    local result = tools.edit(path, old_block, new_block)
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++    assert_contains(content, "do_work_v2()", "whitespace-normalized match should have succeeded")
++    assert_not_contains(content, "do_work()", "original body should have been replaced")
++
++    os.remove(path)
++    print("PASS: whitespace normalization allows tolerant matching")
++end
++
++----------------------------------------------------------------------
++-- Test 8: multi with whitespace-normalized repeated blocks
++----------------------------------------------------------------------
++do
++    local path = "tai_edit_test_multi_norm.txt"
++    local original = "  foo()\n  bar()\n\n    foo()\n    bar()\n"
++    write_file(path, original)
++
++    -- Different indentation in the provided old_text, same logical block.
++    local result = tools.edit(path, "foo()\nbar()", "FOO()\nBAR()", true)
++    assert_equals(result, "Patched " .. path)
++
++    local content = read_file(path)
++    local count = 0
++    local pat = "FOO%(%)" .. "\n" .. "BAR%(%)"
++    for _ in content:gmatch(pat) do
++        count = count + 1
++    end
++    assert_equals(count, 2, "multi + normalized ws should replace both blocks")
++
++    os.remove(path)
++    print("PASS: multi works together with whitespace normalization")
++end
++
++print("\n=== done ===")
++
++if failures == 0 then
++    print("All edit tests PASSED")
++else
++    print(failures .. " test(s) FAILED")
++    os.exit(1)
++end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 2631f4e..dad1b70 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -145,7 +145,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "edit",
+ 			description =
+-			"Use this to edit existing files by providing the old content changed. If old_text is empty, changes are made at the start of the file.",
++			"Use this to edit existing files by providing the old content changed. If old_text is empty, changes are made at the start of the file. Matching uses line-by-line comparison after normalizing whitespace (collapse runs of spaces, trim). If the first line of old_text appears multiple times, the matcher tries all possible alignments until the full old_text block matches.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -156,11 +156,15 @@ M.defs = {
+ 					old_text = {
+ 						type = "string",
+ 						description =
+-						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
++						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
+ 					},
+ 					new_text = {
+ 						type = "string",
+ 						description = "New content to replace old_text in the file."
++					},
++					multi = {
++						type = "boolean",
++						description = "If true, replace every matching occurrence of the old_text block (instead of only the first match). Use when the same change should be applied in multiple places."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -482,10 +486,49 @@ function M.write(file, content)
+ end
+ 
+ local function normalize_whitespace(str)
+-	return str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", "")
++	-- Use parentheses to force only the first return value from the final gsub.
++	-- (gsub returns the string plus the replacement count; we only want the string.)
++	return (str:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
++end
++
++-- Find all 0-based starting line numbers where the exact sequence of
++-- (normalized) old_lines appears contiguously in the buffer lines.
++-- This replaces the previous streaming/greedy matcher so that when the
++-- first line of old_text occurs multiple times we still consider later
++-- candidate alignments for the full block (instead of failing after the
++-- first partial prefix match).
++local function find_match_starts(lines, old_lines)
++	if not old_lines or #old_lines == 0 then
++		return {}
++	end
++	local norm_buf = {}
++	for _, line in ipairs(lines) do
++		table.insert(norm_buf, normalize_whitespace(line))
++	end
++	local norm_old = {}
++	for _, line in ipairs(old_lines) do
++		table.insert(norm_old, normalize_whitespace(line))
++	end
++
++	local starts = {}
++	local n = #norm_buf
++	local m = #norm_old
++	for i = 1, n - m + 1 do
++		local is_match = true
++		for k = 1, m do
++			if norm_buf[i + k - 1] ~= norm_old[k] then
++				is_match = false
++				break
++			end
++		end
++		if is_match then
++			table.insert(starts, i - 1) -- 0-based for nvim_buf_set_lines
++		end
++	end
++	return starts
+ end
+ 
+-function M.edit(file, old_text, new_text)
++function M.edit(file, old_text, new_text, multi)
+ 	log.debug("Running edit for: " .. file .. " with old_text: " .. (old_text or "nil"))
+ 
+ 	if file:sub(1, 1) == "/" then
+@@ -513,31 +556,34 @@ function M.edit(file, old_text, new_text)
+ 		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+ 		local old_lines = vim.split(old_text or "", '\n')
+ 
+-		-- Find position based on old_text
+-		local end_line = 0 -- Default to start of file
++		local matches = find_match_starts(current_lines, old_lines)
+ 
+-		-- Search for old_text in current buffer content
+-		local j = 1
+-		for i, line in ipairs(current_lines) do
+-			if j &gt; #old_lines then
+-				break
+-			end
+-			local norm_line = normalize_whitespace(line)
+-			local norm_old_line = normalize_whitespace(old_lines[j])
+-			if norm_line == norm_old_line then
+-				end_line = i
+-				j = j + 1
+-			else
+-				j = 1
+-			end
++		if #matches == 0 then
++			-- Close the temp buffer we opened so we don't leave stray windows
++			pcall(vim.api.nvim_buf_delete, buf, { force = true })
++			return "Error: could not find old_text block in file (after whitespace normalization)."
+ 		end
+ 
+-		if j &lt; #old_lines then
+-			return "Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
++		if multi then
++			-- Apply from bottom to top so earlier (smaller) line numbers stay valid
++			-- while we edit later parts of the file.
++			local starts = {}
++			for _, s in ipairs(matches) do table.insert(starts, s) end
++			table.sort(starts, function(a, b) return a &gt; b end)
++			for _, start0 in ipairs(starts) do
++				local stop0 = start0 + #old_lines
++				vim.api.nvim_buf_set_lines(buf, start0, stop0, false, new_lines)
++			end
++		else
++			-- Non-multi: use the earliest match (first occurrence in file order).
++			-- The full-block search (instead of the old streaming matcher) ensures
++			-- that even if the first line of old_text appears earlier without a
++			-- following full match, we still find a later correct alignment for the
++			-- whole block.
++			local start0 = matches[1]
++			local stop0 = start0 + #old_lines
++			vim.api.nvim_buf_set_lines(buf, start0, stop0, false, new_lines)
+ 		end
+-
+-		-- Replace the line matching old_text with new_text
+-		vim.api.nvim_buf_set_lines(buf, end_line - j + 1, end_line, false, new_lines)
+ 	else
+ 		vim.api.nvim_buf_set_lines(buf, 0, 0, false, new_lines)
+ 	end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index e6f5ebf..5cd350e 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -330,7 +330,7 @@ local function run_tools(tool_calls, history)
+ 				res.content = "missing file field"
+ 				goto continue
+ 			end
+-			local out = tools.edit(args.file, args.old_text, args.new_text)
++			local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
+ 			res.content = out
+ 			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
+ 		elseif name == "write" then
+</pre>

@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 948ae3f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 948ae3f
+parent <a href=commit-7223f58.html>7223f58</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-07T12:04:34-03:00
+
+    added connect file tool (wip)
+
+<a href=tree-948ae3f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/AGENTS.md b/AGENTS.md
+index d5449b5..02b8985 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -38,8 +38,9 @@ These notes are intended for **automated coding agents** working in this reposit
+ 
+ - **Add/adjust a tool**
+   - Update `lua/tai/tools.lua`.
++  - Add tool details to system prompt in `lua/tai/agent.lua`
+   - Ensure the tool schema and the execution function stay in sync.
+-  - Consider UX impact (how results are shown) in `ui.lua`.
++  - Consider UX impact (how results are shown) in `lua/tai/ui.lua`.
+ 
+ - **Change default behavior**
+   - Update defaults in `config.lua`.
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index c32ac6f..0535ba2 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -76,12 +76,22 @@ content of a file from the file system, or if given, a range of lines, and
+ returns the content. To use it call the `read_file` with the following
+ example parameters:
+ {
+-	"fileth": "&lt;path/to/file&gt;",
++	"file": "&lt;path/to/file&gt;",
+ 	"range": "&lt;range of lines to read or empty for full file&gt;"
+ }
+ IMPORTANT: reading files repeateadly is useless, read need files only once or
+ if they have changed.
+ 
++
++## connect_file
++Use the `connect_file` tool to add a file's content to the conversation and keep it updated across subsequent messages. To use it call the `connect_file` tool with the following structure:
++{
++	"file": "&lt;path/to/file&gt;",
++	"range": "&lt;range of lines to read or empty for full file&gt;"
++}
++IMPORTANT:
++New calls to this tool will invalidate previous ones, so we preserve context.
++
+ ## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
+ write/edit files, so pay careful attention to these instructions. To use the
+diff --git a/lua/tai/gemini.lua b/lua/tai/gemini.lua
+index 829d388..57a432b 100644
+--- a/lua/tai/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -1,7 +1,7 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local tools = require("tai.agents.tools")
++local tools = require("tai.tools")
+ local config = require("tai.config")
+ local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+ 
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 8d9f57c..0d7ee23 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -31,6 +31,9 @@ function M.request(model_config, msgs, format, callback)
+ 		M.add_to_history(msg)
+ 	end
+ 
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
+ 	local agent_tools = vim.tbl_map(
+ 		function(t)
+ 			return tools.defs[t]
+@@ -44,7 +47,7 @@ function M.request(model_config, msgs, format, callback)
+ 	for _, message in ipairs(history) do
+ 		local new_message = {}
+ 		for key, value in pairs(message) do
+-			if key ~= "file_path" then
++			if key ~= "file_path" and key ~= "file_range" then
+ 				new_message[key] = value
+ 			end
+ 		end
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index ca7f37b..6e272b6 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -78,132 +78,21 @@ function M.clear_history()
+ 	history = nil
+ end
+ 
+-local function request_chat_completions(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+-	local body = {
+-		model = model_config.model,
+-		messages = {},
+-	}
+-
+-	if config.use_tools ~= false then
+-		body.tools = {
+-			tools.defs["read_file"],
+-			tools.defs["shell"],
+-			tools.defs["patch"],
+-			tools.defs["summarize"],
+-		}
+-	end
+-
+-	for _, message in ipairs(history or {}) do
+-		local new_message = {}
+-		for key, value in pairs(message) do
+-			if key ~= "file_path" then
+-				new_message[key] = value
+-			end
+-		end
+-		table.insert(body.messages, new_message)
+-	end
+-
+-	if format then
+-		body.format = format
+-	end
+-
+-	if model_config.options then
+-		for k, v in pairs(model_config.options) do
+-			body[k] = v
+-		end
+-	end
+-
+-	local request_body = vim.json.encode(body)
+-
+-	log.debug("Requesting " .. chat_url .. " with " .. vim.inspect(body))
+-
+-	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
+-	-- file instead of passing it as a curl argv element.
+-	local tmp = vim.fn.tempname()
+-	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
+-	if not ok_write then
+-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+-	end
+-
+-	local function cleanup()
+-		pcall(vim.fn.delete, tmp)
+-	end
+-
+-	local ok_system, system_err = pcall(vim.system, {
+-		"curl", "-s", "-X", "POST", chat_url,
+-		"-H", "Authorization: Bearer " .. api_key,
+-		"-H", "Content-Type: application/json",
+-		"--data-binary", "@" .. tmp,
+-	}, { text = true }, function(obj)
+-		cleanup()
+-		if obj.code ~= 0 then
+-			local err_msg = "curl returned code " .. obj.code
+-			callback(nil, err_msg)
+-			return
+-		end
+-
+-		if not obj.stdout or obj.stdout == "" then
+-			return callback(nil, "Received empty response from OpenAI")
+-		end
+-
+-		local parsed = vim.json.decode(obj.stdout)
+-		if not parsed then
+-			return callback(nil, "Failed to decode JSON response")
+-		end
+-		log.debug("Request response: " .. vim.inspect(parsed))
+-
+-		if parsed and parsed.error then
+-			return callback(nil, "Received error: " .. parsed.error.message)
+-		end
+-
+-		local message = parsed.choices[1].message
+-		local content = message.content
+-		local fields = {}
+-		if content and content ~= vim.NIL then
+-			log.debug("response content: " .. (content or ""))
+-			if format ~= nil then
+-				log.debug("parsing JSON content")
+-				fields.content = vim.json.decode(content)
+-				if not fields.content then
+-					return callback(nil, "Failed to decode message")
+-				end
+-			else
+-				fields.content = content
+-			end
+-		end
+-
+-		fields.tool_calls = message.tool_calls
+-		for _, call in ipairs(fields.tool_calls or {}) do
+-			local args = call["function"].arguments
+-			if type(args) == "string" then
+-				call["function"].arguments = vim.json.decode(args)
+-			end
+-		end
+-		callback(fields, nil)
+-	end)
+-
+-	if not ok_system then
+-		cleanup()
+-		return callback(nil, tostring(system_err))
+-	end
+-end
+-
+ local function request_responses(model_config, msgs, format, callback)
+ 	-- Preserve existing chat history behavior but translate to Responses API.
+ 	for _, msg in ipairs(msgs) do
+ 		add_history_message(vim.deepcopy(msg))
+ 	end
+ 
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
+ 	local input = {}
+ 	for _, msg in ipairs(history or {}) do
+ 		-- strip file_path (internal)
+ 		local new_msg = {}
+ 		for k, v in pairs(msg) do
+-			if k ~= "file_path" then
++			if k ~= "file_path" and k ~= "file_range" then
+ 				new_msg[k] = v
+ 			end
+ 		end
+@@ -235,6 +124,7 @@ local function request_responses(model_config, msgs, format, callback)
+ 
+ 		body.tools = {
+ 			to_responses_tool(tools.defs["read_file"]),
++			to_responses_tool(tools.defs["connect_file"]),
+ 			to_responses_tool(tools.defs["shell"]),
+ 			to_responses_tool(tools.defs["patch"]),
+ 			to_responses_tool(tools.defs["summarize"]),
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index ddd8a02..cff58ca 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -36,6 +36,9 @@ function M.request(model_config, msgs, format, callback)
+ 		M.add_to_history(msg)
+ 	end
+ 
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
+ 	local body = {
+ 		model = model_config.model,
+ 		messages = {},
+@@ -47,12 +50,14 @@ function M.request(model_config, msgs, format, callback)
+ 			tools.defs["shell"],
+ 			tools.defs["patch"],
+ 			tools.defs["summarize"],
++			tools.defs["connect_file"],
++
+ 		}
+ 	end
+ 	for _, message in ipairs(history) do
+ 		local new_message = {}
+ 		for key, value in pairs(message) do
+-			if key ~= "file_path" then
++			if key ~= "file_path" and key ~= "file_range" then
+ 				new_message[key] = value
+ 			end
+ 		end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 82307e3..c4617bf 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -39,6 +39,29 @@ M.defs = {
+ 			}
+ 		}
+ 	},
++	connect_file = {
++		type = "function",
++		["function"] = {
++			name = "connect_file",
++			description = "Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
++			parameters = {
++				type = "object",
++				properties = {
++					file = {
++						type = "string",
++						description = "The path to the file to read."
++					},
++					range = {
++						type = "string",
++						description = "Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
++					}
++				},
++				additionalProperties = false,
++				required = { "file", "range" }
++			}
++		}
++	},
++
+ 	patch = {
+ 		type = "function",
+ 		["function"] = {
+@@ -194,7 +217,7 @@ local function read_file(file_path, range)
+ 	end
+ 
+ 	local numbered_lines = {}
+-	if not range then
++	if not range or range == "" then
+ 		-- If no range is specified, return all lines
+ 		for i, line in ipairs(lines) do
+ 			table.insert(numbered_lines, string.format("%d: %s", i, line))
+@@ -204,33 +227,38 @@ local function read_file(file_path, range)
+ 		return numbered_content
+ 	end
+ 
+-	-- Parse the range
+-	local start, end_line = parse_lines(range)
+-	if start &lt; 0 or end_line &lt; 0 then
+-		start = lines + start + 1
+-		end_line = lines + end_line + 1
++	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
++	local start0, end0 = parse_lines(range)
++	local nlines = #lines
++
++	-- Convert negative indexes (relative to end) to 0-based absolute indexes
++	if start0 &lt; 0 then
++		start0 = nlines + start0
++	end
++	if end0 &lt; 0 then
++		end0 = nlines + end0
+ 	end
+ 
+-	for i, line in ipairs(lines) do
+-		if i &gt;= start and i &lt;= end_line then
+-			table.insert(numbered_lines, string.format("%d: %s", i, line))
+-		end
++	-- Convert to 1-based for display
++	local start1 = start0 + 1
++	local end1 = end0 + 1
+ 
+-		-- Stop early if we've passed the end of our range
+-		if i &gt; end_line then
+-			break
+-		end
++	if start1 &lt; 1 or end1 &lt; 1 or start1 &gt; nlines or end1 &gt; nlines or start1 &gt; end1 then
++		return "[sys] Invalid range: " .. range
+ 	end
+ 
+-	if #numbered_lines == 0 then
+-		return "[sys] Invalid range: " .. range
++	for i = start1, end1 do
++		local line = lines[i] or ""
++		table.insert(numbered_lines, string.format("%d: %s", i, line))
+ 	end
+ 
+ 	local numbered_content = table.concat(numbered_lines, "\n")
+ 	log.debug("read_file output: " .. numbered_content)
+ 	return numbered_content
++
+ end
+ 
++
+ local function run_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
+@@ -345,6 +373,32 @@ local function apply_patch(name, file, changes)
+ 	end
+ end
+ 
++function M.refresh_connected_files(history)
++	-- Walk from the end so we can detect older connect_file calls for the same file.
++	local latest = {}
++	for i = #history, 1, -1 do
++		local msg = history[i]
++		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
++			local key = msg.file_path .. "::" .. (msg.file_range or "")
++			if latest[key] then
++				msg.content = "[sys] content shown in newer call"
++				msg.file_path = nil
++				msg.file_range = nil
++			else
++				latest[key] = true
++			end
++		end
++	end
++
++	-- Refresh remaining (latest) connect_file messages.
++	for _, msg in ipairs(history or {}) do
++		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
++			msg.content = read_file(msg.file_path, msg.file_range or "")
++		end
++	end
++end
++
++
+ -- TODO: there must be an enum for tool names
+ function M.run(tool, args)
+ 	log.debug("Running tool call")
+@@ -353,7 +407,12 @@ function M.run(tool, args)
+ 		if not args.file then
+ 			return "[sys] missing file argument"
+ 		end
+-		return read_file(args.file)
++		return read_file(args.file, args.range)
++	elseif tool == "connect_file" then
++		if not args.file then
++			return "[sys] missing file argument"
++		end
++		return read_file(args.file, args.range)
+ 	elseif tool == "shell" then
+ 		if not args.command then
+ 			return "[sys] missing command argument"
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 92b49a6..69f676e 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -158,6 +158,14 @@ local function run_tools(tool_calls)
+ 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
+ 			res.content = tools.run(name, args)
+ 			res.file_path = args.file
++			res.file_range = args.range
++			M.append_to_buffer(res.content .. "\n")
++			M.append_to_buffer("}}}\n")
++		elseif name == "connect_file" then
++			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
++			res.content = tools.run(name, args)
++			res.file_path = args.file
++			res.file_range = args.range
+ 			M.append_to_buffer(res.content .. "\n")
+ 			M.append_to_buffer("}}}\n")
+ 		elseif name == "patch" then
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+index dc6e51d..83a5448 100644
+--- a/lua/tai/z_ai.lua
++++ b/lua/tai/z_ai.lua
+@@ -1,7 +1,7 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local tools = require("tai.agents.tools")
++local tools = require("tai.tools")
+ 
+ local url = "https://api.z.ai/api/paas/v4/chat/completions"
+ 
+</pre>

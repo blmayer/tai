@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 56910b5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 56910b5
+parent <a href=commit-6c41534.html>6c41534</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-08-15T20:31:28-03:00
+
+    nvim: fixed groq response handling
+
+<a href=tree-56910b5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/chat.lua b/nvim-tai/chat.lua
+index 501fce1..851b427 100644
+--- a/nvim-tai/chat.lua
++++ b/nvim-tai/chat.lua
+@@ -17,77 +17,136 @@ local model = "moonshotai/kimi-k2-instruct"
+ 
+ 
+ function M.send_raw(messages, callback)
+-  local req_body = {
+-    model = model,
+-    messages = messages,
+-  }
+-  local json_data = json.encode(req_body)
+-
+-  local stdout = uv.new_pipe(false)
+-  local stderr = uv.new_pipe(false)
+-  local result, err_data = {}, {}
+-
+-  local handle
+-  handle = uv.spawn("curl", {
+-    args = {
+-      "-s", "-X", "POST",
+-      groq_url,
+-      "-H", "Authorization: Bearer " .. api_key,
+-      "-H", "Content-Type: application/json",
+-      "-d", json_data,
+-    },
+-    stdio = { nil, stdout, stderr },
+-  }, function(code, _)
+-    stdout:close()
+-    stderr:close()
+-    handle:close()
+-
+-    vim.schedule(function()
+-      if code ~= 0 then
+-        vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-        callback(nil)
+-        return
+-      end
+-
+-      if #err_data &gt; 0 then
+-        vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-        callback(nil)
+-        return
+-      end
+-
+-      local ok, parsed = pcall(json.decode, table.concat(result))
+-      if not ok or not parsed.choices or #parsed.choices == 0 then
+-        vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
+-        callback(nil)
+-        return
+-      end
+-
+-      callback(parsed.choices[1].message.content)
+-    end)
+-  end)
+-
+-  uv.read_start(stdout, function(_, chunk)
+-    if chunk then table.insert(result, chunk) end
+-  end)
+-
+-  uv.read_start(stderr, function(_, chunk)
+-    if chunk then table.insert(err_data, chunk) end
+-  end)
+-end
++	local req_body = {
++		model = model,
++		messages = messages,
++	}
++	local json_data = json.encode(req_body)
++
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result, err_data = {}, {}
++
++	local handle
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			groq_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data,
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++
++		vim.schedule(function()
++			if code ~= 0 then
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			if #err_data &gt; 0 then
++				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			local ok, parsed = pcall(json.decode, table.concat(result))
++			if not ok or not parsed.choices or #parsed.choices == 0 then
++				vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			callback(parsed.choices[1].message.content)
++		end)
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then table.insert(result, chunk) end
++	end)
+ 
++	uv.read_start(stderr, function(_, chunk)
++		if chunk then table.insert(err_data, chunk) end
++	end)
++end
+ 
+ function M.send_chat(messages)
+-	local resp
+-	M.send_raw(messages, function()
+-		local err
+-		resp, err = mime.parse(resp)
+-		if err then
+-			vim.notify("[tai] Failed to decode MIME message: " .. resp, vim.log.levels.ERROR)
+-			return nil
++	local req_body = {
++		model = model,
++		messages = vim.tbl_map(
++			function(m) return { role = m.role, content = m.content } end,
++			messages
++		),
++	}
++
++	local json_data = json.encode(req_body)
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result = {}
++	local err_data = {}
++	local handle
++
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			groq_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++		if code ~= 0 then
++			vim.schedule(function()
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++			end)
+ 		end
+ 	end)
+ 
+-	return resp
++	vim.notify("[tai] Waiting for response", vim.log.levels.TRACE)
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then
++			table.insert(result, chunk)
++		end
++	end)
++	vim.wait(60000, function()
++		return not uv.is_active(handle)
++	end, 10)
++
++	local response = table.concat(result)
++	if #err_data &gt; 0 then
++		vim.schedule(function()
++			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++		end)
++		return nil
++	end
++
++	local ok, parsed = pcall(json.decode, response)
++	if not ok then
++		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	if not parsed.choices or #parsed.choices == 0 then
++		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	local fields, err = mime.parse(parsed.choices[1].message.content)
++	if err then
++		vim.notify("[tai] Failed to decode MIME message: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	return fields
+ end
+ 
+ return M
+diff --git a/nvim-tai/init.lua b/nvim-tai/init.lua
+index f50d755..501a76f 100644
+--- a/nvim-tai/init.lua
++++ b/nvim-tai/init.lua
+@@ -32,7 +32,7 @@ function M.prompt_full_file()
+ 		local prompt = string.format("I'm edditing %s with cursor at %s, the prompt is:\n%s", path, location,
+ 			input)
+ 
+-		local result = project.request_file_prompt(path, prompt)
++		local result = project.request_append_file(path, prompt)
+ 		ui.show_response(result)
+ 	end)
+ end
+diff --git a/nvim-tai/project.lua b/nvim-tai/project.lua
+index 88feeae..734601a 100644
+--- a/nvim-tai/project.lua
++++ b/nvim-tai/project.lua
+@@ -11,19 +11,31 @@ You are Tai, a Neovim coding assistant plugin.
+ Return **EXACTLY** one valid multipart MIME message with no extra text before or after.
+ 
+ ### Context
++You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
++start you'll receive a summary of the project to help you understand the structure.
++
+ Users will need you for their development workflow, they may ask you open questions about the current file or the codebase,
+ you are entitled to help them. To fullfill those requests you can give advice, create code changes, create plans for more complex
+ tasks and if needed you can request the user to run commands and send you the output, if you need to know a file for example. You may also
+ need other info, for that you can request the user for simple questions.
+ 
+-You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
+-start you'll receive a summary of the project to help you understand the structure.
++Respond correctly to the prompts, don't propose code changes if the user didn't ask.
+ 
+ ### Format Enforcement
+ - Every response must start with the exact headers `MIME-Version: 1.0` and `Content-Type: multipart/mixed; boundary="&lt;boundary&gt;"`.
+ - Boundaries must be 8–32 alphanumeric characters only.
+ - All multipart boundaries must be closed with `--&lt;boundary&gt;--`.
+ 
++### Output format
++You MUST return a single multipart MIME message with:
++- MIME-Version: 1.0
++- Content-Type: multipart/mixed; boundary="&lt;boundary&gt;"
++- Exactly one boundary per distinct part
++- End with `--&lt;boundary&gt;--`
++
++Example structure:
++MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="abc"\n\n--abc\n...\n--abc--
++
+ ### Instructions
+ 1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the MIME envelope.
+ 2. **File naming**: Each part must contain `Content-Disposition: attachment; filename="&lt;filename&gt;"`.
+@@ -32,7 +44,7 @@ start you'll receive a summary of the project to help you understand the structu
+    - Use `text/x-diff` with part name `patch`.
+    - Diffs must be generated in unified format (aka patch).
+    - Each hunk must begin with `@@ -&lt;o&gt;,&lt;o&gt; +&lt;n&gt;,&lt;n&gt; @@`.
+-   - Never include CRLF line endings.
++   - Always use LF (`\n`) line endings, never CRLF.
+    - Validate the patch so it can be applied with `patch -p0`.
+    - Use relative file paths.
+    - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+@@ -144,13 +156,10 @@ function M.init()
+ 
+ 		for _, path in ipairs(vim.fn.glob("**/*", true, true)) do
+ 			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then
+-				vim.notify("[tai] Skiping " .. path, vim.log.levels.TRACE)
+ 				goto continue
+ 			end
+-			vim.notify("[tai] Indexing " .. path, vim.log.levels.TRACE)
+ 
+ 			if is_cache_up_to_date(path) then
+-				vim.notify("[tai] Index is up to date", vim.log.levels.TRACE)
+ 				local lines = vim.fn.readfile(path)
+ 				local content = table.concat(lines, "\n")
+ 				preamble = preamble .. content .. "------------------\n"
+@@ -173,8 +182,7 @@ function M.init()
+ 			ensure_dir_exists(cache .. path)
+ 			local cache_file = io.open(cache .. path, "w")
+ 			if not cache_file then
+-				vim.notify("[tai] Error writing to cache file " .. path,
+-					vim.log.levels.ERROR)
++				vim.notify("[tai] Error writing to cache file " .. path, vim.log.levels.ERROR)
+ 				return
+ 			end
+ 			cache_file:write(reply .. "\n")
+@@ -188,12 +196,31 @@ function M.init()
+ 	end)
+ end
+ 
+-function M.request_file_prompt(filepath, prompt)
++function M.request_append_file(filepath, prompt)
++	-- Read file content
+ 	local lines = vim.fn.readfile(filepath)
+ 	local content = table.concat(lines, "\n")
+-	local payload = prompt .. "\n\n" .. "Filename: " .. filepath .. "\n\n" .. content
+ 
+-	return M.process_request(payload)
++	-- Generate unique id for this file
++	local file_id = "file:" .. filepath
++
++	-- Remove old messages for this file from history
++	local new_history = {}
++	for _, msg in ipairs(history) do
++		if not (msg.id and msg.id == file_id) then
++			table.insert(new_history, msg)
++		end
++	end
++	history = new_history
++
++	-- Add new message with file content
++	table.insert(history, {
++		role = "system",
++		content = "File content for " .. filepath .. "\n\n" .. content,
++		id = file_id
++	})
++
++	return M.process_request(prompt)
+ end
+ 
+ function M.process_request(prompt)
+diff --git a/nvim-tai/ui.lua b/nvim-tai/ui.lua
+index 6bc3dc7..3053e6c 100644
+--- a/nvim-tai/ui.lua
++++ b/nvim-tai/ui.lua
+@@ -2,64 +2,55 @@ local M = {}
+ local command = require("tai.command")
+ local project = require("tai.project")
+ 
+-function M.toggle_output_window()
+-	local bufname = "tai-output"
++local bufname = "tai-output"
++
++local function ensure_buf()
+ 	local bufnr = vim.fn.bufnr(bufname)
+ 	if bufnr == -1 then
+-		vim.cmd("vnew")
+-		local new_win = vim.api.nvim_get_current_win()
+-		bufnr = vim.api.nvim_get_current_buf()
+-		vim.api.nvim_win_set_width(new_win, 80)
+-
++		bufnr = vim.api.nvim_create_buf(false, true)
++		vim.api.nvim_buf_set_name(bufnr, bufname)
+ 		vim.bo[bufnr].buftype = "nofile"
+-		vim.bo[bufnr].bufhidden = "wipe"
++		vim.bo[bufnr].bufhidden = "hide" -- keep content when hidden
+ 		vim.bo[bufnr].swapfile = false
+ 		vim.bo[bufnr].modifiable = true
+ 		vim.bo[bufnr].filetype = "tai-output"
+-		vim.api.nvim_buf_set_name(bufnr, bufname)
++	end
++	return bufnr
++end
++
++function M.toggle_output_window()
++	local bufnr = ensure_buf()
++	local winid = vim.fn.bufwinnr(bufnr)
++	if winid ~= -1 then
++		-- Close the window
++		vim.cmd(winid .. "close")
+ 	else
+-		vim.api.nvim_buf_delete(bufnr, { force = true })
++		-- Open in vertical split
++		vim.cmd("vsplit")
++		local win = vim.api.nvim_get_current_win()
++		vim.api.nvim_win_set_buf(win, bufnr)
++		vim.api.nvim_win_set_width(win, 80)
+ 	end
+ end
+ 
+ function M.show_response(fields)
+-	local bufname = "tai-output"
+-
+-	local bufnr = vim.fn.bufnr(bufname)
+-	if bufnr == -1 then
+-		vim.cmd("vnew")
+-		local new_win = vim.api.nvim_get_current_win()
+-		bufnr = vim.api.nvim_get_current_buf()
+-		vim.api.nvim_win_set_width(new_win, 80) -- this is THE number
+-
+-		-- Set buffer options to make it a scratch window
+-		vim.bo[bufnr].buftype = "nofile"
+-		vim.bo[bufnr].bufhidden = "wipe"
+-		vim.bo[bufnr].swapfile = false
+-		vim.bo[bufnr].modifiable = true
+-		vim.bo[bufnr].filetype = "tai-output"
+-		vim.api.nvim_buf_set_name(bufnr, bufname)
+-	end
++	local bufnr = ensure_buf()
+ 
+ 	local content = ""
+ 	if fields.plan then
+ 		content = "Plan:\n\n" .. fields.plan .. "\n\n-----------------------------\n\n"
+ 	end
+-
+ 	if fields.text then
+ 		content = content .. fields.text
+ 	end
+-
+ 	if fields.commands then
+-		content = content .. "\n\nCommand requested (use:RunTaiCommand to run):\n\n" .. fields.commands
+-
++		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n" .. fields.commands
+ 		vim.api.nvim_buf_create_user_command(
+ 			bufnr, 'RunTaiCommand',
+ 			function() M.run_command(fields.commands) end,
+ 			{}
+ 		)
+ 	end
+-
+ 	if fields.patch then
+ 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+ 		vim.schedule(function()
+@@ -70,9 +61,15 @@ function M.show_response(fields)
+ 	end
+ 
+ 	local lines = vim.split(content, "\n", { trimempty = true })
+-
+-	-- Insert content
+ 	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++
++	-- Auto-open if hidden
++	if vim.fn.bufwinnr(bufnr) == -1 then
++		vim.cmd("vsplit")
++		local win = vim.api.nvim_get_current_win()
++		vim.api.nvim_win_set_buf(win, bufnr)
++		vim.api.nvim_win_set_width(win, 80)
++	end
+ end
+ 
+ -- Insert the content at the cursor (insert mode)
+@@ -145,9 +142,17 @@ function M.input(callback)
+ end
+ 
+ function M.apply_patch(patch)
+-	local f = io.popen("patch -p0", "w")
++	local f = io.popen("patch --dry-run -p0 &gt; /dev/null 2&gt;&amp;1", "w")
+ 	f:write(patch)
+-	f:close()
++	local ok = f:close()
++
++	if not ok then
++		vim.notify("[tai] Invalid patch – not applied", vim.log.levels.ERROR)
++	end
++
++	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet", "w")
++	real:write(patch)
++	real:close()
+ 	vim.api.nvim_command("checktime")
+ end
+ 
+</pre>

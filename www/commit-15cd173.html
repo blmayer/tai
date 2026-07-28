@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 15cd173</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 15cd173
+parent <a href=commit-597addc.html>597addc</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-20T21:55:17-03:00
+
+    added interleaved thinking to minimax provider
+
+<a href=tree-15cd173.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 4d76f36..a3e5398 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -21,7 +21,6 @@ Output rules:
+ - Do not use Markdown.
+ - Do not wrap content in quotes/backticks or escape it unless the user asked.
+ - Thinking output is not shown to the user, add it to the text output if needed.
+-  
+ 
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+@@ -85,16 +84,9 @@ last 5 lines: -5:$.",
+ ## read_file
+ To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+ content of a file from the file system, or if given, a range of lines, and
+-returns the content. Use it if you need the file content in your context, so
+-you can patch it or understand the codebase. The content is kept updated by the
+-system, so it always reflects the current state of the file. To use it call the
+-`read_file` with the following structure:
+-{
+-	"file": "&lt;path/to/file&gt;",
+-	"range": "&lt;range of lines to read or empty for full file&gt;"
+-}
+-IMPORTANT: reading the same file more than once is useless, if you re-read a
+-file the old response is cleared.
++returns the content. The file content is automatically kept updated in the
++conversation history - even if a read_file call was several messages ago, it
++reflects the current state of the file. DO NOT re-read files unnecessarily.
+ 
+ ## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
+@@ -159,16 +151,17 @@ function M.task(msgs, callback)
+ 			local response = { role = "assistant" }
+ 			if err then
+ 				return callback({error = err})
+-			else
+-				response.content = vim.json.encode(data.content)
+-				response.tool_calls = data.tool_calls
+ 			end
++			response.content = data.content
++			response.tool_calls = data.tool_calls
++			response.reasoning_details = data.reasoning_details
+ 			provider.add_to_history(response)
+ 			callback(data)
+ 		end
+ 	)
+ end
+ 
++
+ function M.add_to_history(msg)
+ 	provider.add_to_history(msg)
+ end
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+index b9b22d7..5dce34e 100644
+--- a/lua/tai/minimax.lua
++++ b/lua/tai/minimax.lua
+@@ -81,6 +81,14 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, extract_err)
+ 		end
+ 
++		-- Extract reasoning_details (interleaved thinking) from MiniMax response
++		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
++			local msg = parsed.choices[1].message
++			if msg.reasoning_details then
++				fields.reasoning_details = msg.reasoning_details
++			end
++		end
++
+ 		-- Extract token usage if available
+ 		if parsed.usage and parsed.usage.total_tokens then
+ 			fields.token_usage = parsed.usage.total_tokens
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 8ed7be9..78e3d70 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -19,7 +19,14 @@ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
+ 	for _, call in ipairs(msg.tool_calls or {}) do
+ 		local args = call["function"].arguments
+-		call["function"].arguments = vim.json.encode(args)
++		local new_args = {}
++		new_args.role = args.role
++		new_args.content = args.content
++		new_args.tool_call_id = args.tool_call_id
++		call["function"].arguments = vim.json.encode(new_args)
++	end
++	if message.role == "tool" then
++		message.name = nil
+ 	end
+ 	if not history then
+ 		history = { msg }
+@@ -33,100 +40,62 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-    for _, msg in ipairs(msgs) do
+-        M.add_to_history(msg)
+-    end
+-
+-    -- Keep connected files up to date in history before sending.
+-    tools.refresh_connected_files(history)
+-
+-    local body = {
+-        model = model_config.model,
+-        messages = {},
+-    }
+-
+-    if config.use_tools ~= false then
+-        body.tools = {
+-            tools.defs["read_file"],
+-            tools.defs["shell"],
+-            tools.defs["patch"],
+-            tools.defs["summarize"],
+-            tools.defs["connect_file"],
+-        }
+-    end
+-    for _, message in ipairs(history) do
+-        local new_message = provider_common.filter_message(message)
+-        table.insert(body.messages, new_message)
+-    end
+-
+-    if format == "json_object" then
+-        body.response_format = { type = "json_object" }
+-    end
+-
+-    if model_config.options then
+-        for k, v in pairs(model_config.options) do
+-            body[k] = v
+-        end
+-    end
+-
+-    local request_body = vim.json.encode(body)
+-
+-    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-    vim.system(
+-        {
+-            "curl", "-s", "-X", "POST", url,
+-            "-H", "Authorization: Bearer " .. api_key,
+-            "-H", "Content-Type: application/json",
+-            "-d", request_body,
+-        }, { text = true }, function(obj)
+-            if obj.code ~= 0 then
+-                local err_msg = "curl returned code " .. obj.code
+-                callback(nil, err_msg)
+-                return
+-            end
+-
+-            if not obj.stdout or obj.stdout == "" then
+-                return callback(nil, "Received empty response from Openrouter")
+-            end
+-
+-            local parsed = vim.json.decode(obj.stdout)
+-            if not parsed then
+-                return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+-            end
+-            log.debug("Request response: " .. vim.inspect(parsed))
+-
+-            if parsed.error then
+-                return callback(nil, parsed.error.message)
+-            end
+-
+-            if not parsed.choices or #parsed.choices == 0 then
+-                return callback(nil, "No choices received from Openrouter")
+-            end
+-
+-            local message = parsed.choices[1].message
+-            local fields = {}
+-            if message.content and message.content ~= "" then
+-                log.debug("response content: " .. message.content)
+-                if format == "json_object" then
+-                    log.debug("parsing JSON content")
+-                    fields.content = vim.json.decode(message.content)
+-                    if not fields.content then
+-                        return callback(nil, "Failed to decode message content as JSON")
+-                    end
+-                else
+-                    fields.content = message.content
+-                end
+-            end
+-            fields.tool_calls = message.tool_calls
+-            provider_common.decode_tool_call_arguments(fields.tool_calls)
+-
+-            -- Extract token usage if available
+-            if parsed.usage and parsed.usage.total_tokens then
+-                fields.token_usage = parsed.usage.total_tokens
+-            end
+-
+-            callback(fields, nil)
+-        end)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++
++	if config.use_tools ~= false then
++		body.tools = provider_common.build_agent_tools(model_config)
++	end
++
++	body.messages = provider_common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++
++	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
++		if err then
++			callback(nil, err)
++			return
++		end
++
++		log.debug("Request response: " .. vim.inspect(parsed))
++
++		if parsed.error then
++			return callback(nil, parsed.error.message)
++		end
++
++		local fields, extract_err = provider_common.extract_fields(parsed, format)
++		if extract_err then
++			return callback(nil, extract_err)
++		end
++
++		-- Extract token usage if available
++		if parsed.usage and parsed.usage.total_tokens then
++			fields.token_usage = parsed.usage.total_tokens
++		end
++
++		callback(fields, nil)
++	end)
+ end
+ 
+ return M
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 17283b5..ffe72c8 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -15,6 +15,10 @@ function M.filter_message(msg)
+ 			new_msg[k] = v
+ 		end
+ 	end
++	-- Remove 'name' field from tool messages as it's not part of the OpenAI API spec
++	if new_msg.role == "tool" then
++		new_msg.name = nil
++	end
+ 	return new_msg
+ end
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 0a7bb41..ca67a6e 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -35,7 +35,7 @@ M.defs = {
+ 					}
+ 				},
+ 				additionalProperties = false,
+-				required = { "file", "range" }
++				required = { "file" }
+ 			}
+ 		}
+ 	},
+@@ -164,6 +164,15 @@ local function parse_lines(range)
+ 		return tonumber(start), -1
+ 	end
+ 
++	-- Handle positive-to-$ ranges (e.g., 10:$ for tenth to last line)
++	local dollar_pos = range:match("():%$")
++	if dollar_pos and dollar_pos &gt; 1 then
++		local start_num = tonumber(range:sub(1, dollar_pos - 1))
++		if start_num then
++			return start_num - 1, -1
++		end
++	end
++
+ 	-- Handle range (e.g., "2:5")
+ 	start, end_line = range:match("^(%d+):(%d+)$")
+ 	if start and end_line then
+@@ -182,7 +191,7 @@ local function parse_lines(range)
+ 	return 0, 0
+ end
+ 
+-local function read_file(file_path, range)
++function M.read_file(file_path, range)
+ 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
+ 
+ 	if file_path:sub(1, 1) == "/" then
+@@ -244,13 +253,17 @@ local function read_file(file_path, range)
+ 	local start1 = start0 + 1
+ 	local end1 = end0 + 1
+ 
+-	if start1 &lt; 1 or end1 &lt; 1 or start1 &gt; nlines or end1 &gt; nlines or start1 &gt; end1 then
++	-- Clamp end1 to valid range (allow exceeding file length)
++	if end1 &gt; nlines then
++		end1 = nlines
++	end
++
++	if start1 &lt; 1 or end1 &lt; 0 or start1 &gt; nlines or start1 &gt; end1 then
+ 		return "[sys] Invalid range: " .. range
+ 	end
+ 
+ 	for i = start1, end1 do
+-		local line = lines[i] or ""
+-		table.insert(numbered_lines, string.format("%d: %s", i, line))
++		table.insert(numbered_lines, string.format("%d: %s", i, lines[i]))
+ 	end
+ 
+ 	local numbered_content = table.concat(numbered_lines, "\n")
+@@ -259,7 +272,7 @@ local function read_file(file_path, range)
+ end
+ 
+ 
+-local function run_command(cmd)
++function M.run_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
+ 	local env = {}
+@@ -292,7 +305,7 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
+-local function apply_patch(name, file, changes)
++function M.apply_patch(name, file, changes)
+ 	log.debug("Patching " .. #changes .. " changes in " .. file)
+ 
+ 	-- Check if file is already open in a buffer
+@@ -396,42 +409,9 @@ function M.refresh_connected_files(history)
+ 	-- Refresh remaining (latest) connect_file messages.
+ 	for _, msg in ipairs(history or {}) do
+ 		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
+-			msg.content = read_file(msg.file_path, msg.file_range or "")
+-		end
+-	end
+-end
+-
+--- TODO: there must be an enum for tool names
+-function M.run(tool, args)
+-	log.debug("Running tool call " .. tool)
+-
+-	if tool == "read_file" then
+-		if not args.file then
+-			return "[sys] missing file argument"
+-		end
+-		return read_file(args.file, args.range)
+-	elseif tool == "shell" then
+-		if not args.command then
+-			return "[sys] missing command argument"
++			msg.content = M.read_file(msg.file_path, msg.file_range or "")
+ 		end
+-		return run_command(args.command)
+-	elseif tool == "patch" then
+-		if not args.file then
+-			return "[sys] missing file argument"
+-		end
+-		if not args.changes then
+-			return "[sys] missing changes argument"
+-		end
+-		local err = apply_patch(args.name, args.file, args.changes)
+-		if err then
+-			return "[sys] patch error: " .. err
+-		end
+-		return "[sys] patch applied"
+-	elseif tool == "summarize" then
+-		return "[sys] agent called summarize tool."
+ 	end
+-
+-	return "[sys] Unknown tool `" .. tool .. "`"
+ end
+ 
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 6672f74..c581de1 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -144,53 +144,90 @@ local function run_tools(tool_calls)
+ 		}
+ 
+ 		if name == "shell" then
++			if not args.command then
++				M.append_to_buffer("{{{ Running command failed: no command field.\n}}}")
++				res.content = "[sys] missing command field"
++				goto continue
++			end
++
+ 			log.debug("Asking for confirmation")
+ 			local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n\n&amp;s (stop)", 1)
+ 			if input == 1 then
+ 				log.debug("Confirmed")
+ 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+-				local out = tools.run(name, args)
++				local out = tools.run_command(args.command)
+ 				M.append_to_buffer((out or "") .. "\n")
+-				M.append_to_buffer("}}}\n")
++				M.append_to_buffer("}}}")
+ 				refresh_and_close_folds()
+ 				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+-				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}")
+ 				local comment = vim.fn.input("Comment (optional): ")
++				M.append_to_buffer("{{{ Declined " .. args.command .. "\n")
+ 				if comment and comment ~= "" then
+ 					res.content = "[sys] User declined running this command. Comment: " .. comment
++					M.append_to_buffer("Comment: " .. comment .. "\n")
+ 				else
+ 					res.content = "[sys] User declined running this command"
+ 				end
++				M.append_to_buffer("}}}")
+ 			else
+ 				local comment = vim.fn.input("Comment (optional): ")
++				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
+ 				if comment and comment ~= "" then
+-					res.content = "[sys] User declined running this command. Comment: " .. comment
++					res.content = "[sys] User stopped the task. Comment: " .. comment
++					M.append_to_buffer("Comment: " .. comment .. "\n")
+ 				else
+-					M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
+-					res.content = "[sys] User stopped the conversation"
++					res.content = "[sys] User stopped the task"
+ 				end
++				M.append_to_buffer("}}}")
+ 			end
+ 		elseif name == "read_file" then
++			if not args.file then
++				M.append_to_buffer("{{{ Reading file failed: no file field.\n}}}")
++				res.content = "[sys] missing file field"
++				goto continue
++			end
++
+ 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
+-			res.content = tools.run(name, args)
++			res.content = tools.read_file(args.file, args.range)
+ 			res.file_path = args.file
+ 			res.file_range = args.range
+ 			M.append_to_buffer(res.content .. "\n")
+-			M.append_to_buffer("}}}\n")
++			M.append_to_buffer("}}}")
+ 		elseif name == "connect_file" then
++			if not args.file then
++				M.append_to_buffer("{{{ Connecting file failed: no file field.\n}}}")
++				res.content = "[sys] missing file field"
++				goto continue
++			end
++
+ 			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
+-			res.content = tools.run(name, args)
++			res.content = tools.read_file(args.file, args.range)
+ 			res.file_path = args.file
+ 			res.file_range = args.range
+ 			M.append_to_buffer(res.content .. "\n")
+-			M.append_to_buffer("}}}\n")
++			M.append_to_buffer("}}}")
+ 		elseif name == "patch" then
+-			local out = tools.run(name, args)
++			if not args.file then
++				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
++				res.content = "[sys] missing file field"
++				goto continue
++			end
++			if not args.changes or #args.changes == 0 then
++				M.append_to_buffer("{{{ Patching file failed: empty changes field.\n}}}")
++				res.content = "[sys] missing empty changes field"
++				goto continue
++			end
+ 
+ 			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
+ 			for _, change in ipairs(args.changes or {}) do
++				if not change.lines or not change.operation then
++					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
++					res.content = "[sys] patch needs lines and operation fields"
++					goto continue
++				end
++
+ 				M.append_to_buffer(string.format(
+ 					"File: %s\nOperation: %s\nLines: %s\nContent:\n%s\n",
+ 					args.file,
+@@ -199,12 +236,14 @@ local function run_tools(tool_calls)
+ 					change.content
+ 				))
+ 			end
++
++			local out = tools.apply_patch(args.name, args.file, args.changes)
+ 			res.content = out
+ 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
+-			M.append_to_buffer("}}}\n")
++			M.append_to_buffer("}}}")
+ 			refresh_and_close_folds()
+ 		elseif name == "summarize" then
+-			M.append_to_buffer("{{{ Summarizing chat\n}}}\n")
++			M.append_to_buffer("{{{ Summarizing chat\n}}}")
+ 			tai.task(
+ 				{ tools.summary_msg },
+ 				function(summ)
+@@ -221,6 +260,7 @@ local function run_tools(tool_calls)
+ 			return nil
+ 		end
+ 
++		::continue::
+ 		table.insert(results, res)
+ 	end
+ 	return results
+</pre>

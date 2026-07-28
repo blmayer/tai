@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 5713ef0</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 5713ef0
+parent <a href=commit-2ee7b7f.html>2ee7b7f</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-07T17:47:59-03:00
+
+    fixed mistral's tool config
+
+<a href=tree-5713ef0.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 4165016..e7ed491 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -1,7 +1,7 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local tools = require("tai.agents.tools")
++local tools = require("tai.tools")
+ 
+ local url = "https://api.mistral.ai/v1/chat/completions"
+ 
+</pre>

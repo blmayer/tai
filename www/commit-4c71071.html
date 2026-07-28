@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 4c71071</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 4c71071
+parent <a href=commit-62d0fc5.html>62d0fc5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-08-08T13:42:51-03:00
+
+    index: updated page
+
+<a href=tree-4c71071.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/www/index.html b/www/index.html
+index a702165..6c5c012 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -1,26 +1,24 @@
+ &lt;!DOCTYPE html&gt;
+ &lt;meta name="viewport" content="width=device-width, initial-scale=1"&gt;
+-&lt;title&gt;tai.nvim + tai-server&lt;/title&gt;
++&lt;title&gt;tai.nvim + tai&lt;/title&gt;
+ &lt;meta name="color-scheme" content="light dark"&gt;
+ &lt;link rel=icon href=data:,&gt;
+ &lt;style&gt;pre{width:52ch;margin:2ch auto}a{color:#ff00ff}&lt;/style&gt;
+-&lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim + tai-server&lt;/b&gt;&lt;/i&gt;
++&lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim + tai&lt;/b&gt;&lt;/i&gt;
+ 
+-a minimal Neovim plugin paired with a unix socket server,
+-built to bring AI-powered text and code insights directly
++a minimal Neovim plugin and a CLI tool built
++to bring AI-powered text and code insights directly
+ to your editor.
+ 
+-the plugin connects to &lt;i&gt;/tmp/tai.sock&lt;/i&gt; and sends
+-selections, prompts, or full files for processing by
+-a backend server using the groq API.
++the plugin sends selections, prompts, or full files
++for processing using the groq API.
+ 
+ 
+ &lt;b&gt;features&lt;/b&gt;
+ 
+ - send motions or visual selections from Neovim
+ - prompt for input and combine it with text or files
+-- server caches summaries for faster, smarter replies
+-- responses show up in a bottom split buffer in Neovim
++- responses show up in a split buffer in Neovim
+ - requires environment variable &lt;i&gt;GROQ_API_KEY&lt;/i&gt;
+ - simple lua and go code for easy customization
+ 
+@@ -28,14 +26,14 @@ a backend server using the groq API.
+ &lt;b&gt;keybindings&lt;/b&gt;
+ 
+ gT + motion      - send motion selection
+-gP + motion      - send motion selection with prompted input
++gP + motion      - send motion selection with input
+ &amp;lt;leader&amp;gt;ti (normal) - prompt input and send
+-&amp;lt;leader&amp;gt;tf (normal) - prompt input and send with full file
++&amp;lt;leader&amp;gt;tf (normal) - prompt input with file
+ 
+ 
+ &lt;b&gt;installation&lt;/b&gt;
+ 
+-clone or place &lt;i&gt;lua/tai.lua&lt;/i&gt; into your Neovim config directory
++clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+ &lt;code&gt;~/.config/nvim/lua/&lt;/code&gt; and add keymaps to &lt;i&gt;init.lua&lt;/i&gt;:
+ 
+   vim.g.mapleader = " "
+@@ -66,20 +64,16 @@ clone or place &lt;i&gt;lua/tai.lua&lt;/i&gt; into your Neovim config directory
+ 
+ build and run the go server:
+ 
+-  go build -o tai-server ./path/to/server
+-  ./tai-server
++  go build -o tai .
++  ./tai
+ 
+-make sure &lt;i&gt;/tmp/tai.sock&lt;/i&gt; exists and
+-the &lt;i&gt;GROQ_API_KEY&lt;/i&gt; environment variable is set.
++make sure the &lt;i&gt;GROQ_API_KEY&lt;/i&gt; env var is set.
+ 
+ 
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+ send text or prompts from Neovim using the
+-keybindings above. the server will cache file
+-summaries and respond with enhanced context-aware
+-answers.
+-
++keybindings above.
+ 
+ &lt;b&gt;license&lt;/b&gt;
+ 
+</pre>

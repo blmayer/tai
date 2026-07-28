@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 06474f3</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 06474f3
+parent <a href=commit-9fc82a8.html>9fc82a8</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-06-20T18:41:42-03:00
+
+    Improved chat UX: state indicator, smarter scroll, better tool folds
+
+    - Added agent state to input buffer name: idle, waiting, throttled,
+      thinking, tools
+    - Restricted auto-scroll to only trigger when cursor is at the bottom
+      or in another panel
+    - Reused already-open buffers in edit tool instead of opening new splits
+    - Shown (multi) in edit fold summary when replacing all occurrences
+    - Reported partial match count on edit mismatch (e.g. 3/7 lines)
+    - Updated edit tool description to request minimal context lines
+    - Included range in read tool fold summary when specified
+    - Strengthened coder agent prompt to always hand back to planner
+
+<a href=tree-06474f3.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 0810e48..129591e 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -123,8 +123,12 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - Check if your changes are correct by reading the affected parts, building the
+   project or checking linter etc.
+ - If tests are avaliable run the necessary ones, be clever to not take too long.
+-- When you finish all tasks, call the `planner` tool (instead of a plain final
+-  response). Pass a single `prompt` string containing a detailed report:
++- **CRITICAL**: You MUST call the `planner` tool when you are done — this is
++  the ONLY way to finish. Do NOT end with a plain text response. If you respond
++  without calling `planner`, your work will be lost and the user will never see
++  the results. Even if you encounter errors or cannot complete everything, you
++  MUST still call `planner` with a report of what happened.
++- Pass a single `prompt` string containing a detailed report:
+   - Which files/lines were changed and exactly what was modified in each function.
+   - Verification performed (builds, tests run, manual checks, reads of results).
+   - Any failures encountered or areas needing improvement.
+@@ -132,7 +136,8 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - The `planner` tool returns immediately with "planner is working on the task.";
+   your report will be delivered to the planner (in its own history) so it can
+   review, summarize to the user, or call you again with fixes if needed.
+-- Always use the planner handoff to conclude a task delegation.
++- NEVER skip the planner handoff. Every coder session must end with a `planner`
++  tool call — no exceptions.
+ 
+ ]] .. tool_usage
+ 
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index 5ef7415..e9f8f4b 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -100,6 +100,15 @@ function M.get_rate_limits()
+ 	}
+ end
+ 
++-- Check if there are pending throttle timers (requests waiting for rate limit).
++function M.is_throttled()
++	return #pending_timers &gt; 0
++end
++
++-- Optional callback invoked when a request starts throttle-waiting.
++-- Set by the UI layer to update state indicators.
++M.on_throttle = nil
++
+ -- Cancel pending throttle timers.
+ function M.cancel_pending_waits()
+ 	for _, timer in ipairs(pending_timers) do
+@@ -362,6 +371,7 @@ local function create_provider_module(provider_name)
+ 			if wait_ms &gt; 0 then
+ 				local timer = vim.uv.new_timer()
+ 				table.insert(pending_timers, timer)
++				if M.on_throttle then M.on_throttle(wait_ms) end
+ 				timer:start(wait_ms, 0, function()
+ 					for i = #pending_timers, 1, -1 do
+ 						if pending_timers[i] == timer then table.remove(pending_timers, i) break end
+@@ -500,6 +510,7 @@ local function create_provider_module(provider_name)
+ 			if wait_ms &gt; 0 then
+ 				local timer = vim.uv.new_timer()
+ 				table.insert(pending_timers, timer)
++				if M.on_throttle then M.on_throttle(wait_ms) end
+ 				timer:start(wait_ms, 0, function()
+ 					for i = #pending_timers, 1, -1 do
+ 						if pending_timers[i] == timer then table.remove(pending_timers, i) break end
+@@ -664,6 +675,7 @@ local function create_provider_module(provider_name)
+ 	if wait_ms &gt; 0 then
+ 		local timer = vim.uv.new_timer()
+ 		table.insert(pending_timers, timer)
++		if M.on_throttle then M.on_throttle(wait_ms) end
+ 		timer:start(wait_ms, 0, function()
+ 			for i = #pending_timers, 1, -1 do
+ 				if pending_timers[i] == timer then table.remove(pending_timers, i) break end
+@@ -720,6 +732,7 @@ local function create_provider_module(provider_name)
+ 	if wait_ms &gt; 0 then
+ 		local timer = vim.uv.new_timer()
+ 		table.insert(pending_timers, timer)
++		if M.on_throttle then M.on_throttle(wait_ms) end
+ 		timer:start(wait_ms, 0, function()
+ 			for i = #pending_timers, 1, -1 do
+ 				if pending_timers[i] == timer then table.remove(pending_timers, i) break end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index dad1b70..b8ead66 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -156,7 +156,7 @@ M.defs = {
+ 					old_text = {
+ 						type = "string",
+ 						description =
+-						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
++						"Content to be changed. Empty means start of file. This must match exactly (after per-line whitespace normalization). Use the MINIMUM number of context lines needed to uniquely identify the location — typically 1-3 distinctive lines, not large blocks. Don't add line numbers that appear on the read output, they are just for reference."
+ 					},
+ 					new_text = {
+ 						type = "string",
+@@ -546,9 +546,37 @@ function M.edit(file, old_text, new_text, multi)
+ 		return "Binary file detected. Use send_image for images or other binary formats."
+ 	end
+ 
+-	-- Open file in buffer
+-	vim.cmd("topleft vnew " .. file)
+-	local buf = vim.api.nvim_get_current_buf()
++	-- Reuse an already-open buffer for the file, otherwise open a new split.
++	local abs_path = vim.fn.fnamemodify(file, ":p")
++	local buf = nil
++	local buf_reused = false
++	for _, b in ipairs(vim.api.nvim_list_bufs()) do
++		if vim.api.nvim_buf_is_loaded(b) then
++			local bname = vim.api.nvim_buf_get_name(b)
++			if bname == abs_path then
++				buf = b
++				buf_reused = true
++				break
++			end
++		end
++	end
++	if buf_reused then
++		-- Buffer already open — make sure it's showing in some window
++		local win_found = false
++		for _, w in ipairs(vim.api.nvim_list_wins()) do
++			if vim.api.nvim_win_get_buf(w) == buf then
++				win_found = true
++				break
++			end
++		end
++		if not win_found then
++			vim.cmd("topleft vsplit")
++			vim.api.nvim_win_set_buf(vim.api.nvim_get_current_win(), buf)
++		end
++	else
++		vim.cmd("topleft vnew " .. vim.fn.fnameescape(file))
++		buf = vim.api.nvim_get_current_buf()
++	end
+ 
+ 	-- Get current state of buffer
+ 	local new_lines = vim.split(new_text or "", '\n')
+@@ -559,9 +587,40 @@ function M.edit(file, old_text, new_text, multi)
+ 		local matches = find_match_starts(current_lines, old_lines)
+ 
+ 		if #matches == 0 then
+-			-- Close the temp buffer we opened so we don't leave stray windows
+-			pcall(vim.api.nvim_buf_delete, buf, { force = true })
+-			return "Error: could not find old_text block in file (after whitespace normalization)."
++			-- Only close the buffer if we opened a new one (don't kill a reused buffer)
++			if not buf_reused then
++				pcall(vim.api.nvim_buf_delete, buf, { force = true })
++			end
++			-- Report how many lines of old_text matched before diverging,
++			-- to help the caller narrow down what went wrong.
++			local best_matched = 0
++			local norm_buf = {}
++			for _, line in ipairs(current_lines) do
++				table.insert(norm_buf, normalize_whitespace(line))
++			end
++			local norm_old = {}
++			for _, line in ipairs(old_lines) do
++				table.insert(norm_old, normalize_whitespace(line))
++			end
++			for i = 1, #norm_buf do
++				if norm_buf[i] == norm_old[1] then
++					local count = 0
++					for k = 1, #norm_old do
++						if i + k - 1 &lt;= #norm_buf and norm_buf[i + k - 1] == norm_old[k] then
++							count = k
++						else
++							break
++						end
++					end
++					if count &gt; best_matched then
++						best_matched = count
++					end
++				end
++			end
++			return string.format(
++				"Error: could not find old_text block in file (after whitespace normalization). Best partial match: %d/%d lines.",
++				best_matched, #old_lines
++			)
+ 		end
+ 
+ 		if multi then
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 5cd350e..d0ba125 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -29,6 +29,7 @@ local hard_stop = false
+ local pending_tools = nil
+ local current_agent = "planner"  -- Default to planner
+ local current_job = nil  -- for live shell commands (long-running / progress)
++local current_state = "idle"  -- idle | waiting | throttled | thinking | tools
+ 
+ local function get_agent_ctx()
+ 	local hist = (current_agent == "coder") and coder_history or planner_history
+@@ -50,16 +51,25 @@ local function update_input_name(token_count)
+ 	local name = input_bufname
+ 	local stats = providers_factory.get_rate_limits()
+ 	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
++	local state_part = current_state or "idle"
+ 	if current_ctx then
+-		name = string.format("%s (ctx: %u | %s)", input_bufname, current_ctx, rate_part)
++		name = string.format("%s [%s] (ctx: %u | %s)", input_bufname, state_part, current_ctx, rate_part)
+ 	else
+-		name = string.format("%s (%s)", input_bufname, rate_part)
++		name = string.format("%s [%s] (%s)", input_bufname, state_part, rate_part)
+ 	end
+ 	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+ 		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
+ 	end
+ end
+ 
++-- Hook into provider throttle notifications to update state indicator
++providers_factory.on_throttle = function(_wait_ms)
++	vim.schedule(function()
++		current_state = "throttled"
++		update_input_name()
++	end)
++end
++
+ function M.init()
+ 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ 	vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+@@ -176,7 +186,20 @@ local function scroll_down()
+ 		if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+ 			return
+ 		end
+-		local original_win = vim.api.nvim_get_current_win()
++
++		-- Only auto-scroll if the cursor is not in the chat window,
++		-- or if it is in the chat window and on the last line already.
++		local current_win = vim.api.nvim_get_current_win()
++		if current_win == chat_win then
++			local cursor_line = vim.api.nvim_win_get_cursor(chat_win)[1]
++			local last_line = vim.api.nvim_buf_line_count(M.buffer_nr)
++			-- Allow a small margin (cursor within 2 lines of the end)
++			if cursor_line &lt; last_line - 2 then
++				return
++			end
++		end
++
++		local original_win = current_win
+ 		vim.api.nvim_set_current_win(chat_win)
+ 
+ 		-- Check if input window exists and get its height
+@@ -320,7 +343,8 @@ local function run_tools(tool_calls, history)
+ 				goto continue
+ 			end
+ 
+-			M.append("{{{ Reading " .. args.file .. "\n")
++			local range_label = args.range and (" [" .. args.range .. "]") or ""
++			M.append("{{{ Reading " .. args.file .. range_label .. "\n")
+ 			res.content = tools.read_file(args.file, args.range)
+ 			res.file_range = args.range
+ 			M.append(res.content .. "\n}}}\n")
+@@ -332,7 +356,8 @@ local function run_tools(tool_calls, history)
+ 			end
+ 			local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
+ 			res.content = out
+-			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
++			local multi_label = args.multi and " (multi)" or ""
++			M.append("{{{ " .. out .. multi_label .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
+ 		elseif name == "write" then
+ 			if not args.file then
+ 				M.append("{{{ Write file failed: no file field.\n}}}")
+@@ -614,6 +639,9 @@ function M.continue()
+ 	local cfg = is_coder and coder_config or planner_config
+ 	local agent_label = is_coder and "Coder Agent" or "Agent"
+ 
++	current_state = "waiting"
++	update_input_name()
++
+ 	if config.stream then
+ 		log.info(agent_label .. " executing streaming task")
+ 
+@@ -624,6 +652,8 @@ function M.continue()
+ 			hist,
+ 			function(chunk, err)
+ 				if err then
++					current_state = "idle"
++					update_input_name()
+ 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+ 					return
+ 				end
+@@ -631,6 +661,8 @@ function M.continue()
+ 				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+ 				if chunk.reasoning and #chunk.reasoning &gt; 0 then
+ 					if think_start then
++						current_state = "thinking"
++						update_input_name()
+ 						M.append("{{{ Thinking \n" .. chunk.reasoning)
+ 						think_start = false
+ 					else
+@@ -652,6 +684,8 @@ function M.continue()
+ 			function(data, err)
+ 				log.debug("[UI] got message completed: " .. vim.inspect(data))
+ 				if err then
++					current_state = "idle"
++					update_input_name()
+ 					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
+ 					table.insert(hist, { role = "assistant", content = err })
+ 					return
+@@ -672,12 +706,16 @@ function M.continue()
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 				end
+ 				if not data.tool_calls or #data.tool_calls == 0 then
++					current_state = "idle"
++					update_input_name()
+ 					if is_coder then
+ 						log.debug("[UI] coder finished (no more tool calls)")
+ 					end
+ 					return
+ 				end
+ 
++				current_state = "tools"
++				update_input_name()
+ 				log.debug("[UI] running tools")
+ 				local stop = run_tools(data.tool_calls, hist)
+ 				if stop or hard_stop then
+@@ -694,6 +732,8 @@ function M.continue()
+ 			hist,
+ 			function(fields, err)
+ 				if err then
++					current_state = "idle"
++					update_input_name()
+ 					M.append("{{{ Error\n" .. err .. "\n}}}")
+ 					table.insert(hist, { role = "assistant", content = err })
+ 					return
+@@ -725,6 +765,8 @@ function M.continue()
+ 				end
+ 
+ 				if not fields.tool_calls or #fields.tool_calls == 0 then
++					current_state = "idle"
++					update_input_name()
+ 					if is_coder then
+ 						log.debug("[UI] coder finished (no more tool calls)")
+ 					end
+@@ -732,6 +774,8 @@ function M.continue()
+ 				end
+ 
+ 				vim.schedule(function()
++					current_state = "tools"
++					update_input_name()
+ 					log.debug("[UI] running tools")
+ 					local stop = run_tools(fields.tool_calls, hist)
+ 					if stop or hard_stop then
+</pre>

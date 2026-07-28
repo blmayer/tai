@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 2ee7b7f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 2ee7b7f
+parent <a href=commit-f29f3f9.html>f29f3f9</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-06T11:35:02-03:00
+
+    improves patch ui
+
+    moved tools file
+
+<a href=tree-2ee7b7f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agents/tai.lua
+index b04609c..48d2890 100644
+--- a/lua/tai/agents/tai.lua
++++ b/lua/tai/agents/tai.lua
+@@ -4,7 +4,7 @@ local M = {}
+ local config = require('tai.config')
+ local log = require('tai.log')
+ local provider = require('tai.provider')
+-local tools = require('tai.agents.tools')
++local tools = require('tai.tools')
+ 
+ if not config.root then
+ 	return M
+@@ -28,20 +28,22 @@ INSTRUCTIONS
+ Understand the user's request and gather all the knowledge/context needed.
+ - You can ask the user for more info or details of the task.
+ - If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
++For the first interaction:
++  - Run `ls -R` or `find`.
++  - Read AGENTS.md if found and remember it.
+ If the demand is specific to the current project then:
+ - Explore the code base before delivering the solution, don't guess stuff:
+   - Use the tools available to understand the code base.
+-  - A good starter is `ls -R` or `find`.
+-  - Read AGENTS.md if found.
+   - The imports help you understand the code organization and structure.
++  - Re-read files if you think they changed after the patch. 
+ If code changes are needed:
+ - Patches need precise line numbering, you must know the files you're changing.
+-  - Be consistent with the code base's style.
+-- Don't use the run tool to change files unless explicitly told to.
++- Don't use the shell tool to change or read files unless explicitly told to.
+ - Call the patch tool to implement the changes you want.
+ 
+ RESPONSE FORMAT
+-For text use ASCII/ANSI, be concise, avoid lines &gt; 60cols, don't escape anything.
++For text use ASCII/ANSI, be concise, avoid lines &gt; 60 columns, don't quote or
++escape the text, the response is shown verbatim to the user. No markdown.
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/tools.lua
+similarity index 84%
+rename from lua/tai/agents/tools.lua
+rename to lua/tai/tools.lua
+index 9e982b5..f4e497c 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/tools.lua
+@@ -9,7 +9,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "read_file",
+ 			description =
+-			"Reads the content of a file from the file system. And returns the content with numberred lines.",
++			"Reads the content of a file from the file system. And returns the content with numberred lines. Don't use `cat` command. Use this tool.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -39,7 +39,7 @@ M.defs = {
+ 					changes = {
+ 						type = "array",
+ 						description =
+-						"List of changes to be made, by file. Each change is applied independently on the original file, i.e. the order matters, but line numbers are not updated.",
++						"List of changes to be made, by file. Each change is applied in order, so you must keep track of how line numbers change.",
+ 						items = {
+ 							type = "object",
+ 							properties = {
+@@ -63,7 +63,7 @@ M.defs = {
+ 											lines = {
+ 												type = "string",
+ 												description =
+-												"Range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
++												"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$.",
+ 											},
+ 											content = {
+ 												type = "string",
+@@ -83,12 +83,12 @@ M.defs = {
+ 			}
+ 		}
+ 	},
+-	run = {
++	shell = {
+ 		type = "function",
+ 		["function"] = {
+-			name = "run",
++			name = "shell",
+ 			description =
+-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed.",
++			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Don't use this for reading files.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -113,6 +113,10 @@ function M.pretty_info(tools)
+ 	local pre = "You can use the following tool calls:\n"
+ 	local tools_desc = vim.tbl_map(
+ 		function(t)
++			if not M.defs[t] then
++				return ""
++			end
++
+ 			local desc = M.defs[t]["function"].description
+ 			local props = M.defs[t]["function"].parameters.properties
+ 			local args = "Arguments:\n"
+@@ -135,7 +139,8 @@ local function read_file(file_path)
+ 
+ 	local file = io.open(file_path, "r")
+ 	if not file then
+-		return "[sys] File `" .. file_path .. "` not found."
++		return "[sys] File `" ..
++		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+ 	end
+ 
+ 	local content = file:read("*all")
+@@ -192,7 +197,7 @@ local function dangerous_command(cmd)
+ end
+ 
+ local function run_command(cmd)
+-	log.debug("Running run `" .. cmd .. "`")
++	log.debug("Running `" .. cmd .. "`")
+ 
+ 	local danger = dangerous_command(cmd)
+ 	if danger then
+@@ -261,9 +266,32 @@ local function apply_patch(name, changes)
+ 	-- Apply changes to new buffer (replace with your actual diff content)
+ 	for _, change in ipairs(changes) do
+ 		local file = change.file
++		local buf = nil
++
++		-- Check if file is already open in a buffer
++		for _, b in ipairs(vim.api.nvim_list_bufs()) do
++			if vim.api.nvim_buf_is_loaded(b) then
++				local buf_name = vim.api.nvim_buf_get_name(b)
++				if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
++					buf = b
++					break
++				end
++			end
++		end
+ 
+-		vim.cmd("topleft vnew " .. file)
+-		local buf = vim.api.nvim_get_current_buf()
++		local is_open = false
++		if buf then
++			for _, win in ipairs(vim.api.nvim_list_wins()) do
++				if vim.api.nvim_win_get_buf(win) == buf then
++					is_open = true
++					break
++				end
++			end
++		end
++		if not is_open or not buf then
++			vim.cmd("topleft vnew " .. file)
++			buf = vim.api.nvim_get_current_buf()
++		end
+ 		-- local new_buf = vim.api.nvim_create_buf(0, false)
+ 
+ 		-- Copy lines from current buffer to new buffer
+@@ -288,10 +316,10 @@ local function apply_patch(name, changes)
+ 			elseif operation == "change" then
+ 				-- Replace lines with new content
+ 				local new_lines = vim.split(content, '\n')
+-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
++				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
+ 			elseif operation == "delete" then
+ 				-- Remove lines
+-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, {})
++				vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
+ 			end
+ 		end
+ 
+@@ -336,7 +364,7 @@ function M.run(tool, args)
+ 			return "[sys] missing read_file argument"
+ 		end
+ 		return read_file(args.file_path)
+-	elseif tool == "run" then
++	elseif tool == "shell" then
+ 		if not args.command then
+ 			return "[sys] missing command argument"
+ 		end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index d1d2b46..d6bb804 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,8 +1,7 @@
+ local M = {}
+ local log = require("tai.log")
+-local config = require("tai.config")
+ local tai = require("tai.agents.tai")
+-local tools = require("tai.agents.tools")
++local tools = require("tai.tools")
+ 
+ local bufname = "tai-chat"
+ local input_bufname = "tai-chat-input"
+@@ -91,7 +90,7 @@ local function show_response(fields)
+ 		for _, call in ipairs(fields.tool_calls or {}) do
+ 			local args = call["function"].arguments
+ 
+-			if call["function"].name == "run" then
++			if call["function"].name == "shell" then
+ 				content = content .. "[tai] Running " .. args.command .. "\n"
+ 			elseif call["function"].name == "read_file" then
+ 				content = content .. "[tai] Reading " .. args.file_path .. "\n"
+@@ -137,7 +136,7 @@ local function handle_chat_reply(reply, err)
+ 				local args = call["function"].arguments
+ 
+ 				local out
+-				if name == "run" then
++				if name == "shell" then
+ 					log.debug("Asking for confirmation")
+ 					local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
+ 					if input == 1 then
+</pre>

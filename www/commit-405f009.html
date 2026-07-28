@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 405f009</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 405f009
+parent <a href=commit-1fd60a7.html>1fd60a7</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-20T11:19:40-03:00
+
+    added separated configs for each agent
+
+    - fixed scroll down hiding the user prompt
+
+<a href=tree-405f009.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 93943b2..b1f68d7 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -51,12 +51,13 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+      needed go to 6.
+   3. Show the plan and request authorization and in positive case call the
+      `coder_agent` tool with the detailed list to start the implementation.
+-  4. Verify if the solution implemented works and satisfies the user's request.
+-  5. If it does show a summary of what changed and how the solution works. If
+-     it doesn't generate a new plan based on the current state, with the fixes
+-     needed and call the `coder_agent` tool with the new plan.
+-  6. When the task is finished get the response from the coder agent (if any)
+-     and summarize it to the user.
++  4. When the coder finishes the task get the response from the coder agent
++     (if any) and do a decent code review of the changes: consider coding best
++     practices, check for syntax errors, failing tests (if any), verify if the
++     solution implemented works and satisfies the user's request.
++  5. If it passes go to 6. Else generate a new plan based on the current state,
++     with the fixes needed and call the `coder_agent` tool with the new plan.
++  6. Write a summary of what changed and how the solution works to the user.
+ - Each call to the coder agent starts with a clean context, so if you want the
+   agent to consider past interactions include the content in the prompt.
+ 
+@@ -82,7 +83,11 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - Systematicaly implement each item of the task requested.
+ - Avoid changing anything not extrictly asked for.
+ - ALWAYS use line ranges if given to you instead of reading the whole file.
++- Respect the existing code style, including tabs vs spaces, identation etc.
+ - Call the `patch` tool with the proper arguments to actualy write the changes.
++- Check if your changes are correct by reading the affected parts, building the
++  project or checking linter etc.
++- If tests are avaliable run the necessary ones, be clever to not take too long.
+ - When you finish all tasks tell which files and lines you changed, what you
+   changed in the functions, be detailed.
+ - Your last output is sent to the software architect so please include your
+@@ -102,8 +107,6 @@ to ensure patches are correct and minimal:
+   file's current state by calling the `track_file` or `shell` tools. Beware that
+   a patch is affected by previous ones, so account for line number changes and
+   adjust the numbers.
+-- **Respect existing style:** Follow the existing coding style, indentation,
+-  and naming conventions of the file.
+ - **Valid path verification:** Ensure needed folders exist before creating a
+   new file.
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 7e027ea..57add64 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -141,8 +141,19 @@ local function scroll_down()
+ 		end
+ 		local original_win = vim.api.nvim_get_current_win()
+ 		vim.api.nvim_set_current_win(chat_win)
++		
++		-- Check if input window exists and get its height
++		local scroll_cmd = "normal! zz"
++		if input_win and vim.api.nvim_win_is_valid(input_win) then
++			local input_height = vim.api.nvim_win_get_height(input_win)
++			if input_height &gt; 0 then
++				-- Use z- command to position last line at bottom, accounting for input window space
++				scroll_cmd = "normal! z-"
++			end
++		end
++		
+ 		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
+-		vim.cmd("normal! zt")
++		vim.cmd(scroll_cmd)
+ 		vim.api.nvim_set_current_win(original_win)
+ 	end)
+ end
+@@ -155,7 +166,6 @@ local function add_sep(title)
+ 	end
+ 	M.append("\n" .. result .. "\n")
+ end
+-
+ local function refresh_and_close_folds()
+ 	if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+ 		return
+@@ -641,7 +651,7 @@ function M.code()
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 				end
+ 				if not data.tool_calls or #data.tool_calls == 0 then
+-					log.debug("coder finished")
++					log.debug("[UI] coder finished, handing back to planner")
+ 					-- worker finished the job
+ 					table.insert(
+ 						planner_history,
+@@ -703,7 +713,7 @@ function M.code()
+ 				end
+ 
+ 				if not fields.tool_calls or #fields.tool_calls == 0 then
+-					log.debug("coder finished")
++					log.debug("[UI] coder finished, handing back to planner")
+ 					-- worker finished the job
+ 					table.insert(
+ 						planner_history,
+</pre>

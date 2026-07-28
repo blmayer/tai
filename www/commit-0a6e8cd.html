@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 0a6e8cd</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 0a6e8cd
+parent <a href=commit-3517962.html>3517962</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-22T18:22:02-03:00
+
+    improved agent prompt
+
+<a href=tree-0a6e8cd.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 04fc3c1..5d7e567 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -24,7 +24,7 @@ You MUST adhere to the following criteria when executing the task:
+ - User instructions may overwrite the _CODING GUIDELINES_ section in this
+   developer message.
+ - Use `ls -R` or `find` to explore the project and gather context.
+-- Use `apply_patch` to edit files:
++- Use `patch` to edit files:
+ {
+ 	"changes": [
+ 		{
+@@ -59,7 +59,7 @@ You MUST adhere to the following criteria when executing the task:
+    capable and eager to help with coding.
+ - When your task involves writing or modifying files:
+  - Do NOT tell the user to "save the file" or "copy the code into a file" if
+-   you already created or modified the file using \`apply_patch\`. Instead,
++   you already created or modified the file using `patch`. Instead,
+    reference the file as already saved.
+  - Do NOT show the full contents of large files you have already written,
+    unless the user explicitly asks for them.
+@@ -73,12 +73,15 @@ the following parameters:
+ 	"file_path": "path/to/file",
+ 	"range": "optional range of lines to read"
+ }
+-Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
++Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
++Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
++lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
++last 5 lines: -5:$.",
+ &lt;/read_file&gt;
+-&lt;apply_patch&gt;
+-To edit files, ALWAYS use the `apply_patch` tool. `apply_patch` effectively
++&lt;patch&gt;
++To edit files, ALWAYS use the `patch` tool. `patch` effectively
+ allows you to write/edit files, so pay careful attention to these instructions.
+-To use the `apply_patch` tool, you should call the tool with the following
++To use the `patch` tool, you should call the tool with the following
+ structure:
+ {
+ 	"changes": [
+@@ -97,12 +100,19 @@ structure:
+ The changes will be applied in the order you supply them. So changes to the
+ same file may interact: line numbers may change due to your opearations, so
+ you need so supply them considering that.
++Operations available are:
++- add: adds the content after the line in the range
++- change: substitutes the file's content in the range by the text in content
++- delete: delete the file's content in the range.
++IMPORTANT: range is inclusive and starts at 1. To add text to the start of the
++file use operation: add and lines: 0.
+ The format of the lines is the same as the `read_file` range.
+-&lt;/apply_patch&gt;
++&lt;/patch&gt;
+ &lt;shell&gt;
+ The run commands ALWAYS use the `shell` tool. `shell` run the command in the
+ current directory. You can use this tool to explore the codebase, run builds,
+-do file operations like renaming, changing permissions, etc. Call it like this:
++do file operations like renaming, changing permissions, etc. To use it call the
++`shell` tool with the parameters:
+ {
+ 	"command": "shell pipeline"
+ }
+@@ -130,15 +140,7 @@ Before coding, always:
+ Routinely verify your code works as you work through the task, especially any
+ deliverables to ensure they run properly. Don't hand back to the user until you
+ are sure that the problem is solved.
+-Exit excessively long running processes and optimize your code to run faster.
+ &lt;/verification&gt;
+-&lt;efficiency&gt;
+-Efficiency is key. you have a time limit. Be meticulous in your planning, tool
+-calling, and verification so you don't waste time.
+-&lt;/efficiency&gt;
+-&lt;final_instructions&gt;
+-Never use editor tools to edit files. Always use the \`apply_patch\` tool.
+-&lt;/final_instructions&gt;
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 29835ff..cf4b215 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -374,8 +374,8 @@ function M.run(tool, args)
+ 		if not args.changes then
+ 			return "[sys] missing changes argument"
+ 		end
+-		vim.schedule(function() apply_patch(args.name, args.changes) end)
+-		return "[sys] patch received and submitted for user approval"
++		vim.schedule_wrap(apply_patch(args.name, args.changes))
++		return "[sys] patch applied and submitted for user approval"
+ 	end
+ 
+ 	return "[sys] Unknown tool `" .. tool .. "`"
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 741ed72..dd6c517 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -73,7 +73,6 @@ local function add_sep()
+ end
+ 
+ local function process_response(fields)
+-	vim.schedule(function()
+ 	log.debug("Showing response")
+ 	M.open()
+ 
+@@ -84,30 +83,39 @@ local function process_response(fields)
+ 	if fields.content and fields.content ~= "" then
+ 		M.append_to_buffer(fields.content .. "\n")
+ 	end
++	if not fields.tool_calls or #fields.tool_calls == 0 then
++		return
++	end
+ 
+-	if fields.tool_calls then
++	vim.schedule(function()
+ 		local results = {}
+ 		for _, call in ipairs(fields.tool_calls or {}) do
+ 			local name = call["function"].name
+ 			local args = call["function"].arguments
+ 
++			local res = {
++				role = "tool",
++				name = name,
++				tool_call_id = call.id
++			}
+ 			if name == "shell" then
+ 				log.debug("Asking for confirmation")
+-				local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
+-				if input == 1 then
+-					log.debug("Confirmed")
+-					M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+-					out = tools.run(name, args)
+-				else
+-					log.debug("Declined")
+-					out = "[sys] User declined"
+-				end
++					local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
++					if input == 1 then
++						log.debug("Confirmed")
++						M.append_to_buffer("[tai] Running " .. args.command .. "\n")
++						res.content = tools.run(name, args)
++					else
++						log.debug("Declined")
++						res.content = "[sys] User declined"
++					end
+ 			elseif name == "read_file" then
+ 				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
+-				out = tools.run(name, args)
++				res.content = tools.run(name, args)
++				res.file_path = args.file_path
+ 			elseif name == "patch" then
+ 				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
+-				out = tools.run(name, args)
++				res.content = tools.run(name, args)
+ 				for _, change in ipairs(args.changes) do
+ 					M.append_to_buffer("\t" .. change.file .. ":\n")
+ 					for _, hunk in ipairs(change.hunks) do
+@@ -123,22 +131,10 @@ local function process_response(fields)
+ 					end
+ 				end
+ 			end
+-			table.insert(
+-				results,
+-				{
+-					role = "tool",
+-					name = name,
+-					content = out,
+-					tool_call_id = call.id
+-				}
+-			)
++			table.insert(results, res)
+ 		end
+ 		return tai.task(results, process_response)
+-	end
+-	if not fields.tool_calls and not fields.content then
+-		M.append_to_buffer("[tai] Received empty reply.")
+-	end
+-end)
++	end)
+ end
+ 
+ local function send_input()
+</pre>

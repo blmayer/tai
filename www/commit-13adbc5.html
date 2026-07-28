@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 13adbc5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 13adbc5
+parent <a href=commit-524b63f.html>524b63f</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-24T19:38:16-03:00
+
+    small changes:
+
+    - config cleanup
+    - agent prompt patches
+    - read_file no longer keeps files updated
+    - added connect_file description to prompt
+    - patch tool now saves the file
+
+<a href=tree-13adbc5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index a3e5398..f4332e3 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -20,8 +20,9 @@ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
+ Output rules:
+ - Do not use Markdown.
+ - Do not wrap content in quotes/backticks or escape it unless the user asked.
+-- Thinking output is not shown to the user, add it to the text output if needed.
+-
++- Never return only whitespace or newline characters. If there is no meaningful
++  text to return, return an empty string or a brief message like "Done" or
++  "No output". Do not return just "\n" or similar.
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+   assumptions.
+@@ -45,8 +46,6 @@ Workflow:
+   task.
+ - If you edit code: keep changes minimal and consistent, ignore unrelated issues,
+   update docs if user-facing and keep the style consistent.
+-- New or changed files will not appear updated for commands as they are in the 
+-  session's buffer until the user saves it.
+ - Keep the user informed of your choices during the process.
+ - Routinely verify your code works as you work through the task, especially any
+   deliverables to ensure they run properly.
+@@ -84,9 +83,15 @@ last 5 lines: -5:$.",
+ ## read_file
+ To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+ content of a file from the file system, or if given, a range of lines, and
+-returns the content. The file content is automatically kept updated in the
+-conversation history - even if a read_file call was several messages ago, it
+-reflects the current state of the file. DO NOT re-read files unnecessarily.
++returns the content. DO NOT re-read files unnecessarily. If you need the same
++file many times better to use `connect_file`.
++
++## connect_file
++Use `connect_file` to track files that are being actively worked on. It works
++like `read_file` but keeps the file connected so its content stays updated in
++the conversation as you make changes. This is useful for files you're editing
++or referencing frequently throughout a task. The content will automatically
++refresh when you make changes to the file.
+ 
+ ## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
+@@ -150,7 +155,7 @@ function M.task(msgs, callback)
+ 		function(data, err)
+ 			local response = { role = "assistant" }
+ 			if err then
+-				return callback({error = err})
++				return callback({ error = err })
+ 			end
+ 			response.content = data.content
+ 			response.tool_calls = data.tool_calls
+@@ -161,7 +166,6 @@ function M.task(msgs, callback)
+ 	)
+ end
+ 
+-
+ function M.add_to_history(msg)
+ 	provider.add_to_history(msg)
+ end
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 6b782c0..98f57cf 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -1,46 +1,15 @@
+ local M = {}
+-
+ local log = require("tai.log")
+ 
+-local function find_tai_root()
+-	local current = vim.fn.getcwd()
+-	while current ~= "/" do
+-		local tai_file = current .. "/.tai"
+-		if vim.fn.filereadable(tai_file) == 1 then
+-			return current
+-		end
+-		current = vim.fn.fnamemodify(current, ":h")
+-	end
+-	return nil
+-end
+-
+-local root_path = find_tai_root()
+-if not root_path then
+-	return M
++M.root = vim.fn.getcwd()
++while vim.fn.filereadable(M.root .. "/.tai") == 0 do
++	M.root = vim.fn.fnamemodify(M.root, ":h")
+ end
+ 
+-M.model = "devstral-medium-latest"
+-M.provider = "z_ai"
+-M.use_tools = true
+-M.root = root_path
++log.debug("Root is " .. M.root)
+ 
+-local file = io.open(M.root .. "/.tai", "r")
+-if file then
+-	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
+-	file:close()
+-	if not ok then
+-		log.error("failed to read config, using defaults")
+-	end
+-	if data and type(data) == 'table' then
+-		M.model = data.model or M.model
+-		M.provider = data.provider or M.provider
+-		M.use_tools = data.use_tools
+-		if M.use_tools == nil then
+-			M.use_tools = true
+-		end
+-		M.options = data.options
+-		M.think = data.think or nil
+-	end
++if not M.root then
++	return M
+ end
+ 
+ function M.reload()
+@@ -70,4 +39,7 @@ function M.reload()
+ 
+ 	return true
+ end
++
++M.reload()
++
+ return M
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index af8a024..211a5f8 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -1,8 +1,8 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local ui = require("tai.ui")
+ local config = require("tai.config")
++local ui = require("tai.ui")
+ 
+ function M.setup(opts)
+ 	log.set_level(opts.log_level or log.DEBUG)
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 299bad2..5719704 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -60,6 +60,10 @@ function M.request(model_config, msgs, format, callback)
+ 			body[k] = v
+ 		end
+ 	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+@@ -87,6 +91,15 @@ function M.request(model_config, msgs, format, callback)
+ 			fields.token_usage = parsed.usage.total_tokens
+ 		end
+ 
++		-- Extract reasoning details from OpenRouter response
++		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
++			local msg = parsed.choices[1].message
++			local reasoning_text = msg.reasoning or msg.reasoning_content
++			if reasoning_text and reasoning_text ~= "" then
++				fields.reasoning_details = { { text = reasoning_text } }
++			end
++		end
++
+ 		callback(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 286198c..b84b9b6 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -44,7 +44,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "connect_file",
+ 			description =
+-			"Adds a file's content to the conversation and keeps it updated. It takes the same parameters as read_file. Use this to keep track of files that are accessed ",
++			"Adds a file's content to the conversation and keeps it updated. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -59,7 +59,7 @@ M.defs = {
+ 					}
+ 				},
+ 				additionalProperties = false,
+-				required = { "file", "range" }
++				required = { "file" }
+ 			}
+ 		}
+ 	},
+@@ -271,7 +271,6 @@ function M.read_file(file_path, range)
+ 	return numbered_content
+ end
+ 
+-
+ function M.run_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
+@@ -330,10 +329,14 @@ function M.apply_patch(name, file, changes)
+ 		end
+ 	end
+ 	if not is_open or not buf then
++		-- File not loaded yet, create new buffer and window
+ 		vim.cmd("topleft vnew " .. file)
+ 		buf = vim.api.nvim_get_current_buf()
+ 	end
+ 
++	-- If buffer already exists (visible or not), reuse it directly.
++	-- No need to open a window since we modify via nvim_buf_set_lines API.
++
+ 	-- Apply changes to new buffer
+ 	-- vim.api.nvim_buf_set_lines is 0 indexed
+ 	local line_shift = 0
+@@ -387,8 +390,10 @@ function M.apply_patch(name, file, changes)
+ 			line_shift = line_shift - old_line_count
+ 		end
+ 	end
+-	log.debug("Patch applied")
+-	return "[sys] patch applied"
++
++	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
++	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
++	return "[sys] Patched " .. file
+ end
+ 
+ function M.refresh_connected_files(history)
+@@ -396,7 +401,7 @@ function M.refresh_connected_files(history)
+ 	local latest = {}
+ 	for i = #history, 1, -1 do
+ 		local msg = history[i]
+-		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
++		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+ 			local key = msg.file_path .. "::" .. (msg.file_range or "")
+ 			if latest[key] then
+ 				msg.content = "[sys] content shown in newer call"
+@@ -410,7 +415,7 @@ function M.refresh_connected_files(history)
+ 
+ 	-- Refresh remaining (latest) connect_file messages.
+ 	for _, msg in ipairs(history or {}) do
+-		if msg and msg.role == "tool" and msg.name == "read_file" and msg.file_path then
++		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
+ 			msg.content = M.read_file(msg.file_path, msg.file_range or "")
+ 		end
+ 	end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 462e8f0..945958f 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -279,6 +279,13 @@ local function process_response(fields)
+ 		M.append_to_buffer("[tai] " .. fields.error .. "\n")
+ 		return
+ 	end
++
++	-- Display reasoning details (interleaved thinking) folded
++	if fields.reasoning_details and #fields.reasoning_details &gt; 0 then
++		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "\n}}}")
++		vim.schedule(function() refresh_and_close_folds() end)
++	end
++
+ 	if fields.content and fields.content ~= "" then
+ 		M.append_to_buffer(fields.content .. "\n")
+ 	end
+@@ -309,7 +316,7 @@ local function send_input()
+ 
+ 		vim.schedule(function()
+ 			add_sep()
+-			M.append_to_buffer(input .. "\n")
++			M.append_to_buffer(input .. "\n---\n")
+ 		end)
+ 
+ 		log.debug("got input: " .. input)
+</pre>

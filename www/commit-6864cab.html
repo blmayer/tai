@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 6864cab</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 6864cab
+parent <a href=commit-36bcd3b.html>36bcd3b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-07-30T15:46:45-03:00
+
+    nvim: fixed operator
+
+    list: format most file
+
+<a href=tree-6864cab.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/chat.lua b/nvim-tai/chat.lua
+index f6a665e..5d9f75c 100644
+--- a/nvim-tai/chat.lua
++++ b/nvim-tai/chat.lua
+@@ -71,7 +71,7 @@ function M.send_chat(messages)
+ 		end)
+ 		return nil
+ 	end
+-	vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
++	--vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
+ 
+ 	local ok, parsed = pcall(json.decode, response)
+ 	if not ok then
+diff --git a/nvim-tai/init.lua b/nvim-tai/init.lua
+index 836c9ff..05262fc 100644
+--- a/nvim-tai/init.lua
++++ b/nvim-tai/init.lua
+@@ -5,63 +5,72 @@ local project = require("tai.project")
+ local chat = require("tai.chat")
+ 
+ function M.setup(opts)
+-  require("tai.project").init_project_prompt()
++	require("tai.project").init_project_prompt()
+ end
+ 
+ function M.prompt_input()
+-  ui.input("Tai Input: ", function(input)
+-    if input and input ~= "" then
+-      local result = chat.send_chat(input)
+-      ui.show_output_in_vsplit(result)
+-    end
+-  end)
++	ui.input("Tai Input: ", function(input)
++		if input and input ~= "" then
++			local result = chat.send_chat(input)
++			ui.show_output_in_vsplit(result)
++		end
++	end)
+ end
+ 
+ function M.prompt_full_file()
+-  local path = vim.fn.expand("%:p")
++	local path = vim.fn.expand("%:p")
+ 
+-  ui.input("Tai Input: ", function(user_input)
+-    if not user_input or user_input == "" then return end
+-    local result = project.request_file_prompt(path, user_input)
+-    ui.show_response(result)
+-  end)
++	ui.input("Tai Input: ", function(user_input)
++		if not user_input or user_input == "" then return end
++		local result = project.request_file_prompt(path, user_input)
++		ui.show_response(result)
++	end)
+ end
+ 
+ function M.operator_send(type)
+-  local old_reg = vim.fn.getreg('"')
+-  vim.cmd('normal! gv"zy')
+-  local text = vim.fn.getreg("z")
+-  vim.fn.setreg('"', old_reg)
++	local old_reg = vim.fn.getreg('"')
++	vim.cmd('normal! gv"zy')
++	local text = vim.fn.getreg("z")
++	vim.fn.setreg('"', old_reg)
+ 
+-  local result = chat.send_chat(text)
+-  ui.show_output_in_vsplit(result)
++	local result = project.process_request(text)
++	ui.show_response(result)
+ end
+ 
+ function M.operator_send_with_prompt(type)
+-  local old_reg = vim.fn.getreg('"')
+-  vim.cmd('normal! gv"zy')
+-  local text = vim.fn.getreg("z")
+-  vim.fn.setreg('"', old_reg)
++	local old_reg = vim.fn.getreg('"')
++	vim.cmd('normal! gv"zy')
++	local text = vim.fn.getreg("z")
++	vim.fn.setreg('"', old_reg)
+ 
+-  ui.input("Tai Input: ", function(prompt)
+-    local full = prompt .. "\n\n" .. text
+-    local result = chat.send_chat(full)
+-    ui.show_output_in_vsplit(result)
+-  end)
++	ui.input("Tai Input: ", function(prompt)
++		local full = prompt .. "\n\n" .. text
++		local result = project.process_request(full)
++		ui.show_response(result)
++	end)
+ end
+ 
+ function M.insert_response()
+-  ui.input("Tai Insert: ", function(input)
+-    local result = chat.send_chat(input)
+-    ui.insert_response(result)
+-  end)
++	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++	local line = vim.api.nvim_get_current_line()
++
++	local filename = vim.fn.expand("%:p")
++
++	local location = string.format("line %d, column %d", row, col)
++	local payload = string.format(
++		"I'm edditing %s with cursor at %s, the current line content is (inside backticks): ```%s```. Please continue that line, send **ONLY** the new text, don't send commentary or instructions. Your response is appended to the end of the cursor.",
++		filename, location, line)
++
++	local result = project.process_request(payload)
++	print(result.text)
++	ui.insert_response(result)
+ end
+ 
+ function M.replace_visual()
+-  ui.input("Tai Replace: ", function(input)
+-    local result = chat.send_chat(input)
+-    ui.replace_visual_selection(result)
+-  end)
++	ui.input("Tai Replace: ", function(input)
++		local result = project.process_request(input)
++		ui.replace_visual_selection(result)
++	end)
+ end
+ 
+ return M
+diff --git a/nvim-tai/project.lua b/nvim-tai/project.lua
+index 20c4163..2560870 100644
+--- a/nvim-tai/project.lua
++++ b/nvim-tai/project.lua
+@@ -73,15 +73,14 @@ function M.request_file_prompt(filepath, prompt)
+ end
+ 
+ function M.process_request(prompt)
+-	vim.notify("[tai] processing request: " .. prompt, vim.log.levels.TRACE)
+ 	local messages = vim.deepcopy(history)
+ 	table.insert(messages, { role = "user", content = prompt })
+ 
+ 	local reply = chat.send_chat(messages)
+ 	if not reply then return nil end
+-	vim.notify("[tai] received response: text: " .. reply.text or "" .. "\npatch: " .. reply.patch or "", vim.log.levels.TRACE)
++	--vim.api.nvim_echo({{"[tai] received response: text: " .. reply.text or "" .. "\npatch: " .. reply.patch or "", "None"}}, false, {})
+ 
+-	table.insert(history, { role = "assistant", content = reply })
++	table.insert(history, { role = "assistant", content = vim.fn.json_encode(reply) })
+ 	return reply
+ end
+ 
+diff --git a/nvim-tai/ui.lua b/nvim-tai/ui.lua
+index 1f82f56..dc5359b 100644
+--- a/nvim-tai/ui.lua
++++ b/nvim-tai/ui.lua
+@@ -2,70 +2,78 @@ local M = {}
+ 
+ 
+ function M.show_response(fields)
+-  if not fields.text and not fields.patch then
+-    vim.notify("[tai] response fields empty")
+-    return
+-  end
+-  local lines = vim.split(fields.text .. fields.patch or "", "\n", { trimempty = true })
+-
+-  vim.schedule(function()
+-    vim.cmd("vnew")
+-    local new_win = vim.api.nvim_get_current_win()
+-    vim.api.nvim_win_set_width(new_win, 60)
+-    local bufnr = vim.api.nvim_get_current_buf()
+-
+-    -- Set buffer options to make it a scratch window
+-    vim.bo[bufnr].buftype = "nofile"
+-    vim.bo[bufnr].bufhidden = "wipe"
+-    vim.bo[bufnr].swapfile = false
+-    vim.bo[bufnr].modifiable = true
+-    vim.bo[bufnr].filetype = "tai-output"
+-
+-    -- Insert content
+-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+-    vim.api.nvim_command("au BufDelete &lt;buffer&gt; lua require('tai').apply_patch('"..fields.patch.."')")
+-
+-    -- Optional: prevent accidental edits
+-    vim.bo[bufnr].modifiable = false
+-  end)
++	local content = ""
++	if fields.text then
++		content = fields.text
++	end
++
++	if fields.patch then
++		content = content .. "\n\n------------------\nPatch:\n\n" .. fields.patch
++		vim.api.nvim_command("au BufDelete &lt;buffer&gt; lua require('tai').apply_patch('" .. fields.patch .. "')")
++	end
++	local lines = vim.split(content, "\n", { trimempty = true })
++
++	vim.schedule(function()
++		vim.cmd("vnew")
++		local new_win = vim.api.nvim_get_current_win()
++		vim.api.nvim_win_set_width(new_win, 80)		-- this is THE number
++		local bufnr = vim.api.nvim_get_current_buf()
++
++		-- Set buffer options to make it a scratch window
++		vim.bo[bufnr].buftype = "nofile"
++		vim.bo[bufnr].bufhidden = "wipe"
++		vim.bo[bufnr].swapfile = false
++		vim.bo[bufnr].modifiable = true
++		vim.bo[bufnr].filetype = "tai-output"
++
++		-- Insert content
++		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++
++		-- Optional: prevent accidental edits
++		vim.bo[bufnr].modifiable = false
++	end)
+ end
+ 
+ -- Insert the content at the cursor (insert mode)
+ function M.insert_response(content)
+-  local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+-  local lines = vim.split(content, "\n", { plain = true })
+-  local bufnr = vim.api.nvim_get_current_buf()
++	if not content.text then
++		return
++	end
++
++	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++	local lines = vim.split(content.text, "\n", { plain = true })
++	local bufnr = vim.api.nvim_get_current_buf()
+ 
+-  local current_line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
+-  local before = current_line:sub(1, col)
+-  local after = current_line:sub(col + 1)
++	local current_line = vim.api.nvim_buf_get_lines(bufnr, row - 1, row, false)[1] or ""
++	local before = current_line:sub(1, col)
++	local after = current_line:sub(col + 1)
+ 
+-  lines[1] = before .. lines[1]
+-  lines[#lines] = lines[#lines] .. after
++	lines[1] = before .. lines[1]
++	lines[#lines] = lines[#lines] .. after
+ 
+-  vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, lines)
++	vim.api.nvim_buf_set_lines(bufnr, row - 1, row, false, lines)
+ end
+ 
+ -- Replace selected text (visual mode)
+ function M.replace_visual_selection(content)
+-  local _, csrow, cscol, _ = unpack(vim.fn.getpos("'&lt;"))
+-  local _, cerow, cecol, _ = unpack(vim.fn.getpos("'&gt;"))
+-  local bufnr = vim.api.nvim_get_current_buf()
++	local _, csrow, cscol, _ = unpack(vim.fn.getpos("'&lt;"))
++	local _, cerow, cecol, _ = unpack(vim.fn.getpos("'&gt;"))
++	local bufnr = vim.api.nvim_get_current_buf()
+ 
+-  if csrow &gt; cerow or (csrow == cerow and cscol &gt; cecol) then
+-    csrow, cerow = cerow, csrow
+-    cscol, cecol = cecol, cscol
+-  end
++	if csrow &gt; cerow or (csrow == cerow and cscol &gt; cecol) then
++		csrow, cerow = cerow, csrow
++		cscol, cecol = cecol, cscol
++	end
+ 
+-  local replacement = vim.split(content, "\n", { plain = true })
+-  vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
++	local replacement = vim.split(content, "\n", { plain = true })
++	vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
+ end
+ 
+ -- Prompt user for input
+ function M.input(prompt, callback)
+-  vim.ui.input({ prompt = prompt or "Input:" }, function(text)
+-    if text then callback(text) end
+-  end)
++	vim.ui.input({ prompt = prompt or "Input:" }, function(text)
++		if text then callback(text) end
++	end)
+ end
+ 
+ return M
+</pre>

@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 92717db</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 92717db
+parent <a href=commit-7af777f.html>7af777f</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-01-07T21:54:45-03:00
+
+    reverted patch format
+
+<a href=tree-92717db.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 3b28ce1..68ef677 100644
+--- a/README.md
++++ b/README.md
+@@ -105,6 +105,5 @@ The .tai file supports the following fields:
+ 
+ 
+ ## License
+-
+-MIT License
++This project is licensed under the MIT License.
+ 
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index b79a5e6..4576578 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -24,7 +24,7 @@ You MUST adhere to the following criteria when executing the task:
+ # Instructions
+ - User instructions may overwrite the _CODING GUIDELINES_ section in this
+   developer message.
+-- Use `ls -R` or `find` to explore the project and gather context.
++- Use `ls -R` to explore the project and gather context.
+ - If you find an agents file you MUST read it, it contains important info.
+ - If completing the user's task requires writing or modifying files:
+   - Your code and final answer should follow these _CODING GUIDELINES_:
+@@ -59,19 +59,20 @@ tool descriptions provided. Use the provider-native tool-calling mechanism.
+ All file paths must be relative to the project's directory and don't start
+ paths with `/` or `./`.
+ 
++Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
++Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
++lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
++last 5 lines: -5:$.",
++
+ ## read_file
+ To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+ content of a file from the file system, or if given, a range of lines. And
+-returns the content with numberred lines. To use it call the `read_file` with
+-the following example parameters:
++returns the content. To use it call the `read_file` with the following
++example parameters:
+ {
+ 	"file_path": "&lt;path/to/file&gt;",
+ 	"range": "&lt;optional range of lines to read&gt;"
+ }
+-Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
+-Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
+-lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
+-last 5 lines: -5:$.",
+ 
+ ## patch
+ To edit files, ALWAYS use the `patch` tool. `patch` effectively
+@@ -81,88 +82,27 @@ structure:
+ {
+ 	"name": "&lt;optional name for the patch&gt;",
+ 	"file": "&lt;path/to/file&gt;",
+-	"diff": "&lt;contextual diff format&gt;"
++	"changes": [
++		{
++			"operation": "&lt;add|change|delete&gt;",
++			"lines": "&lt;range of lines&gt;",
++			"content": "&lt;new content&gt;"
++		}
++	]
+ }
+-The contextual diff format is:
+-
+-&lt;optional context (anchor) lines&gt;
+-&lt;operation&gt;&lt;content&gt;
+-
+-or
+-
+-&lt;operation&gt;&lt;content&gt;
+-&lt;optional context (anchor) lines&gt;
+-
+-Operations are the characters + or -. `+` indicates new content and `-`
+-indicates content to be removed.
+-
+-Context lines are **sequential** lines of the file that are used for locating
+-content. They are only optional with a delete opration and if the changes are
+-unambiguous. If there's any ambiguity, add enough context lines to make the
+-location clear.
+-
+-### Important Notes:
+-- Ensure the context matches the neighbouring content to avoid errors.
+-  - Whitespace counts, it must be byte by byte correct.
+-  - Context is dangerous, use the minimum needed.
+-- Send only one change per patch.
+-- A patch must contain at least one line with an operation `-` or `+`.
+-
+-#### Escaping context lines starting with + or -
+-In order to not confuse the parser escape the lines with `\`, for example:
+-
+-- this is a list item
+-
+-If used in a context, should be escaped:
+-
+-\- this is a list item
+-
+-### Examples:
+-
+-Suppose the file contains:
+-some text
+-more text
+-and more text
+-and more text
+-
+-Change the line "more text":
+--more text
+-+new text
+-
+-Adding new content after "and more text":
+-and more text
+-and more text
+-+new line 1
+-+new line 2
+-
+-Delete the line "more text":
+--more text
+-
+-Changing the first line:
+--some text
+-+new text
+-more text
+-
+-Adding to Empty Files: all new lines MUST start with the `+` prefix:
+-+first line
+-+second line
+-+third line
+-
+-Invalid context: hunk has more than one context:
+-some text
+--more text
+-and more text
+ 
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+-current directory. You can use this tool to explore the codebase, run builds,
+-do file operations like renaming, changing permissions, etc. To use it call the
+-`shell` tool with the parameters:
++project's root directory. You can use this tool to explore the codebase, run
++builds, do file operations like renaming, changing permissions, etc. To use
++it call the `shell` tool with the parameters:
+ {
+ 	"command": "shell pipeline"
+ }
+ Each tool execution gives you a clean env, so paths are reset to the project's
+-folder and any set variables are cleared.
++folder and any set variables are cleared. NEVER USE this tool for reading or
++writing to files, to read files ALWAYS use the `read_file` tool, and for
++writing use the `patch` tool. Don't use absolute paths.
+ 
+ # Exploration
+ If you are not sure about file content or codebase structure pertaining to the
+@@ -185,8 +125,7 @@ Before coding, always:
+ 
+ # Verification
+ Routinely verify your code works as you work through the task, especially any
+-deliverables to ensure they run properly. Don't hand back to the user until you
+-are sure that the problem is solved.
++deliverables to ensure they run properly.
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index b05b7e4..fa17c58 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -77,7 +77,7 @@ function M.request(model_config, msgs, format, callback)
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. request_body)
++	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+ 	vim.system(
+ 		{
+ 			"curl", "-s", "-X", "POST", url,
+@@ -91,7 +91,6 @@ function M.request(model_config, msgs, format, callback)
+ 				return
+ 			end
+ 
+-			log.debug("Request response: " .. obj.stdout)
+ 			if not obj.stdout or obj.stdout == "" then
+ 				return callback(nil, "Received empty response from Mistral")
+ 			end
+@@ -100,6 +99,7 @@ function M.request(model_config, msgs, format, callback)
+ 			if not parsed then
+ 				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+ 			end
++			log.debug("Request response: " .. vim.inspect(parsed))
+ 
+ 			-- Mistral errors are usually at the root level, e.g., parsed.error
+ 			if parsed.error then
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 790fbf7..488abf8 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -9,7 +9,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "read_file",
+ 			description =
+-			"Reads the full content of a file from the file system, or if given, a range of lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
++			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -31,7 +31,8 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "patch",
+-			description = "Writes a change to the file. Returns nil.",
++			description =
++			"Applies the given changes in order. Please double check the line numbers match, they are altered by previouls changes. Returns nil.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -43,14 +44,37 @@ M.defs = {
+ 					file = {
+ 						type = "string",
+ 						description =
+-						"File name for these changes. relative to the current folder (don't start with /)."
++						"File name for these changes. Relative to the project's folder (don't start with /)."
+ 					},
+-					diff = {
+-						type = "string",
+-						description = "Content of the patch in contextual diff format"
++					changes = {
++						type = "array",
++						description =
++						"List of changes to be made. Each change is applied in order, so you must keep track of how line numbers change.",
++						items = {
++							type = "object",
++							properties = {
++								operation = {
++									type = "string",
++									description =
++									"Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
++									enum = { "add", "change", "delete" }
++								},
++								lines = {
++									type = "string",
++									description =
++									"String with the range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line. Note: to add before the first line use 0. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$.",
++								},
++								content = {
++									type = "string",
++									description =
++									"New contente to be inserted. Not used for delete operation. Don't add line numbers.",
++								}
++							},
++							required = { "operation", "lines" }
++						}
+ 					}
+ 				},
+-				required = { "file", "diff" }
++				required = { "file", "changes" }
+ 			}
+ 		}
+ 	},
+@@ -102,7 +126,7 @@ function M.pretty_info(tools)
+ end
+ 
+ -- indexes are 0 based
+-local function parse_range(range)
++local function parse_lines(range)
+ 	-- Handle "$" (last line)
+ 	if range == "$" then
+ 		return -1, -1
+@@ -164,41 +188,45 @@ local function read_file(file_path, range)
+ 		end
+ 		local content = file:read("*all")
+ 		file:close()
+-
+ 		lines = vim.split(content, '\n', { plain = true })
+ 	end
+ 
++	local numbered_lines = {}
+ 	if not range then
+-		return table.concat(lines, "\n")
++		-- If no range is specified, return all lines
++		for i, line in ipairs(lines) do
++			table.insert(numbered_lines, string.format("%d: %s", i, line))
++		end
++		local numbered_content = table.concat(numbered_lines, "\n")
++		log.debug("read_file output: " .. numbered_content)
++		return numbered_content
+ 	end
+ 
+ 	-- Parse the range
+-	local start, end_line = parse_range(range)
++	local start, end_line = parse_lines(range)
+ 	if start &lt; 0 or end_line &lt; 0 then
+-		start = #lines + start + 1
+-		end_line = #lines + end_line + 1
++		start = lines + start + 1
++		end_line = lines + end_line + 1
+ 	end
+ 
+-	local current_line = 1
+-	local res = {}
+-	for _, line in ipairs(lines) do
+-		if current_line &gt;= start and current_line &lt;= end_line then
+-			table.insert(res, line)
++	for i, line in ipairs(lines) do
++		if i &gt;= start and i &lt;= end_line then
++			table.insert(numbered_lines, string.format("%d: %s", i, line))
+ 		end
+ 
+ 		-- Stop early if we've passed the end of our range
+-		if current_line &gt; end_line then
++		if i &gt; end_line then
+ 			break
+ 		end
+-
+-		current_line = current_line + 1
+ 	end
+ 
+-	if #res == 0 then
++	if #numbered_lines == 0 then
+ 		return "[sys] Invalid range: " .. range
+ 	end
+ 
+-	return table.concat(res, "\n")
++	local numbered_content = table.concat(numbered_lines, "\n")
++	log.debug("read_file output: " .. numbered_content)
++	return numbered_content
+ end
+ 
+ local function run_command(cmd)
+@@ -229,176 +257,105 @@ local function run_command(cmd)
+ 	if not output then
+ 		output = "[sys] `" .. cmd .. "` returned null"
+ 	end
++	log.debug("command output: " .. output)
+ 
+ 	return output
+ end
+ 
+-local function parse_diff(diff_text)
+-	local hunk = {
+-		lines = {},
+-		old_lines = {},
+-		new_lines = {}
+-	}
+-
+-	local lines = vim.split(diff_text, '\n', { plain = true })
+-
+-	for i, line in ipairs(lines) do
+-		if line:sub(1, 2) == "\\-" or line:sub(1, 2) == "\\+" then
+-			-- To avoid diffs starting and ending with context
+-			if hunk.order == "op-ctx" then
+-				return nil, "error: context on start and end"
+-			end
+-			hunk.order = "ctx-op"
+-			-- Remove the escape character and treat as context
+-			local unescaped_line = line:sub(2)
+-			table.insert(hunk.lines, unescaped_line)
+-			goto continue_label
+-		end
+-
+-		-- Check for context lines (lines without - or + prefix)
+-		if line:sub(1, 1) ~= "-" and line:sub(1, 1) ~= "+" then
+-			-- To avoid diffs starting and ending with context
+-			if hunk.order == "op-ctx" then
+-				return nil, "error: context on start and end"
+-			end
+-			hunk.order = "ctx-op"
+-			table.insert(hunk.lines, line)
+-			goto continue_label
+-		end
+-
+-		-- Start of a hunk
+-		if line:sub(1, 1) == "-" then
+-		    if #hunk.lines == 0 then
+-			hunk.order = "op-ctx"
+-		    end
+-
+-		    table.insert(hunk.old_lines, line:sub(2))
+-		elseif line:sub(1, 1) == "+" then
+-		    if #hunk.lines == 0 then
+-			hunk.order = "op-ctx"
+-		    end
+-		    table.insert(hunk.new_lines, line:sub(2))
+-		end
+-
+-		::continue_label::
+-	end
+-
+-	log.debug("Parsed hunk: " .. vim.inspect(hunk))
+-	return hunk
+-end
+-
+--- Add a helper function to trim whitespace
+-local function trim(s)
+-	return s:gsub("^%s*(.-)%s*$", "%1")
+-end
+-
+--- Update the context matching logic in apply_diff
+-local function apply_diff(file_path, hunk)
+-	local buf = nil
++local function apply_patch(name, file, changes)
++	log.debug("Patching " .. #changes .. " changes in " .. file)
+ 
+ 	-- Check if file is already open in a buffer
++	local buf = nil
+ 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+ 		if vim.api.nvim_buf_is_loaded(b) then
+-		    local buf_name = vim.api.nvim_buf_get_name(b)
+-		    if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
+-			buf = b
+-			break
+-		    end
++			local buf_name = vim.api.nvim_buf_get_name(b)
++			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
++				buf = b
++				break
++			end
+ 		end
+ 	end
+ 
+ 	local is_open = false
+ 	if buf then
+ 		for _, win in ipairs(vim.api.nvim_list_wins()) do
+-		    if vim.api.nvim_win_get_buf(win) == buf then
+-		        is_open = true
+-		        break
+-		    end
++			if vim.api.nvim_win_get_buf(win) == buf then
++				is_open = true
++				break
++			end
+ 		end
+ 	end
+ 	if not is_open or not buf then
+-		vim.cmd("topleft vnew " .. file_path)
++		vim.cmd("topleft vnew " .. file)
+ 		buf = vim.api.nvim_get_current_buf()
+ 	end
+-	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+-
+-	-- Find the location to apply the patch
+-	local start_line = 1
+-	local found = false
+-
+-	if #hunk.lines &gt; 0 then
+-		-- Search for context lines with trimmed whitespace
+-		for j = 1, #lines - #hunk.lines + 1 do
+-			local match = true
+-			for k = 1, #hunk.lines do
+-				local file_line = trim(lines[j + k - 1])
+-				local patch_line = trim(hunk.lines[k])
+-				if file_line ~= patch_line then
+-					match = false
+-					break
+-				end
+-			end
+-			if match then
+-				found = true
+-				if hunk.order == "ctx-op" then
+-					start_line = j + #hunk.lines
+-				else
+-					start_line = j
+-				end
+-				log.debug("found match on line " .. start_line)
+-				break
+-			end
+-		end
+-	else
+-		if #hunk.old_lines &gt; 0 then
+-			-- Search for old content directly with trimmed whitespace
+-			for j = 1, #lines - #hunk.old_lines + 1 do
+-				local match = true
+-				for k = 1, #hunk.old_lines do
+-					local file_line = trim(lines[j + k - 1])
+-					local patch_line = trim(hunk.old_lines[k])
+-					if file_line ~= patch_line then
+-						match = false
+-						break
+-					end
+-				end
+-				if match then
+-					found = true
+-					start_line = j
+-					log.debug("found match on line " .. start_line)
+-					break
+-				end
+-			end
+-		else
+-			-- Adding to empty file or at the beginning
+-			found = true
+-			start_line = 1
+-			log.debug("adding to empty file at line " .. start_line)
+-		end
+-	end
+ 
+-	if not found then
+-		return false, "could not find location to apply patch"
+-	end
++	-- Apply changes to new buffer (replace with your actual diff content)
++	for _, hunk in ipairs(changes) do
+ 
+-	-- Remove old lines
+-	for j = 1, #hunk.old_lines do
+-		log.debug("removing line")
+-		table.remove(lines, start_line)
+-	end
++		-- local new_buf = vim.api.nvim_create_buf(0, false)
+ 
+-	-- Insert new lines
+-	for j = #hunk.new_lines, 1, -1 do
+-		log.debug("inserting line " .. j)
+-		table.insert(lines, start_line, hunk.new_lines[j])
+-	end
++		-- Copy lines from current buffer to new buffer
++		-- local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
++		-- vim.api.nvim_buf_set_lines(new_buf, 0, -1, false, lines)
++
++		local operation = hunk.operation
++		local lines_str = hunk.lines
++		local content = hunk.content
+ 
+-	-- Write the modified content back to the buffer
+-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
++		-- Parse line range
++		local start, end_line = parse_lines(lines_str)
+ 
+-	return true
++		if operation == "add" then
++			-- Insert content after the specified lines
++			local new_lines = vim.split(content, '\n')
++			if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
++				start = start + 1
++			end
++			vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
++		elseif operation == "change" then
++			-- Replace lines with new content
++			local new_lines = vim.split(content, '\n')
++			vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
++		elseif operation == "delete" then
++			-- Remove lines
++			vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
++		end
++
++		-- -- generate unified diff text directly in Lua
++		-- local new_lines = vim.api.nvim_buf_get_lines(new_buf, 0, -1, false)
++		-- local diff_text = vim.diff(
++		-- 	table.concat(lines, "\n"),
++		-- 	table.concat(new_lines, "\n"),
++		-- 	{ result_type = "unified" }
++		-- )
++
++		-- -- split into lines for display
++		-- local diff_lines = vim.split(diff_text, "\n", { plain = true })
++
++		-- -- create a scratch buffer
++		-- local diff_buf = vim.api.nvim_create_buf(false, true)
++		-- vim.api.nvim_buf_set_lines(diff_buf, 0, -1, false, diff_lines)
++		-- vim.bo[diff_buf].filetype = "diff"
++		-- vim.bo[diff_buf].modifiable = false
++
++		-- local win = vim.api.nvim_get_current_win()
++		-- vim.api.nvim_win_set_buf(win, new_buf)
++
++		-- vim.api.nvim_buf_create_user_command(
++		-- 	buf,
++		-- 	'AcceptPatch',
++		-- 	function()
++		-- 		-- Accept changes (this is the critical part)
++		-- 		vim.cmd('w ' .. file)
++		-- 	end,
++		-- 	{ nargs = 0 }
++		-- )
++	end
+ end
+ 
++-- TODO: there must be an enum for tool names
+ function M.run(tool, args)
+ 	log.debug("Running tool call")
+ 
+@@ -413,25 +370,20 @@ function M.run(tool, args)
+ 		end
+ 		return run_command(args.command)
+ 	elseif tool == "patch" then
+-		if not args.file or not args.diff then
+-			return "[sys] missing file or change arguments"
++		if not args.file then
++			return "[sys] missing file argument"
+ 		end
+-
+-		-- Parse the contextual diff
+-		local hunk, err = parse_diff(args.diff)
+-		if not hunk then
+-			return "[sys] no valid hunks found in patch: " .. err
++		if not args.changes then
++			return "[sys] missing changes argument"
+ 		end
+-
+-		local ok, err = apply_diff(args.file, hunk)
+-		if not ok then
+-			return "[sys] " .. err
+-		else
+-			return "[sys] patch applied and submitted for user approval"
++		local err = apply_patch(args.name, args.file, args.changes)
++		if err then
++			return "[sys] patch error: " .. err
+ 		end
+-	else 
+-		return "[sys] unknown tool `" .. tool .. "`"
++		return "[sys] patch applied and submitted for user approval"
+ 	end
++
++	return "[sys] Unknown tool `" .. tool .. "`"
+ end
+ 
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 3201e4c..eb1d8f2 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -100,8 +100,15 @@ local function run_tools(tool_calls, callback)
+ 			res.content = tools.run(name, args)
+ 			res.file_path = args.file_path
+ 		elseif name == "patch" then
+-			M.append_to_buffer("[tai] Patching file " .. args.file .. ":\n")
+-			M.append_to_buffer(args.diff .. "\n")
++			M.append_to_buffer("[tai] Patching ".. args.file .. "\n")
++			for _, change in ipairs(args.changes) do
++				M.append_to_buffer(string.format(
++				    "Operation: %s, Lines: %s\nContent:\n%s\n",
++				    change.operation,
++				    change.lines,
++				    change.content
++				))
++			end
+ 			res.content = tools.run(name, args)
+ 		end
+ 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
+</pre>

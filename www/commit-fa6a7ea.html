@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai fa6a7ea</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit fa6a7ea
+parent <a href=commit-23ff7c1.html>23ff7c1</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-22T17:47:29-03:00
+
+    nvim: fixed reply with @read command
+
+    - chat: fix variable; made more readable
+    - ui: fixed handling commands and calling the callback
+    - gemini: added text explanation
+
+<a href=tree-fa6a7ea.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index e2e5cb3..d573375 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -1,7 +1,7 @@
+ local M = {}
+ local log = require("tai.log")
+ local config = require('tai.config')
+-
++ 
+ -- Load the appropriate provider
+ local provider
+ if config.provider == 'groq' then
+@@ -9,26 +9,30 @@ if config.provider == 'groq' then
+ elseif config.provider == 'gemini' then
+     provider = require('tai.providers.gemini')
+ else
+-    error('Unknown chat provider: ' .. provider_name)
++    error('Unknown chat provider: ' .. config.provider)
+ end
+-
++ 
+ local history = {
+ 	{ role = "system", content = "You are edditing a project with root at " .. config.root .. "." },
+ 	{ role = "system", content = provider.system_prompt }
+ }
+ 
+ -- Expose provider functions
++ 
+ function M.send(model, prompt)
+ 	local msg = { role = "user", content = prompt }
+ 	table.insert(history, msg)
+-	local reply = provider.send(config.model, history)
+-	local response = vim.json.encode(reply)
+-	log.debug("received reply: " .. response)
+-	table.insert(history, { role = "assistant", content = response })
+-	return reply
++
++	local reply_data = provider.send(config.model, history)
++	log.debug("received reply: " .. vim.json.encode(reply_data))
++	local assistant_message_content = reply_data.content
++	table.insert(history, { role = "assistant", content = assistant_message_content })
++	
++	return reply_data
+ end
+ 
+ M.send_raw = provider.send_raw
+ M.send_raw_async = provider.send_raw_async
+ 
+ return M
++
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 7e2ce94..80ae3ca 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -16,7 +16,13 @@ end
+ function M.prompt_input()
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
+-		project.process_request(input, function(res, err)
++
++		local path = vim.fn.expand("%")
++		local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++		local location = string.format("line %d, column %d", row, col)
++		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
++
++		project.process_request(prompt, function(res, err)
+ 			if err then
+ 				vim.notify("[tai] recieved error: " .. err)
+ 				return
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 142afa3..9f8d991 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -122,6 +122,13 @@ q
+ NOTES
+ You must know the original content of the files affected.
+ 
++USER FACING TEXT
++Supply concise user-facing text in the `text` field.
++- Use maximum of 80 characters per line.
++- You can include ASCII tables, diagrams, art etc if needed.
++- Be concise, use a professional tone to convey the info while beign
++direct. You may use funny language or jokes, something like TARS would do.
++
+ RESPONSE FORMAT
+ **ALWAYS** return a JSON object, no prose, no markdown, with the following format:
+ {
+@@ -303,7 +310,9 @@ function M.send(model, messages)
+ 			function(m) return { role = m.role, content = m.content } end,
+ 			messages
+ 		),
+-		response_format = response_format
++		response_format = {
++			type = "json_object"
++		}
+ 	}
+ 
+ 	local json_data = json.encode(req_body)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index dcd3e0c..53e6b14 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,5 +1,6 @@
+ local M = {}
+ local log = require("tai.log")
++local config = require("tai.config")
+ local command = require("tai.command")
+ local project = require("tai.project")
+ 
+@@ -157,23 +158,29 @@ function M.run_commands(cmds)
+ 	local output = ""
+ 
+ 	for _, cmd in ipairs(cmds) do
++		log.debug("Running command `" .. cmd .. "`")
+ 		-- Check for @read file_name pattern
+ 		if cmd:match("^@read%s+(.+)$") then
+-			local file = cmd:match("^@read%s+(.+)$")
+-			local reply = project.request_append_file(file,
+-				"I added the file requested as system prompt, continue with the task.")
+-			return M.show_response(reply)
+-		end
+-
+-		if not command.validate(cmd.config.allowed_commands) then
+-			output = "[tai] Command " .. cmd .. " is not allowed"
+-		end
+-
+-		local out = command.run(cmd)
+-		if out then
+-			output = output .. "\n\nOutput of ```" .. cmd .. "```:\n" .. out
++			local filepath = cmd:match("^@read%s+(.+)$")
++			local file = io.open(filepath, "r")
++			if file then
++				local content = file:read("*all")
++				file:close()
++				output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
++			else
++				output = output .. "\n\n[tai] File " .. filepath .. "not found"
++			end
+ 		else
+-			output = output .. "\n\n```" .. cmd .. "``` returned null"
++			if not command.validate(cmd, config.allowed_commands) then
++				output = "[tai] Command " .. cmd .. " is not allowed"
++			end
++
++			local out = command.run(cmd)
++			if out then
++				output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
++			else
++				output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
++			end
+ 		end
+ 	end
+ 
+@@ -181,8 +188,9 @@ function M.run_commands(cmds)
+ 		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+ 	end)
+ 
+-	local reply = project.process_request(output)
+-	return M.show_response(reply)
++	project.process_request(output, function(reply, err)
++		M.show_response(reply)
++	end)
+ end
+ 
+ return M
+</pre>

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 7af777f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 7af777f
+parent <a href=commit-53616c9.html>53616c9</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-01-06T12:40:46-03:00
+
+    improved agent prompt
+
+<a href=tree-7af777f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 0ba47b4..3b28ce1 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,6 @@
+ # tai.nvim
+ 
+-&gt; This project contains a simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim.
+-
++&gt; This project contains a **simple Neovim plugin** to send text selections or prompts and receive responses, enabling **interactive workflows** from within Neovim.
+ 
+ ## Providers
+ 
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index e2cfc70..b79a5e6 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -12,12 +12,6 @@ end
+ 
+ local host = vim.uv.os_uname()
+ 
+---- Use `patch` to edit files:
+---{
+---	"name": "optional name for the patch",
+---	"file": "path/to/file",
+---	"diff": "&lt;patch content&gt;"
+---}
+ M.system_prompt = [[
+ Please resolve the user's task by editing and testing the code files in your
+ current code execution session.
+@@ -99,13 +93,29 @@ or
+ &lt;operation&gt;&lt;content&gt;
+ &lt;optional context (anchor) lines&gt;
+ 
+-Context lines are only optional if the changes are unambiguous. If there's any
+-ambiguity, add enough context lines to make the location clear.
+-Operations available are:
+-- Lines starting with `-` indicate old content to be removed
+-- Lines starting with `+` indicate new content to be added
+-- Lines without `-` or `+` prefix are context lines that help locate where the
+-  change should be applied
++Operations are the characters + or -. `+` indicates new content and `-`
++indicates content to be removed.
++
++Context lines are **sequential** lines of the file that are used for locating
++content. They are only optional with a delete opration and if the changes are
++unambiguous. If there's any ambiguity, add enough context lines to make the
++location clear.
++
++### Important Notes:
++- Ensure the context matches the neighbouring content to avoid errors.
++  - Whitespace counts, it must be byte by byte correct.
++  - Context is dangerous, use the minimum needed.
++- Send only one change per patch.
++- A patch must contain at least one line with an operation `-` or `+`.
++
++#### Escaping context lines starting with + or -
++In order to not confuse the parser escape the lines with `\`, for example:
++
++- this is a list item
++
++If used in a context, should be escaped:
++
++\- this is a list item
+ 
+ ### Examples:
+ 
+@@ -143,24 +153,6 @@ some text
+ -more text
+ and more text
+ 
+-### Important Notes:
+-- Ensure the context matches the neighbouring content to avoid errors.
+-  - Whitespace counts, it must be byte by byte correct.
+-  - Context is dangerous, use the minimum needed.
+-- If the patch fails, re-read the file and adjust the context accordingly.
+-  - Don't repeat this more than one time.
+-- Send only one change per patch.
+-- A patch must contain at leat one line with an operation `-` or `+`.
+-
+-#### Escaping context lines starting with + or -
+-In order to not confuse the parser escape the lines with `\`, for example:
+-
+-- this is a list item
+-
+-If used in a context, should be escaped:
+-
+-\- this is a list item
+-
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+ current directory. You can use this tool to explore the codebase, run builds,
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index baf84df..790fbf7 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -47,12 +47,7 @@ M.defs = {
+ 					},
+ 					diff = {
+ 						type = "string",
+-						description =
+-						"Content of the patch in contextual diff format:\n" ..
+-						"&lt;optional context lines&gt;\n" ..
+-						"-&lt;old content&gt;\n" ..
+-						"+&lt;new content&gt;\n" ..
+-						"Context lines are optional if changes are unambiguous."
++						description = "Content of the patch in contextual diff format"
+ 					}
+ 				},
+ 				required = { "file", "diff" }
+@@ -288,31 +283,37 @@ local function parse_diff(diff_text)
+ 		::continue_label::
+ 	end
+ 
+-	log.debug("Parsed hunk: " .. hunk.order .. ": " .. #hunk.lines .. " context lines, " .. #hunk.old_lines .. " removed lines, " .. #hunk.new_lines .. " new lines.")
++	log.debug("Parsed hunk: " .. vim.inspect(hunk))
+ 	return hunk
+ end
+ 
++-- Add a helper function to trim whitespace
++local function trim(s)
++	return s:gsub("^%s*(.-)%s*$", "%1")
++end
++
++-- Update the context matching logic in apply_diff
+ local function apply_diff(file_path, hunk)
+ 	local buf = nil
+ 
+ 	-- Check if file is already open in a buffer
+ 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+ 		if vim.api.nvim_buf_is_loaded(b) then
+-			local buf_name = vim.api.nvim_buf_get_name(b)
+-			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file then
+-				buf = b
+-				break
+-			end
++		    local buf_name = vim.api.nvim_buf_get_name(b)
++		    if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
++			buf = b
++			break
++		    end
+ 		end
+ 	end
+ 
+ 	local is_open = false
+ 	if buf then
+ 		for _, win in ipairs(vim.api.nvim_list_wins()) do
+-			if vim.api.nvim_win_get_buf(win) == buf then
+-				is_open = true
+-				break
+-			end
++		    if vim.api.nvim_win_get_buf(win) == buf then
++		        is_open = true
++		        break
++		    end
+ 		end
+ 	end
+ 	if not is_open or not buf then
+@@ -326,38 +327,47 @@ local function apply_diff(file_path, hunk)
+ 	local found = false
+ 
+ 	if #hunk.lines &gt; 0 then
+-		-- Search for context lines
++		-- Search for context lines with trimmed whitespace
+ 		for j = 1, #lines - #hunk.lines + 1 do
++			local match = true
+ 			for k = 1, #hunk.lines do
+-				if lines[j + k - 1] ~= hunk.lines[k] then
+-					return false, "context mismatch"
++				local file_line = trim(lines[j + k - 1])
++				local patch_line = trim(hunk.lines[k])
++				if file_line ~= patch_line then
++					match = false
++					break
+ 				end
+ 			end
+-
+-			found = true
+-			if hunk.order == "ctx-op" then
+-			        start_line = j + #hunk.lines
+-			else
+-			        start_line = j - #hunk.old_lines
++			if match then
++				found = true
++				if hunk.order == "ctx-op" then
++					start_line = j + #hunk.lines
++				else
++					start_line = j
++				end
++				log.debug("found match on line " .. start_line)
++				break
+ 			end
+-			log.debug("found match on line " .. start_line)
+-			break
+ 		end
+ 	else
+ 		if #hunk.old_lines &gt; 0 then
+-			-- Search for old content directly
++			-- Search for old content directly with trimmed whitespace
+ 			for j = 1, #lines - #hunk.old_lines + 1 do
+ 				local match = true
+ 				for k = 1, #hunk.old_lines do
+-					if lines[j + k - 1] ~= hunk.old_lines[k] then
+-						return false, "old content mismatch"
++					local file_line = trim(lines[j + k - 1])
++					local patch_line = trim(hunk.old_lines[k])
++					if file_line ~= patch_line then
++						match = false
++						break
+ 					end
+ 				end
+-				found = true
+-
+-				start_line = j - #hunk.old_lines + 1
+-				log.debug("found match on line " .. start_line)
+-				break
++				if match then
++					found = true
++					start_line = j
++					log.debug("found match on line " .. start_line)
++					break
++				end
+ 			end
+ 		else
+ 			-- Adding to empty file or at the beginning
+@@ -415,7 +425,7 @@ function M.run(tool, args)
+ 
+ 		local ok, err = apply_diff(args.file, hunk)
+ 		if not ok then
+-			return "[sys] " .. err 
++			return "[sys] " .. err
+ 		else
+ 			return "[sys] patch applied and submitted for user approval"
+ 		end
+</pre>

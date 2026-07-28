@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 4da33c7</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 4da33c7
+parent <a href=commit-c744f7d.html>c744f7d</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-05-20T14:12:35-03:00
+
+    ui improvements
+
+    - started rate limiting task
+
+<a href=tree-4da33c7.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 6862afd..da0833b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -73,6 +73,7 @@ function M.reload()
+ 	M.provider_tools = data.provider_tools
+ 	M.system_prompt = data.system_prompt or nil
+ 	M.custom_prompt = data.custom_prompt or nil
++	M.rpm = data.rpm or 60  -- Default to 60 if not provided
+ 
+ 	return true
+ end
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index c5615ef..2ce10cb 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -1,10 +1,30 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local tools = require("tai.tools")
+ local common = require("tai.provider_common")
+ local config = require("tai.config")
+ 
++-- Rate limiting variables
++local request_count = 0
++local last_reset_time = os.time()
++
++-- Function to check and enforce rate limiting
++local function check_rate_limit()
++    local current_time = os.time()
++    -- Reset the counter if a minute has passed
++    if current_time - last_reset_time &gt;= 60 then
++        request_count = 0
++        last_reset_time = current_time
++    end
++    -- Check if the rate limit is exceeded
++    if config.rpm and request_count &gt;= config.rpm then
++        return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
++    end
++    return true
++end
++
++-- Provider configurations
++
+ -- Provider configurations
+ -- Each provider has:
+ -- - url: The API endpoint URL (can be a function for dynamic URLs)
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index e0f887d..b23c357 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -8,7 +8,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "read",
+ 			description =
+-			"Use this to read a file's content, it will return the file's content or range if given.",
++			"Use this to read a file's content, it will return the file's content or range if given. Line numbers are added.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -131,11 +131,11 @@ M.defs = {
+ 					old_text = {
+ 						type = "string",
+ 						description =
+-						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness."
++						"Content to be changed. Empty means start of file. This must match exactly. Try to find smallest necessary to ensure uniqueness. Don't add line numbers that appear on the read output, they are just for reference."
+ 					},
+ 					new_text = {
+ 						type = "string",
+-						description = "New content to replace old_text in the file"
++						description = "New content to replace old_text in the file."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -211,19 +211,19 @@ function M.read_file(file_path, range)
+ 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
+ 
+ 	if file_path:sub(1, 1) == "/" then
+-		return "[sys] Paths cannot start from root (/). Use relative."
++		return "Paths cannot start from root (/). Use relative."
+ 	end
+ 
+ 	-- Check if file is binary before attempting to read
+ 	if is_binary_file(file_path) then
+-		return "[sys] Binary file detected. Use send_image for images or other binary formats."
++		return "Binary file detected. Use send_image for images or other binary formats."
+ 	end
+ 
+ 	-- Always read from disk to ensure fresh content (buffers can be stale).
+ 	log.debug("reading from file")
+ 	local file = io.open(file_path, "r")
+ 	if not file then
+-		return "[sys] File `" ..
++		return "File `" ..
+ 		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+ 	end
+ 	local content = file:read("*all")
+@@ -243,7 +243,7 @@ function M.read_file(file_path, range)
+ 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
+ 	local int, ok = parse_lines(range)
+ 	if not ok then
+-		return "[sys] Error: Invalid range " .. range
++		return "Error: Invalid range " .. range
+ 	end
+ 
+ 	local start0 = int[1]
+@@ -268,7 +268,7 @@ function M.read_file(file_path, range)
+ 	end
+ 
+ 	if start1 &lt; 1 or end1 &lt; 0 or start1 &gt; nlines or start1 &gt; end1 then
+-		return "[sys] Error: Invalid range " .. range
++		return "Error: Invalid range " .. range
+ 	end
+ 
+ 	for i = start1, end1 do
+@@ -293,7 +293,7 @@ function M.unsafe_command(cmd)
+ 	-- Extract the base command (first word)
+ 	local base_cmd = cmd:match("^%s*(%w+)")
+ 	if not base_cmd and allowed[base_cmd] then
+-		return "[sys] Command " .. base_cmd .. " is not allowed."
++		return "Command " .. base_cmd .. " is not allowed."
+ 	end
+ 
+ 	return false
+@@ -325,7 +325,7 @@ function M.exec_command(cmd)
+ 	handle:close()
+ 
+ 	if not output then
+-		output = "[sys] `" .. cmd .. "` returned null"
++		output = cmd .. "` returned null"
+ 	end
+ 
+ 	return output
+@@ -376,7 +376,7 @@ function M.write(file, content)
+ 	log.debug("Running write_file for: " .. file)
+ 
+ 	if file:sub(1, 1) == "/" then
+-		return "[sys] Paths cannot start from root (/). Use relative."
++		return "Paths cannot start from root (/). Use relative."
+ 	end
+ 
+ 	-- Ensure parent directory exists
+@@ -391,12 +391,12 @@ function M.write(file, content)
+ 	-- Write content to file
+ 	local f = io.open(file, "w")
+ 	if not f then
+-		return "[sys] Error: Could not open file for writing: " .. file
++		return "Error: Could not open file for writing: " .. file
+ 	end
+ 	f:write(content)
+ 	f:close()
+ 
+-	return "[sys] File created: " .. file
++	return "File created: " .. file
+ end
+ 
+ local function normalize_whitespace(str)
+@@ -407,18 +407,18 @@ function M.edit(file, old_text, new_text)
+ 	log.debug("Running edit for: " .. file .. " with old_text: " .. (old_text or "nil"))
+ 
+ 	if file:sub(1, 1) == "/" then
+-		return "[sys] Paths cannot start from root (/). Use relative."
++		return "Paths cannot start from root (/). Use relative."
+ 	end
+ 
+ 	-- Check if file exists
+ 	if vim.fn.filereadable(file) ~= 1 then
+-		return "[sys] Error: File not found: " ..
++		return "Error: File not found: " ..
+ 		    file .. ". Hint: check if it exists with the shell command: ls -R."
+ 	end
+ 
+ 	-- Check if file is binary before attempting to edit
+ 	if is_binary_file(file) then
+-		return "[sys] Binary file detected. Use send_image for images or other binary formats."
++		return "Binary file detected. Use send_image for images or other binary formats."
+ 	end
+ 
+ 	-- Open file in buffer
+@@ -451,7 +451,7 @@ function M.edit(file, old_text, new_text)
+ 		end
+ 
+ 		if j &lt; #old_lines then
+-			return "[sys] Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
++			return "Error: old text only matched " .. j .. " of " .. #old_lines .. " lines."
+ 		end
+ 
+ 		-- Replace the line matching old_text with new_text
+@@ -463,7 +463,7 @@ function M.edit(file, old_text, new_text)
+ 	-- Save the buffer to disk
+ 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
+ 
+-	return "[sys] Patch applied with success."
++	return "Patched " .. file
+ end
+ 
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index bd62702..05b60b4 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -231,12 +231,12 @@ local function run_tools(tool_calls, history)
+ 		elseif name == "read" then
+ 			if not args.file then
+ 				M.append("{{{ Attaching file failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
++				res.content = "missing file field"
+ 				goto continue
+ 			end
+ 			if vim.fn.filereadable(args.file) ~= 1 then
+ 				M.append("{{{ Attaching " .. args.file .. " failed\nFile not readable.}}}\n")
+-				res.content = "[sys] file does not exist or is not readable"
++				res.content = "file does not exist or is not readable"
+ 				goto continue
+ 			end
+ 
+@@ -247,43 +247,31 @@ local function run_tools(tool_calls, history)
+ 		elseif name == "edit" then
+ 			if not args.file then
+ 				M.append("{{{ Patching file failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
++				res.content = "missing file field"
+ 				goto continue
+ 			end
+-			M.append(string.format(
+-				"File: %s\nOld Content:\n%s\nNew Content:\n%s\n",
+-				args.file,
+-				args.old_text,
+-				args.new_text
+-			))
+-
+ 			local out = tools.edit(args.file, args.old_text, args.new_text)
+ 			res.content = out
+-			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
++			M.append("{{{ " .. out .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
+ 		elseif name == "write" then
+ 			if not args.file then
+ 				M.append("{{{ Write file failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
++				res.content = "missing file field"
+ 				goto continue
+ 			end
+ 			if not args.content then
+ 				M.append("{{{ Write file failed: no content field.\n}}}")
+-				res.content = "[sys] missing content field"
++				res.content = "missing content field"
+ 				goto continue
+ 			end
+-			M.append(string.format(
+-				"File: %s\nContent:\n%s\n",
+-				args.file,
+-				args.content
+-			))
+ 
+ 			local out = tools.write(args.file, args.content)
+ 			res.content = out
+-			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
++			M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
+ 		elseif name == "coder_agent" then
+ 			if not args.prompt then
+ 				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
+-				res.content = "[sys] missing prompt field"
++				res.content = "Missing prompt field"
+ 				goto continue
+ 			end
+ 
+@@ -304,17 +292,17 @@ local function run_tools(tool_calls, history)
+ 		elseif name == "send_image" then
+ 			if not args.file then
+ 				M.append("{{{ Addind image failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
++				res.content = "Missing file field"
+ 				goto continue
+ 			end
+ 
+ 			local image_url, err = tools.image_data_url(args.file)
+ 			if not image_url then
+ 				M.append("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
+-				res.content = "[sys] Error: " .. err
++				res.content = "Error: " .. err
+ 				goto continue
+ 			end
+-			res.content = "[sys] Image " .. args.file .. " added."
++			res.content = "Image " .. args.file .. " added."
+ 			M.append("{{{ Adding image " .. args.file .. "\n}}}")
+ 
+ 			local content = { }
+@@ -330,7 +318,7 @@ local function run_tools(tool_calls, history)
+ 			})
+ 			res.content = content
+ 		else
+-			res.content = "[sys] Invalid tool name: " .. (name or "")
++			res.content = "Invalid tool name: " .. (name or "")
+ 			M.append("{{{ Invalid tool name\n}}}\n")
+ 		end
+ 
+@@ -393,12 +381,12 @@ local function send_input()
+ 				M.append("{{{ Stopped at " .. args.command .. "\n}}}\n")
+ 				-- Add to history
+ 				hard_stop = true
+-				res.content = "[sys] User stopped execution."
++				res.content = "User stopped execution."
+ 			else
+ 				log.debug("Declined")
+ 				M.append("{{{ Declined " .. args.command .. "\n\n}}}\n")
+ 				-- Add to history
+-				res.content = "[sys] User declined running this command"
++				res.content = "User declined running this command"
+ 				-- Treat any other input as decline
+ 				log.debug("Declined (invalid response)")
+ 			end
+@@ -429,7 +417,7 @@ end
+ 
+ function M.stop()
+ 	hard_stop = true
+-	M.append("[tai] Stopped by user\n")
++	M.append("\n[tai] Stopped by user\n")
+ end
+ 
+ vim.keymap.set("n", "&lt;CR&gt;", send_input, { buffer = M.input_buffer_nr })
+@@ -679,7 +667,7 @@ function M.code()
+ 				if data.error then
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 				end
+-				if not data.tool_calls or #data.tool_calls == 0 and coder_call then
++				if (not data.tool_calls or #data.tool_calls == 0) and coder_call then
+ 					log.debug("[UI] coder finished, handing back to planner")
+ 					-- worker finished the job
+ 					coder_call.content = coder_history[#coder_history].content
+</pre>

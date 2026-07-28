@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 2f91bc5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 2f91bc5
+parent <a href=commit-736c767.html>736c767</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-05-17T14:35:56-03:00
+
+    improved agent switching logic
+
+<a href=tree-2f91bc5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 39cf2c4..be29145 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -317,7 +317,11 @@ function M.update_fields(fields, chunk)
+ 	end
+ 
+ 	if chunk.content then
+-		fields.content = (fields.content or "") .. chunk.content
++		if type(chunk.content) == "table" then
++			fields.content = chunk.content.text
++		else
++			fields.content = (fields.content or "") .. chunk.content
++		end
+ 	end
+ 
+ 	if chunk.reasoning then
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 1818466..6e31df0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -297,6 +297,7 @@ local function run_tools(tool_calls, history)
+ 				{ role = "user", content = args.prompt }
+ 			}
+ 			current_agent = "coder"
++			M.update_chat_name()
+ 
+ 			M.code()
+ 			goto next
+@@ -367,7 +368,7 @@ local function send_input()
+ 		-- Handle pending confirmation
+ 		local history = (current_agent == "coder") and coder_history or planner_history
+ 
+-		if pending_tools then
++		if pending_tools and #pending_tools &gt; 0 then
+ 			log.debug("executing pending tool calls " .. vim.inspect(pending_tools))
+ 			local call = pending_tools[1]
+ 			local args = vim.json.decode(call["function"].arguments)
+@@ -411,7 +412,6 @@ local function send_input()
+ 
+ 			add_sep("___ USER ")
+ 			M.append(input .. "\n")
+-
+ 		end
+ 
+ 		log.debug("[UI] got user input: " .. input)
+@@ -684,6 +684,8 @@ function M.code()
+ 					table.insert(planner_history, coder_call)
+ 					coder_call = nil
+ 					add_sep("___ PLANNER AGENT ")
++					current_agent = "planner"
++					M.update_chat_name()
+ 					M.task()
+ 					return
+ 				end
+</pre>

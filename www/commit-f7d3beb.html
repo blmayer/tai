@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f7d3beb</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f7d3beb
+parent <a href=commit-842d264.html>842d264</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-09T20:25:32-03:00
+
+    improved agent tai and cleanup
+
+<a href=tree-f7d3beb.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+deleted file mode 100644
+index 7b8d8a2..0000000
+--- a/lua/tai/agents/all_rounder.lua
++++ /dev/null
+@@ -1,123 +0,0 @@
+--- all_rounder.lua: Coder agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-local tools = require('tai.agents.tools')
+-
+-if not config.root then
+-	return M
+-end
+-
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-local host = vim.uv.os_uname()
+-
+-M.system_prompt = [[
+-SYSTEM
+-You are a Tai, an excelent coding and system admin agent. You are in charge of
+-implementing the tasks requested in the current project. You will receive high
+-level feature requests or general questions. Your job is to address them.
+-
+-The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+-vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
+-host.machine .. " " .. host.sysname .. [[ machine.
+-
+-]] .. tools.pretty_info(config.all_rounder.tools) .. [[
+-
+-INSTRUCTIONS
+-- Understand the user's request and gather all the knowledge/context needed.
+-- For general questions/chat you can use the steps bellow to help to answer them.
+-- If the task needs multiple steps add a plan to guide you and the user.
+-  - Use `[ ]` and `[X]` to indicate the progress, keep it updated.
+-  - Send the plan right in the beginning.
+-- Explore the code base before delivering the solution:
+-  - Don't suppose anything about the files or the system.
+-  - Use the imports to understand the code organization and structure.
+-  - Use tools if you have access to explore the code base and options.
+-  - You can ask the user for more info or details of the task.
+-  - If you don't know something search for it.
+-- Implement the task considering the constraints given.
+-  - Be consistent with the code base's style.
+-  - Before finishing ask yourself if you correctly addressed the input.
+-- Don't use commands to change files unless explicitly told to.
+-- To actually implement the changes you must call the patch tool.
+-- Normally the task ends with the patch, also respond with notes or instructions.
+-- Only final answers.
+-- Don't return xml formated text, use plain text
+-]]
+-
+-local history = { { role = "system", content = M.system_prompt } }
+-
+-function M.task(task, callback)
+-	log.info("Agent executing task: " .. task)
+-	local msg = { role = "user", content = task }
+-	table.insert(history, msg)
+-	provider.request(
+-		config.all_rounder,
+-		history,
+-		nil,
+-		function(data, err)
+-			local response = { role = "assistant" }
+-			if err then
+-				response.content = err
+-			else
+-				response.content = vim.json.encode(data.content)
+-				response.tool_calls = data.tool_calls
+-			end
+-			table.insert(history, response)
+-
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+-function M.run_tools(tool_calls, callback)
+-	log.info("Agent running tools")
+-
+-	for _, cmd in ipairs(tool_calls) do
+-		local name = cmd["function"]["name"]
+-		local out = tools.run(cmd)
+-		local msg = { role = "tool", content = out, tool_name = name }
+-		table.insert(history, msg)
+-	end
+-
+-	provider.request(
+-		config.all_rounder,
+-		history,
+-		nil,
+-		function(data, err)
+-			local response = { role = "assistant" }
+-			if err then
+-				response.content = err
+-			else
+-				response.content = vim.json.encode(data.content)
+-				response.tool_calls = data.tool_calls
+-			end
+-			table.insert(history, response)
+-
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+-function M.clear_history()
+-	history = { { role = "system", content = M.system_prompt } }
+-end
+-
+-return M
+diff --git a/lua/tai/agents/client.lua b/lua/tai/agents/client.lua
+deleted file mode 100644
+index 3830405..0000000
+--- a/lua/tai/agents/client.lua
++++ /dev/null
+@@ -1,72 +0,0 @@
+--- client.lua: Client for interacting with Mistral API using curl
+-
+-local M = {}
+-
+--- Import necessary modules
+-local log = require('tai.log')
+-local config = require('tai.config')
+-
+--- Mistral API configuration
+-local API_KEY = os.getenv('MISTRAL_API_KEY')
+-local API_URL
+-
+-local curl_req = {
+-	'curl', '-s', '-X', method, url,
+-	'-H', 'Content-Type: application/json',
+-}
+-
+-if config.provider == 'local' then
+-	API_URL = 'http://localhost:11434/api/'
+-else
+-	-- Default to mistral
+-	API_URL = 'https://api.mistral.ai/v1/'
+-	curl_req = { unpack(curl_req), '-H', 'Authorization: Bearer ' .. API_KEY }
+-end
+-
+--- Function to make an asynchronous request to the Mistral API
+-function M.request(method, endpoint, data, callback)
+-	local url = API_URL .. endpoint
+-	local request_body = vim.json.encode(data)
+-
+-	log.debug("Requesting " .. method .. " " .. url .. " with " .. request_body)
+-	vim.system(
+-		{
+-			table.unpack(curl_req), '-d', request_body
+-		},
+-		{ text = true },
+-		function(obj)
+-			if obj.code ~= 0 then
+-				log.error("Mistral API request failed: " .. obj.stderr)
+-				callback(nil, "Request failed: " .. obj.stderr)
+-				return
+-			end
+-
+-			log.debug("Request response: " .. obj.stdout)
+-			local response = vim.json.decode(obj.stdout)
+-			callback(response)
+-		end
+-	)
+-end
+-
+--- Function to make an asynchronous request to the Mistral API
+-function M.upload(method, endpoint, filepath, callback)
+-	local url = API_URL .. endpoint
+-	local request_body = vim.json.encode(data)
+-
+-	log.debug("Uploading " .. method .. " " .. url .. " with " .. request_body)
+-	vim.system({
+-		table.unpack(curl_req),
+-		"-F", "file=@" .. filepath ..";filename=" .. filepath
+-	}, { text = true }, function(obj)
+-		if obj.code ~= 0 then
+-			log.error("Mistral API request failed: " .. obj.stderr)
+-			callback(nil, "Request failed: " .. obj.stderr)
+-			return
+-		end
+-
+-		log.debug("Request response: " .. obj.stdout)
+-		local response = vim.json.decode(obj.stdout)
+-		callback(response)
+-	end)
+-end
+-return M
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index dfafd71..f28944a 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -229,6 +229,7 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
++-- indexes are 0 based
+ local function parse_lines(lines_str)
+ 	-- Handle "$" (last line)
+ 	if lines_str == "$" then
+@@ -238,16 +239,19 @@ local function parse_lines(lines_str)
+ 	-- Handle range (e.g., "2-5")
+ 	local start, end_line = lines_str:match("^(%d+)-(%d+)$")
+ 	if start and end_line then
+-		return tonumber(start), tonumber(end_line)
++		return tonumber(start)-1, tonumber(end_line)-1
+ 	end
+ 
+ 	-- Handle single line (e.g., "3")
+ 	local line = tonumber(lines_str)
++	if line == 0 then
++		return 0,0
++	end
+ 	if line then
+-		return line, line
++		return line-1, line-1
+ 	end
+ 
+-	return 1, 1
++	return 0, 0
+ end
+ 
+ local function apply_patch(name, changes)
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index b16fed5..317ba0c 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -78,11 +78,11 @@ if file then
+ 			tools = data.writer.tools,
+ 			think = data.writer.think or nil
+ 		}
+-		M.all_rounder = {
+-			model = data.all_rounder.model,
+-			options = data.all_rounder.options,
+-			tools = data.all_rounder.tools,
+-			think = data.all_rounder.think or nil
++		M.tai = {
++			model = data.tai.model,
++			options = data.tai.options,
++			tools = data.tai.tools,
++			think = data.tai.think or nil
+ 		}
+ 		if data.allowed_commands then
+ 			M.allowed_commands = data.allowed_commands
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 8efda91..0d45ad0 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -13,24 +13,6 @@ function M.toggle_chat_window()
+ 	ui.toggle_output_window()
+ end
+ 
+-function M.prompt_input()
+-	ui.input(function(input)
+-		if not input or input == "" then return end
+-		log.debug("Received user input: " .. input)
+-
+-		local path = vim.fn.expand("%")
+-		local prompt = string.format("I'm looking at %s. Q: %s", path, input)
+-
+-		ui.append_to_buffer("&gt; " .. input)
+-
+-		vim.schedule(function()
+-			ui.open()
+-		end)
+-
+-		project.process_request(input)
+-	end)
+-end
+-
+ function M.chat()
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
+</pre>

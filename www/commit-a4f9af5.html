@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai a4f9af5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit a4f9af5
+parent <a href=commit-b4a02ae.html>b4a02ae</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-07T15:04:33-03:00
+
+    fixed text width
+
+<a href=tree-a4f9af5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/www/index.html b/www/index.html
+index 8874351..9f6883d 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -78,17 +78,29 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+ 
+ &lt;b&gt;configuring&lt;/b&gt;
+ 
+-tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file in your project root. The following options are supported:
+-
+-&lt;ul&gt;
+-&lt;li&gt;&lt;i&gt;model&lt;/i&gt;: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;provider&lt;/i&gt;: The API provider - one of: groq, gemini, mistral, z_ai, openai, openrouter, stepfun, local, minimax.&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;options&lt;/i&gt;: Provider-specific options passed to the API (e.g., temperature, max_tokens). See your provider's API docs.&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;provider_tools&lt;/i&gt;: Array of provider-side tools (e.g., ["web_browser"] for OpenAI).&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;use_tools&lt;/i&gt;: Boolean to enable/disable agent tools. Default is true. When false, the agent will not have access to file read/write or shell command tools.&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;think&lt;/i&gt;: Enable extended thinking/reasoning for models that support it.&lt;/li&gt;
+-&lt;li&gt;&lt;i&gt;allowed_commands&lt;/i&gt;: Override the default list of allowed shell commands. By default, tai allows: cat, grep, ag, rg, ls, head, tail, wc, diff, sort, uniq, find, file, stat, date, echo, tree, pwd, which, type.&lt;/li&gt;
+-&lt;/ul&gt;
++tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file
++in your project root. The following options are
++supported:
++
++- &lt;i&gt;model&lt;/i&gt;: The model used for chat completions
++  e.g., llama-3.1-70b-versatile, gemini-2.0-flash.
++- &lt;i&gt;provider&lt;/i&gt;: One of: groq, gemini, mistral,
++  z_ai, openai, openrouter, stepfun, local, minimax.
++- &lt;i&gt;options&lt;/i&gt;: Provider-specific options passed
++  to the API (e.g., temperature, max_tokens). See
++  the provider's API docs.
++- &lt;i&gt;provider_tools&lt;/i&gt;: Array of provider-side
++  tools (e.g., ["web_browser"] for OpenAI).
++- &lt;i&gt;use_tools&lt;/i&gt;: Boolean to enable/disable agent
++  tools. Default is true. If false, the agent won't
++  have access to file read/write or the shell tool.
++- &lt;i&gt;think&lt;/i&gt;: Enable extended thinking/reasoning
++  for models that support it.
++- &lt;i&gt;allowed_commands&lt;/i&gt;: Override the default
++  list of allowed shell commands. By default, tai
++  allows: cat, grep, ag, rg, ls, head, tail, wc,
++  diff, sort, uniq, find, file, stat, date, echo,
++  tree, pwd, which, type.
+ 
+ Example .tai file:
+ 
+</pre>

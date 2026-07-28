@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ae86ae1</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ae86ae1
+parent <a href=commit-80741b5.html>80741b5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-16T20:39:02-03:00
+
+    updated index page
+
+<a href=tree-ae86ae1.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/www/index.html b/www/index.html
+index dff3a0e..662d48e 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -6,17 +6,13 @@
+ &lt;style&gt;pre{width:52ch;margin:2ch auto}a{color:#ff00ff}&lt;/style&gt;
+ &lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim&lt;/b&gt;&lt;/i&gt;
+ 
+-a minimal Neovim plugin built to bring AI-powered
+-text and code insights directly to your editor.
+-
+-the plugin sends selections, prompts, or full files
+-for processing using the groq API.
++a minimal Neovim plugin built to bring AI coding
++agents directly to your editor.
+ 
+ 
+ &lt;b&gt;features&lt;/b&gt;
+ 
+-- send motions or visual selections from Neovim
+-- prompt for input and combine it with text or files
++- agents can read files and run commands
+ - responses show up in a split buffer in Neovim
+ - apply patches or run commands
+ - agents create plans for big code changes
+@@ -27,23 +23,16 @@ for processing using the groq API.
+ - groq
+ - gemini
+ - mistral (wip, their handoff is not working)
++- ollama
++- z.ai
+ 
+ 
+ &lt;b&gt;keybindings&lt;/b&gt;
+ 
+-&lt;i&gt;normal mode:&lt;/i&gt;
+-
+-gT + motion	- send motion selection
+-gP + motion	- send motion selection with input
+ &amp;lt;leader&amp;gt;ti 	- prompt input and send
+ &amp;lt;leader&amp;gt;tr 	- reset the chat history
+ 
+ 
+-&lt;i&gt;insert mode:&lt;/i&gt;
+-
+-&amp;lt;C-x&amp;gt;&amp;lt;C-t&amp;gt;	- trigger complete function
+-
+-
+ &lt;b&gt;installation&lt;/b&gt;
+ 
+ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+@@ -76,6 +65,23 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+   end, { noremap = true })
+ 
+ 
++&lt;b&gt;configuring&lt;/b&gt;
++
++tai only needs a simple config file located at the
++root of your project, create a file named .tai with
++this structure:
++
++{
++	"provider": string,
++	"tai": {
++		"tools": []string
++		"model": string
++	}
++}
++
++tool options: read_file, shell, patch.
++
++
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+ make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
+</pre>

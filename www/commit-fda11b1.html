@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai fda11b1</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit fda11b1
+parent <a href=commit-8d64553.html>8d64553</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-05T16:27:50-03:00
+
+    added send_image tool to send images for agents
+
+    - updated some providers to use new common functions
+    - improved system prompt
+    - added stop variable to correctly stop calling the agent
+
+<a href=tree-fda11b1.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index f4332e3..dfc4c28 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -13,16 +13,15 @@ local host = vim.uv.os_uname()
+ M.system_prompt = [[
+ You are a deployed coding agent operating in a live code execution session.
+ Users will inquire you to implement coding tasks or answear general questions.
+-Project root: ]] .. config.root .. [[
+-Shell CWD: ]] .. vim.uv.cwd() .. [[
++Project root: ]] .. config.root .. "\n" .. [[
++Shell CWD: ]] .. vim.uv.cwd() .. "\n" .. [[
+ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
+ 
+ Output rules:
+ - Do not use Markdown.
+-- Do not wrap content in quotes/backticks or escape it unless the user asked.
+-- Never return only whitespace or newline characters. If there is no meaningful
+-  text to return, return an empty string or a brief message like "Done" or
+-  "No output". Do not return just "\n" or similar.
++- If there is no meaningful text to return, return an empty string. Do not
++  return just "\n" or similar.
++
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+   assumptions.
+@@ -34,13 +33,10 @@ Workflow:
+   - If you find an agents file (e.g. AGENTS.md), read it.
+ - BEFORE reading any file, verify it is directly relevant to the current task:
+   - Check imports, references, or function calls that suggest relevance
+-  - If unsure, use grep to search for relevant symbols/functions first
++  - Use grep to search for relevant symbols/functions
+   - Read specific line ranges (e.g., function definition) rather than entire files
+ - AVOID reading files that are not directly needed for the current task.
+   - Unnecessary file reads waste context and reduce accuracy.
+-  - If you must explore, read the minimum needed (e.g., first 50 lines).
+-- If you are uncertain which files are relevant, ASK FOR CLARIFICATION
+-  rather than reading multiple files speculatively.
+ - Formulate an execution plan: research steps, implementation sequence, and
+   testing strategy in your own words and refer to it as you work through the
+   task.
+@@ -51,7 +47,6 @@ Workflow:
+   deliverables to ensure they run properly.
+ - After applying a patch you should check the affected files to ensure the patch
+   was applied correctly.
+-  - Don't run commands that needs the file because changes may have not be saved.
+   - Stop after 3 attempts with failure.
+ - In the final response present a summary.
+ ]]
+@@ -141,6 +136,15 @@ large. This tool will summarize the entire conversation history and replace it
+ with a concise summary, reducing the context size. Use this tool proactively
+ when you notice the conversation is becoming lengthy, especially before starting
+ new and unrelated tasks.
++
++## send_image
++Use the `send_image` tool to send images to the agent so it can see and interpret
++screenshots, diagrams, UI mockups, error messages, or any visual content. This is
++useful for debugging, understanding UI issues, or reviewing designs.
++
++- The image will be sent to the AI model which can then analyze it
++- You can optionally provide a prompt to guide what to look for
++- Supported formats: PNG, JPG, JPEG, GIF, WebP, BMP
+ ]]
+ end
+ 
+diff --git a/lua/tai/gemini.lua b/lua/tai/gemini.lua
+index 7edfba6..5416bf1 100644
+--- a/lua/tai/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -58,7 +58,7 @@ function M.request(model_config, msgs, format, callback)
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. url .. " with " .. request_body)
+-	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+ 			return callback(nil, err)
+ 		end
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index 80f6a2a..7f841f8 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -53,51 +53,22 @@ function M.request(model_config, msgs, format, callback)
+ 
+     local request_body = vim.json.encode(body)
+ 
+-    log.debug("Requesting " .. url .. " with " .. request_body)
+-    vim.system(
+-        {
+-            'curl', '-s', '-X', "POST", url,
+-            '-H', 'Content-Type: application/json',
+-            '-d', request_body
+-        }, { text = true }, function(obj)
+-            if obj.code ~= 0 then
+-                local err_msg = "curl returned code " .. obj.code
+-                callback(nil, err_msg)
+-                return
+-            end
+-
+-            log.debug("Request response: " .. obj.stdout)
+-            if not obj.stdout or obj.stdout == "" then
+-                return callback(nil, "Received empty response from server")
+-            end
++    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	provider_common.make_http_call(url, "", request_body, function(parsed, err)
++		if err then
++			return callback(nil, err)
++		end
+ 
+-            local parsed = vim.json.decode(obj.stdout)
+-            if not parsed then
+-                return callback(nil, "Failed to decode JSON: " .. tostring(obj.stdout))
+-            end
++            log.debug("Request response: " .. vim.inspect(parsed))
+ 
+             if parsed.error then
+                 return callback(nil, "Received error: " .. parsed.error.message)
+             end
+ 
+-            local message = parsed.choices[1].message
+-            local fields = {}
+-            if message.content and message.content ~= "" then
+-                log.debug("response content: " .. message.content)
+-                if format ~= nil then
+-                    log.debug("parsing JSON content")
+-                    fields.content = vim.json.decode(message.content)
+-                    if not fields.content then
+-                        return callback(nil, "Failed to decode message")
+-                    end
+-                else
+-                    fields.content = message.content
+-                end
+-            end
+-
+-            fields.tool_calls = message.tool_calls
+-            provider_common.decode_tool_call_arguments(fields.tool_calls)
+-
++		local fields, extract_err = provider_common.extract_fields(parsed, format)
++		if extract_err then
++			return callback(nil, extract_err)
++		end
+             callback(fields, nil)
+         end)
+ end
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 1ec3a54..771d560 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -28,56 +28,53 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-    for _, msg in ipairs(msgs) do
+-        M.add_to_history(msg)
+-    end
+-
+-    -- Keep connected files up to date in history before sending.
+-    tools.refresh_connected_files(history)
+-
+-    local agent_tools = provider_common.build_agent_tools(model_config)
+-
+-    local body = {
+-        model = model_config.model,
+-        messages = provider_common.filter_messages(history),
+-    }
+-
+-    if config.use_tools ~= false and #agent_tools &gt; 0 then
+-        body.tools = agent_tools
+-    end
+-
+-    if format == "json_object" then
+-        body.response_format = { type = "json_object" }
+-    end
+-
+-    if model_config.options then
+-        for k, v in pairs(model_config.options) do
+-            body[k] = v
+-        end
+-    end
+-
+-    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-    local request_body = vim.json.encode(body)
+-
+-    provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
+-        if err then
+-            return callback(nil, err)
+-        end
+-
+-        if parsed.object == "error" then
+-            return callback(nil, parsed.message or "Unknown Mistral API error")
+-        end
+-
+-        local fields, extract_err = provider_common.extract_fields(parsed, format)
+-        if extract_err then
+-            return callback(nil, extract_err)
+-        end
+-
+-        -- Extract token usage if available
+-        if parsed.usage and parsed.usage.total_tokens then
+-            fields.token_usage = parsed.usage.total_tokens
+-        end
+-        callback(fields, nil)
+-    end)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local agent_tools = provider_common.build_agent_tools(model_config)
++
++	local body = {
++		model = model_config.model,
++		messages = provider_common.filter_messages(history),
++	}
++
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
++	end
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
++		if err then
++			return callback(nil, err)
++		end
++
++		if parsed.object == "error" then
++			return callback(nil, parsed.message or "Unknown Mistral API error")
++		end
++
++		local fields, extract_err = provider_common.extract_fields(parsed, format)
++		if extract_err then
++			return callback(nil, extract_err)
++		end
++
++		callback(fields, nil)
++	end)
+ end
++
+ return M
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index 3dbb564..b869cc1 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -4,7 +4,6 @@ local log = require("tai.log")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
+ 
+-local chat_url = "https://api.openai.com/v1/chat/completions"
+ local responses_url = "https://api.openai.com/v1/responses"
+ 
+ local api_key = os.getenv("OPENAI_API_KEY")
+@@ -78,7 +77,7 @@ function M.clear_history()
+ 	history = nil
+ end
+ 
+-local function request_responses(model_config, msgs, format, callback)
++function M.request(model_config, msgs, format, callback)
+ 	-- Preserve existing chat history behavior but translate to Responses API.
+ 	for _, msg in ipairs(msgs) do
+ 		add_history_message(vim.deepcopy(msg))
+@@ -127,6 +126,7 @@ local function request_responses(model_config, msgs, format, callback)
+ 			to_responses_tool(tools.defs["shell"]),
+ 			to_responses_tool(tools.defs["patch"]),
+ 			to_responses_tool(tools.defs["summarize"]),
++			to_responses_tool(tools.defs["send_image"]),
+ 		}
+ 	end
+ 
+@@ -249,9 +249,4 @@ local function request_responses(model_config, msgs, format, callback)
+ 	end
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
+-	-- return request_chat_completions(model_config, msgs, format, callback)
+-	return request_responses(model_config, msgs, format, callback)
+-end
+-
+ return M
+diff --git a/lua/tai/stepfun.lua b/lua/tai/stepfun.lua
+index 629125a..9ea4949 100644
+--- a/lua/tai/stepfun.lua
++++ b/lua/tai/stepfun.lua
+@@ -58,7 +58,7 @@ function M.request(model_config, msgs, format, callback)
+ 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+ 	local request_body = vim.json.encode(body)
+ 
+-	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+ 			return callback(nil, err)
+ 		end
+@@ -74,10 +74,6 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, extract_err)
+ 		end
+ 
+-		-- Extract token usage if available
+-		if parsed.usage and parsed.usage.total_tokens then
+-			fields.token_usage = parsed.usage.total_tokens
+-		end
+ 		callback(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index cbbbcf2..1476215 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -148,7 +148,30 @@ M.defs = {
+ 				additionalProperties = false
+ 			}
+ 		}
+-	}
++	},
++	{
++		type = "function",
++		["function"] = {
++			name = "send_image",
++			description =
++			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content.",
++			parameters = {
++				type = "object",
++				properties = {
++					file = {
++						type = "string",
++						description = "The path to the image file to send."
++					},
++					prompt = {
++						type = "string",
++						description = "Optional prompt to guide what to look for in the image."
++					}
++				},
++				additionalProperties = false,
++				required = { "file" }
++			}
++		}
++	},
+ }
+ 
+ -- indexes are 1 based
+@@ -406,6 +429,60 @@ function M.apply_patch(name, file, changes)
+ 	return "[sys] Patched " .. file
+ end
+ 
++-- Convert image file to base64 data URL
++function M.image_data_url(image_path)
++	local full_path = image_path
++
++	-- Handle relative paths (relative to project root or CWD)
++	if image_path:sub(1, 1) ~= "/" then
++		-- Try project root first
++		local config = require("tai.config")
++		if config.root then
++			local try_path = config.root .. "/" .. image_path
++			if vim.fn.filereadable(try_path) == 1 then
++				full_path = try_path
++			end
++		end
++	end
++
++	-- Check if file exists
++	if vim.fn.filereadable(full_path) ~= 1 then
++		-- Try as absolute path
++		if vim.fn.filereadable(image_path) == 1 then
++			full_path = image_path
++		else
++			return nil, "Image file not found: " .. image_path
++		end
++	end
++
++	-- Detect MIME type from extension
++	local ext = image_path:match("%.(%w+)$")
++	local mime_types = {
++		png = "image/png",
++		jpg = "image/jpeg",
++		jpeg = "image/jpeg",
++		gif = "image/gif",
++		webp = "image/webp",
++		bmp = "image/bmp",
++	}
++	local mime = mime_types[ext:lower()] or "image/png"
++
++	-- Read file and encode to base64 using curl
++	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)
++	local handle = io.popen(cmd, "r")
++	if not handle then
++		return nil, "Failed to read image file"
++	end
++	local base64_content = handle:read("*a")
++	handle:close()
++
++	if not base64_content or #base64_content == 0 then
++		return nil, "Failed to encode image to base64"
++	end
++
++	return "data:" .. mime .. ";base64," .. base64_content, nil
++end
++
+ function M.refresh_connected_files(history)
+ 	-- Walk from the end so we can detect older connect_file calls for the same file.
+ 	local latest = {}
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 945958f..43ce2da 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -133,6 +133,8 @@ end
+ 
+ local function run_tools(tool_calls)
+ 	local results = {}
++	local stop = false
++
+ 	for _, call in ipairs(tool_calls or {}) do
+ 		local name = call["function"].name
+ 		local args = call["function"].arguments
+@@ -180,6 +182,7 @@ local function run_tools(tool_calls)
+ 					res.content = "[sys] User stopped the task"
+ 				end
+ 				M.append_to_buffer("}}}")
++				stop = true
+ 			end
+ 		elseif name == "read_file" then
+ 			if not args.file then
+@@ -256,6 +259,15 @@ local function run_tools(tool_calls)
+ 				end
+ 			)
+ 			return nil
++		elseif name == "send_image" then
++			if not args.file then
++				M.append_to_buffer("{{{ Addind image failed: no file field.\n}}}")
++				res.content = "[sys] missing file field"
++				goto continue
++			end
++
++			res.content = "[sys] Image " .. args.file .. " added."
++			M.append_to_buffer("{{{ Adding image " .. args.file .. "\n}}}")
+ 		else
+ 			local err_msg = "[sys] Invalid tool name: " .. name
+ 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
+@@ -266,7 +278,28 @@ local function run_tools(tool_calls)
+ 		refresh_and_close_folds()
+ 		table.insert(results, res)
+ 	end
+-	return results
++
++
++	-- Second pass is needed for image inputs
++	for _, call in ipairs(tool_calls or {}) do
++		local name = call["function"].name
++		local args = call["function"].arguments
++
++		local res = {
++			role = "user",
++		}
++		if name == "send_image" then
++			local image_url = tools.image_data_url(args.file)
++			res.content = {
++				{
++					type = "image_url",
++					image_url = { url = image_url }
++				}
++			}
++			table.insert(results, res)
++		end
++	end
++	return results, stop
+ end
+ 
+ local function process_response(fields)
+@@ -294,8 +327,8 @@ local function process_response(fields)
+ 	end
+ 
+ 	vim.schedule(function()
+-		local res = run_tools(fields.tool_calls)
+-		if res then
++		local res, stop = run_tools(fields.tool_calls)
++		if not stop then
+ 			tai.task(res, process_response)
+ 		end
+ 	end)
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+index d24c399..d33acc3 100644
+--- a/lua/tai/z_ai.lua
++++ b/lua/tai/z_ai.lua
+@@ -2,7 +2,7 @@ local M = {}
+ 
+ local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+-local config = require("tai.config")
++local log = require("tai.log")
+ local config = require("tai.config")
+ 
+ local url = "https://api.z.ai/api/paas/v4/chat/completions"
+</pre>

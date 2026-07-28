@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 2d7a5b9</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 2d7a5b9
+parent <a href=commit-9f767f2.html>9f767f2</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-02T20:34:11-03:00
+
+    WIP updating providers with streaming
+
+<a href=tree-2d7a5b9.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/gemini.lua b/lua/tai/gemini.lua
+index 443ad73..2df4ccc 100644
+--- a/lua/tai/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -13,7 +13,7 @@ if not api_key then
+ 	end)
+ end
+ 
+-local history = { {} }
++local history = nil
+ 
+ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
+@@ -21,81 +21,139 @@ function M.add_to_history(message)
+ 		local args = call["function"].arguments
+ 		call["function"].arguments = vim.json.encode(args)
+ 	end
++
++	if not history then
++		history = { msg }
++		return
++	end
+ 	table.insert(history, msg)
+ end
+ 
+ function M.clear_history()
+-	history = { {} }
++	history = nil
++end
++
++local function build_body(model_config, msgs, format)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local agent_tools = provider_common.build_request_tools("chat_completions")
++
++	local body = {
++		model = model_config.model,
++		messages = provider_common.filter_messages(history),
++	}
++
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
++	end
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	return body
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	-- Add messages to history
+ 	for _, msg in ipairs(msgs) do
+ 		M.add_to_history(msg)
+ 	end
++
++	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+ 	local body = {
+ 		model = model_config.model,
+-		messages = history,
++		messages = {},
+ 	}
+ 
+ 	if config.use_tools ~= false then
+ 		body.tools = provider_common.build_request_tools("chat_completions")
+ 	end
++	body.messages = provider_common.filter_messages(history)
+ 
+-	if format then
+-		body.response_format = { type = format }
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
+ 	end
++
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+ 	end
++
+ 	if model_config.options then
+ 		body.extra_body = model_config.options
+ 	end
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. request_body)
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
+ 	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+-			return callback(nil, err)
++			callback(nil, err)
++			return
+ 		end
+ 
+-		log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+-		-- Gemini can return errors as array
+-		if #parsed &gt; 0 and parsed[1].error then
+-			return callback(nil, "Received error: " .. parsed[1].error.message)
+-		end
+ 		if parsed.error then
+-			return callback(nil, parsed.error)
++			return callback(nil, parsed.error.message)
+ 		end
+ 
+-		if not parsed.choices or #parsed.choices == 0 then
+-			return callback(nil, "No choices received from Gemini")
+-		end
++		local fields, err = provider_common.parse_response(parsed, format)
++		callback(fields, err)
++	end)
++end
++
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
++
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	local fields = {}
+ 
+-		local message = parsed.choices[1].message
+-		local fields = {}
+-
+-		if message.content and message.content ~= "" then
+-			if format ~= nil then
+-				local decoded = vim.json.decode(message.content)
+-				if not decoded then
+-					return callback(nil, "Failed to decode message")
+-				end
+-				fields.content = decoded
+-			else
+-				fields.content = message.content
+-			end
++	provider_common.make_streaming_http_call(url, api_key, request_body, function(chunk)
++		local chunk_data, err = provider_common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
+ 		end
+ 
+-		fields.tool_calls = message.tool_calls
+-		provider_common.decode_tool_call_arguments(fields.tool_calls)
++		-- accumulate
++		fields = provider_common.update_fields(fields, chunk_data)
+ 
+-		callback(fields, nil)
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		-- on_complete: flatten tool_calls map to array and decode arguments
++		if err then
++			on_complete(nil, err)
++			return
++		end
++
++		if fields.tool_calls then
++			fields.tool_calls = provider_common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
+ 	end)
+ end
+ 
+ return M
++
+diff --git a/lua/tai/groq.lua b/lua/tai/groq.lua
+index 257ed57..3711ce2 100644
+--- a/lua/tai/groq.lua
++++ b/lua/tai/groq.lua
+@@ -1,7 +1,10 @@
+ local M = {}
++
++local tools = require("tai.tools")
++local common = require("tai.provider_common")
++local config = require("tai.config")
+ local log = require("tai.log")
+-local json = vim.json
+-local uv = vim.uv -- or vim.loop for Neovim &lt; 0.10
++local url = "https://api.groq.com/openai/v1/chat/completions"
+ 
+ local api_key = os.getenv("GROQ_API_KEY")
+ if not api_key then
+@@ -10,245 +13,138 @@ if not api_key then
+ 	end)
+ end
+ 
+-local groq_url = "https://api.groq.com/openai/v1/chat/completions"
+-
+-M.response_format = {
+-	type = "json_schema", 
+-	json_schema = {
+-		name = "tai_response", 
+-		description = "The only response format for Tai.",
+-		schema = {
+-			type = "object",
+-			additionalProperties = false,
+-			required = {"text"},
+-			properties = {
+-				text = {
+-					type = "string",
+-					description = "Textual part of answer, intended for the user",
+-				},
+-				patch = {
+-					type = "string",
+-					description = "Patch part of answer, a valid diff text containing the changes requested.",
+-				},
+-				commands = {
+-					type = "array",
+-					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
+-					items = {
+-						type = "string"
+-					}
+-				},
+-				plan = {
+-					type = "array",
+-					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
+-					items = {
+-						type = "string"
+-					}
+-				},
+-
+-			}
+-		}
+-	}
+-}
++local history = nil
+ 
+-function M.send_raw_async(model, messages, callback)
+-	local req_body = {
+-		model = model,
+-		messages = messages,
+-	}
+-	local json_data = json.encode(req_body)
+-
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result, err_data = {}, {}
+-
+-	local handle
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data,
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-
+-		vim.schedule(function()
+-			if code ~= 0 then
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			if #err_data &gt; 0 then
+-				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			local ok, parsed = pcall(json.decode, table.concat(result))
+-			if not ok or not parsed.choices or #parsed.choices == 0 then
+-				vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			callback(parsed.choices[1].message.content)
+-		end)
+-	end)
+-
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then table.insert(result, chunk) end
+-	end)
++function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
++	if not history then
++		history = { msg }
++		return
++	end
++	if msg.reasoning then
++		msg.reasoning_details = { { text = msg.reasoning } }
++	end
++	table.insert(history, msg)
++end
+ 
+-	uv.read_start(stderr, function(_, chunk)
+-		if chunk then table.insert(err_data, chunk) end
+-	end)
++function M.clear_history()
++	history = nil
+ end
+ 
+-function M.send_raw(model, messages)
+-	local req_body = {
+-		model = model,
+-		messages = vim.tbl_map(
+-			function(m) return { role = m.role, content = m.content } end,
+-			messages
+-		)
+-	}
++local function build_body(model_config, msgs, format)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
+ 
+-	local json_data = json.encode(req_body)
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result = {}
+-	local err_data = {}
+-	local handle
+-
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-		if code ~= 0 then
+-			vim.schedule(function()
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-			end)
+-		end
+-	end)
++	tools.refresh_connected_files(history)
+ 
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then
+-			table.insert(result, chunk)
+-		end
+-	end)
+-	vim.wait(60000, function()
+-		return not uv.is_active(handle)
+-	end, 10)
+-
+-	local response = table.concat(result)
+-	if #err_data &gt; 0 then
+-		vim.schedule(function()
+-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-		end)
+-		return nil
++	local agent_tools = common.build_request_tools("chat_completions")
++
++	local body = {
++		model = model_config.model,
++		messages = common.filter_messages(history),
++	}
++
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
+ 	end
+ 
+-	local ok, parsed = pcall(json.decode, response)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+-		return nil
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
+ 	end
+ 
+-	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
+-		return nil
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
+ 	end
+ 
+-	return parsed.choices[1].message.content
++	return body
+ end
+ 
+-function M.send(model, messages)
+-	local req_body = {
+-		model = model,
+-		messages = vim.tbl_map(
+-			function(m) return { role = m.role, content = m.content } end,
+-			messages
+-		),
+-		response_format = M.response_format
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
+ 	}
+ 
+-	local json_data = json.encode(req_body)
+-	vim.notify("[tai] sending to grok" .. json_data, vim.log.levels.INFO)
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result = {}
+-	local err_data = {}
+-	local handle
+-
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-		if code ~= 0 then
+-			vim.schedule(function()
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-			end)
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
+ 		end
+-	end)
++	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++	local request_body = vim.json.encode(body)
+ 
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then
+-			table.insert(result, chunk)
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
++	common.make_http_call(url, api_key, request_body, function(parsed, err)
++		if err then
++			callback(nil, err)
++			return
++		end
++
++		log.debug("[API] request response: " .. vim.inspect(parsed))
++
++		if parsed.error then
++			return callback(nil, parsed.error.message)
+ 		end
++
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
+ 	end)
+-	vim.wait(60000, function()
+-		return not uv.is_active(handle)
+-	end, 10)
+-
+-	local response = table.concat(result)
+-	if #err_data &gt; 0 then
+-		vim.schedule(function()
+-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-		end)
+-		return nil
+-	end
++end
+ 
+-	local ok, parsed = pcall(json.decode, response)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
+ 
+-	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
+ 
+-	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
++	local fields = {}
++
++	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
++		local chunk_data, err = common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
++		end
+ 
+-	return fields
++		fields = common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		if err then
++			on_complete(nil, err)
++			return
++		end
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
++	end)
+ end
+ 
+ return M
++
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index 98054fc..924fd01 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -9,7 +9,6 @@ local url = 'http://localhost:11434/v1/chat/completions'
+ local history = nil
+ 
+ function M.add_to_history(message)
+-	log.debug("adding message to history")
+ 	local msg = vim.deepcopy(message)
+ 	for _, call in ipairs(msg.tool_calls or {}) do
+ 		local args = call["function"].arguments
+@@ -17,11 +16,9 @@ function M.add_to_history(message)
+ 	end
+ 
+ 	if not history then
+-		log.debug("new history")
+ 		history = { msg }
+ 		return
+ 	end
+-	log.debug("insert into history")
+ 	table.insert(history, msg)
+ end
+ 
+@@ -52,6 +49,10 @@ local function build_body(model_config, msgs, format)
+ 		body.response_format = { type = "json_object" }
+ 	end
+ 
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
+ 	if model_config.options then
+ 		for k, v in pairs(model_config.options) do
+ 			body[k] = v
+@@ -66,42 +67,51 @@ function M.request(model_config, msgs, format, callback)
+ 		M.add_to_history(msg)
+ 	end
+ 
+-	local agent_tools = common.build_agent_tools(model_config)
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
+ 	local body = {
+ 		model = model_config.model,
+-		messages = history,
+-		stream = false,
+-		tools = agent_tools,
++		messages = {},
+ 	}
+-	if format then
+-		body.format = format
++
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
+ 	end
++
+ 	if model_config.think ~= nil then
+-		body.think = model_config.think
++		body.reasoning_effort = model_config.think
+ 	end
++
+ 	if model_config.options then
+-		body.options = model_config.options
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
+ 	end
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
+ 	common.make_http_call(url, "", request_body, function(parsed, err)
+ 		if err then
+-			return callback(nil, err)
++			callback(nil, err)
++			return
+ 		end
+ 
+-		log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+ 		if parsed.error then
+-			return callback(nil, "Received error: " .. parsed.error.message)
++			return callback(nil, parsed.error.message)
+ 		end
+ 
+-		local fields, extract_err = common.extract_fields(parsed, format)
+-		if extract_err then
+-			return callback(nil, extract_err)
+-		end
+-		callback(fields, nil)
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
+ 	end)
+ end
+ 
+@@ -110,14 +120,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 	local body = build_body(model_config, msgs, format)
+ 	body.stream = true
+ 
+-	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+ 	local request_body = vim.json.encode(body)
+ 
+-	local fields = {
+-		content = "",
+-		tool_calls = {},
+-		reasoning_details = { { text = "" } },
+-	}
++	local fields = {}
+ 
+ 	common.make_streaming_http_call(url, "", request_body, function(chunk)
+ 		local chunk_data, err = common.parse_chunk(chunk)
+@@ -136,7 +142,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 			on_complete(nil, err)
+ 			return
+ 		end
+-		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
+ 		on_complete(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+index 89c8f06..166fc36 100644
+--- a/lua/tai/minimax.lua
++++ b/lua/tai/minimax.lua
+@@ -22,11 +22,6 @@ function M.add_to_history(message)
+ 		local args = call["function"].arguments
+ 		call["function"].arguments = vim.json.encode(args)
+ 	end
+-	if msg.reasoning then
+-		msg.reasoning_details = { {
+-			text = msg.reasoning_details
+-		}}
+-	end
+ 	if not history then
+ 		history = { msg }
+ 		return
+@@ -71,38 +66,49 @@ local function build_body(model_config, msgs, format)
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	local body = build_body(model_config, msgs, format)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-	local request_body = vim.json.encode(body)
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
+ 
+-	common.make_http_call(url, api_key, request_body, function(parsed, err)
+-		if err then
+-			return callback(nil, err)
+-		end
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
+ 
+-		log.debug("Request response: " .. vim.inspect(parsed))
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
+ 
+-		if parsed.type == "error" then
+-			return callback(nil, parsed.error.message or "Unknown Minimax API error")
+-		end
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
+ 
+-		if not parsed.choices or #parsed.choices == 0 then
+-			return callback(nil, "Received no choices")
+-		end
++	if model_config.options then
++		body.extra_body = model_config.options
++	end
+ 
+-		local message = parsed.choices[1].message
+-		local fields, extract_err = common.extract_fields(message, format)
+-		if extract_err then
+-			return callback(nil, extract_err)
++	local request_body = vim.json.encode(body)
++
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
++	common.make_http_call(url, api_key, request_body, function(parsed, err)
++		if err then
++			callback(nil, err)
++			return
+ 		end
+ 
+-		-- Extract token usage if available
+-		if parsed.usage and parsed.usage.total_tokens then
+-			fields.token_usage = parsed.usage.total_tokens
++		log.debug("[API] request response: " .. vim.inspect(parsed))
++
++		if parsed.error then
++			return callback(nil, parsed.error.message)
+ 		end
+ 
+-		callback(fields, nil)
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
+ 	end)
+ end
+ 
+@@ -111,14 +117,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 	local body = build_body(model_config, msgs, format)
+ 	body.stream = true
+ 
+-	log.debug("Requesting stream " .. url .. " with " .. vim.inspect(body))
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+ 	local request_body = vim.json.encode(body)
+ 
+-	local fields = {
+-		content = "",
+-		tool_calls = {},
+-		reasoning_details = { { text = "" } },
+-	}
++	local fields = {}
+ 
+ 	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+ 		local chunk_data, err = common.parse_chunk(chunk)
+@@ -126,19 +128,24 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 			on_chunk(chunk_data, err)
+ 			return
+ 		end
+-		on_chunk(chunk_data, nil)
+ 
+ 		-- accumulate
+ 		fields = common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
+ 	end, function(_, err)
+ 		-- on_complete: flatten tool_calls map to array and decode arguments
+ 		if err then
+ 			on_complete(nil, err)
+ 			return
+ 		end
+-		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
+ 		on_complete(fields, nil)
+ 	end)
+ end
+ 
+ return M
++
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index c6eecb4..b804372 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -1,7 +1,7 @@
+ local M = {}
+ 
+-local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
++local common = require("tai.provider_common")
+ local config = require("tai.config")
+ local log = require("tai.log")
+ local url = "https://api.mistral.ai/v1/chat/completions"
+@@ -16,18 +16,22 @@ end
+ local history = nil
+ 
+ function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
+ 	if not history then
+-		history = { message }
++		history = { msg }
+ 		return
+ 	end
+-	table.insert(history, message)
++	if msg.reasoning then
++		msg.reasoning_details = { { text = msg.reasoning } }
++	end
++	table.insert(history, msg)
+ end
+ 
+ function M.clear_history()
+ 	history = nil
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
++local function build_body(model_config, msgs, format)
+ 	for _, msg in ipairs(msgs) do
+ 		M.add_to_history(msg)
+ 	end
+@@ -35,11 +39,11 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = provider_common.build_request_tools("chat_completions")
++	local agent_tools = common.build_request_tools("chat_completions")
+ 
+ 	local body = {
+ 		model = model_config.model,
+-		messages = provider_common.filter_messages(history),
++		messages = common.filter_messages(history),
+ 	}
+ 
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+@@ -56,25 +60,95 @@ function M.request(model_config, msgs, format, callback)
+ 		end
+ 	end
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	return body
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
+ 	local request_body = vim.json.encode(body)
+ 
+-	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
++	common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+-			return callback(nil, err)
++			callback(nil, err)
++			return
+ 		end
+ 
+-		if parsed.object == "error" then
+-			return callback(nil, parsed.message or "Unknown Mistral API error")
++		log.debug("[API] request response: " .. vim.inspect(parsed))
++
++		if parsed.error then
++			return callback(nil, parsed.error.message)
++		end
++
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
++	end)
++end
++
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
++
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	local fields = {}
++
++	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
++		local chunk_data, err = common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
+ 		end
+ 
+-		local fields, extract_err = provider_common.extract_fields(parsed, format)
+-		if extract_err then
+-			return callback(nil, extract_err)
++		-- accumulate
++		fields = common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		-- on_complete: flatten tool_calls map to array and decode arguments
++		if err then
++			on_complete(nil, err)
++			return
+ 		end
+ 
+-		callback(fields, nil)
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
+ 	end)
+ end
+ 
+ return M
++
+diff --git a/lua/tai/stepfun.lua b/lua/tai/stepfun.lua
+index 37d6c6f..1e31499 100644
+--- a/lua/tai/stepfun.lua
++++ b/lua/tai/stepfun.lua
+@@ -1,6 +1,7 @@
+ local M = {}
+-local provider_common = require("tai.provider_common")
++
+ local tools = require("tai.tools")
++local common = require("tai.provider_common")
+ local config = require("tai.config")
+ local log = require("tai.log")
+ local url = "https://api.stepfun.ai/v1/chat/completions"
+@@ -15,18 +16,22 @@ end
+ local history = nil
+ 
+ function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
+ 	if not history then
+-		history = { message }
++		history = { msg }
+ 		return
+ 	end
+-	table.insert(history, message)
++	if msg.reasoning then
++		msg.reasoning_details = { { text = msg.reasoning } }
++	end
++	table.insert(history, msg)
+ end
+ 
+ function M.clear_history()
+ 	history = nil
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
++local function build_body(model_config, msgs, format)
+ 	for _, msg in ipairs(msgs) do
+ 		M.add_to_history(msg)
+ 	end
+@@ -34,11 +39,11 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = provider_common.build_request_tools("chat_completions")
++	local agent_tools = common.build_request_tools("chat_completions")
+ 
+ 	local body = {
+ 		model = model_config.model,
+-		messages = provider_common.filter_messages(history),
++		messages = common.filter_messages(history),
+ 	}
+ 
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+@@ -55,27 +60,101 @@ function M.request(model_config, msgs, format, callback)
+ 		end
+ 	end
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	return body
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++
+ 	local request_body = vim.json.encode(body)
+ 
+-	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
++	common.make_http_call(url, api_key, request_body, function(parsed, err)
+ 		if err then
+-			return callback(nil, err)
++			callback(nil, err)
++			return
+ 		end
+ 
+-		log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+-		if parsed.object == "error" then
+-			return callback(nil, parsed.message or "Unknown StepFun API error")
++		if parsed.error then
++			local error = parsed.error
++			local msg = error.message
++			if error.metadata and error.metadata.raw then
++				msg = msg .. ": " .. error.metadata.raw
++			end
++			return callback(nil, msg)
+ 		end
+ 
+-		local fields, extract_err = provider_common.extract_fields(parsed, format)
+-		if extract_err then
+-			return callback(nil, extract_err)
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
++	end)
++end
++
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
++
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	local fields = {}
++
++	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
++		local chunk_data, err = common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
+ 		end
+ 
+-		callback(fields, nil)
++		-- accumulate
++		fields = common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		-- on_complete: flatten tool_calls map to array and decode arguments
++		if err then
++			on_complete(nil, err)
++			return
++		end
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
+ 	end)
+ end
+ 
+ return M
++
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+index 574870f..045cb01 100644
+--- a/lua/tai/z_ai.lua
++++ b/lua/tai/z_ai.lua
+@@ -17,18 +17,22 @@ end
+ local history = nil
+ 
+ function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
+ 	if not history then
+-		history = { message }
++		history = { msg }
+ 		return
+ 	end
+-	table.insert(history, message)
++	if msg.reasoning then
++		msg.reasoning_details = { { text = msg.reasoning } }
++	end
++	table.insert(history, msg)
+ end
+ 
+ function M.clear_history()
+ 	history = nil
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
++local function build_body(model_config, msgs, format)
+ 	for _, msg in ipairs(msgs) do
+ 		M.add_to_history(msg)
+ 	end
+@@ -37,78 +41,125 @@ function M.request(model_config, msgs, format, callback)
+ 	tools.refresh_connected_files(history)
+ 
+ 	local agent_tools = provider_common.build_request_tools("chat_completions")
++
+ 	local body = {
+ 		model = model_config.model,
+-		messages = provider_common.filter_message(history) or {},
+-		tools = agent_tools,
++		messages = provider_common.filter_messages(history),
+ 	}
+-	if format then
+-		body.format = format
+-	end
++
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+ 		body.tools = agent_tools
+ 	end
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+ 	end
++
+ 	if model_config.options then
+-		body.extra_body = model_config.options
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	return body
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++
++	if config.use_tools ~= false then
++		body.tools = provider_common.build_request_tools("chat_completions")
++	end
++	body.messages = provider_common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
+ 	end
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(request_body))
+-	vim.system(
+-		{
+-			"curl", "-s", "-X", "POST", url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", request_body,
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
+ 
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Gemini")
+-			end
++	provider_common.make_http_call(url, api_key, request_body, function(parsed, err)
++		if err then
++			callback(nil, err)
++			return
++		end
+ 
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. parsed)
+-			end
+-			log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+-			if parsed and parsed.error then
+-				return callback(nil, "Received error: " .. parsed.error.message)
++		if parsed.error then
++			local error = parsed.error
++			local msg = error.message
++			if error.metadata and error.metadata.raw then
++				msg = msg .. ": " .. error.metadata.raw
+ 			end
++			return callback(nil, msg)
++		end
+ 
+-			if parsed.error then
+-				return callback(nil, parsed.error.message)
+-			end
++		local fields, err = provider_common.parse_response(parsed, format)
++		callback(fields, err)
++	end)
++end
+ 
+-			local message = parsed.choices[1].message
+-			local content = message.content
+-			local fields = {}
+-			if content and content ~= "" then
+-				log.debug("response content: " .. content)
+-				if format ~= nil then
+-					log.debug("parsing JSON content")
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message")
+-					end
+-				else
+-					fields.content = content
+-				end
+-			end
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
++
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
+ 
+-			fields.tool_calls = message.tool_calls
+-			provider_common.decode_tool_call_arguments(fields.tool_calls)
+-			callback(fields, nil)
+-		end)
++	local fields = {}
++
++	provider_common.make_streaming_http_call(url, api_key, request_body, function(chunk)
++		local chunk_data, err = provider_common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
++		end
++
++		-- accumulate
++		fields = provider_common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		-- on_complete: flatten tool_calls map to array and decode arguments
++		if err then
++			on_complete(nil, err)
++			return
++		end
++
++		if fields.tool_calls then
++			fields.tool_calls = provider_common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
++	end)
+ end
+ 
+ return M
++
+</pre>

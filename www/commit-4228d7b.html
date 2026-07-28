@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 4228d7b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 4228d7b
+parent <a href=commit-cc78306.html>cc78306</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-01T20:43:20-03:00
+
+    nvim: fixed mistral implementation
+
+<a href=tree-4228d7b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index b220181..f54921d 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -18,11 +18,12 @@ ONLY propose steps that solves the issue, don't suppose anything.
+ You have access to other agents that will assist you to reach the user's goals:
+ - coder: knows how to code, it will take your instructions and implement them.
+ - patcher: takes code changes and formats them in ed script format.
++- writer: will respond to the user using the correct format.
+ 
+ UNDERSTANDING NEEDED CODE CHANGES
+ Understand the problem and the path to the solution and generate a detailed set of
+ instructions to the coder agent so that:
+-- the coder agent can know exactly what to do
++- the coder agent can know what to do
+ - will respect the restrictions if any
+ - will be able to write code to fullfill the user's goal
+ 
+@@ -30,25 +31,6 @@ USING PLANS
+ For solutions that will need many steps that includes interaction from the user generate
+ a step by step plan and pass it to the writer agent, so it will forward it to the user.
+ Use the plan created to guide you and the agents towards the goal.
+-
+-RESPONSE FORMAT
+-Never respond to the user! Forward it to the writer agent. Use unambiguous language to
+-delegate to other agents. For example, to handoff to other agents write:
+-[HANDOFF TO writer]
+----
+-Text intended to writer agent
+-...
+-end with dashes:
+----
+-[HANDOFF TO coder]
+----
+-Text intended to coder agent
+-- refactor function f to accept x parameter
+-- implement feature z
+-- move variable y to file abc
+-...
+-end with dashes too:
+----
+ ]]
+ 
+ -- Function to receive a prompt and request implementation
+@@ -58,7 +40,7 @@ function M.receive_prompt(prompt, callback)
+ 		log.debug("Using existing conversation id: " .. M.conversation_id)
+ 		client.request("POST", 'conversations/' .. M.conversation_id, {
+ 			inputs = prompt,
+-			handoff_execution = "server",
++			handoff_execution = "server"
+ 		}, function(response, err)
+ 			if err then
+ 				log.error("Planner request failed: " .. err)
+@@ -72,7 +54,7 @@ function M.receive_prompt(prompt, callback)
+ 				callback(nil)
+ 				return
+ 			end
+-			local res = content:sub(8, -4)
++			local res = content
+ 			callback(vim.json.decode(res))
+ 		end)
+ 		return
+@@ -96,7 +78,7 @@ function M.receive_prompt(prompt, callback)
+ 		client.request("POST", 'conversations', {
+ 			agent_id = M.id,
+ 			inputs = prompt,
+-			handoff_execution = "server",
++			handoff_execution = "server"
+ 		}, function(response, err)
+ 			if err then
+ 				log.error("Planner request failed: " .. err)
+@@ -113,7 +95,7 @@ function M.receive_prompt(prompt, callback)
+ 				callback(nil)
+ 				return
+ 			end
+-			local res = content:sub(8, -4)
++			local res = content
+ 			callback(vim.json.decode(res))
+ 		end)
+ 	end)
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 9811103..2c0b304 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -12,6 +12,8 @@ if config.provider == 'groq' then
+ 	provider = require('tai.providers.groq')
+ elseif config.provider == 'gemini' then
+ 	provider = require('tai.providers.gemini')
++elseif config.provider == "mistral" then
++	return M
+ elseif config.provider == nil then
+ 	-- do nothing
+ else
+@@ -23,7 +25,7 @@ local history = {
+ 	{ role = "system", content = provider.system_prompt }
+ }
+ 
+-function M.send(model, prompt)
++function M.send(prompt)
+ 	local msg = { role = "user", content = prompt }
+ 	table.insert(history, msg)
+ 
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 552b19f..db46650 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -23,15 +23,13 @@ function M.prompt_input()
+ 		local location = string.format("line %d, column %d", row, col)
+ 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+ 
+-		ui.append_to_buffer("=====================================\n\n&gt; " .. input)
+-		ui.open()
+-
+-		project.process_request(prompt, function(res, err)
+-			if err then
+-				vim.notify("[tai] recieved error: " .. err)
+-				return
+-			end
++		ui.append_to_buffer("=====================================\n&gt; " .. input)
++
++		vim.schedule(function()
++			ui.open()
+ 		end)
++
++		project.process_request(prompt)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 9d2229a..5502882 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -48,7 +48,13 @@ local function run_tool_calls(cmds)
+ 		if file then
+ 			local content = file:read("*all")
+ 			file:close()
+-			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. content .. "\n"
++
++			local numbered_lines = {}
++			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
++				table.insert(numbered_lines, string.format("%d: %s", i, line))
++			end
++			local numbered_content = table.concat(numbered_lines, "\n")
++			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
+ 		else
+ 			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
+ 		end
+@@ -74,59 +80,73 @@ local function run_commands(cmds)
+ 		end
+ 	end
+ 
+-	vim.schedule(function()
+-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+-	end)
+-
+ 	return output
+ end
+ 
+ local function apply_patch(patch)
+ 	local real = io.popen("ed -s 2&gt;&amp;1", "w")
++	if not real then
++		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
++		return
++	end
++
+ 	real:write(patch)
+ 	local output = real:read("*all")
+ 	real:close()
+-	log.debug("Patch application output: " .. output)
++
++	if output then
++		log.debug("Patch application output: " .. output)
++	end
+ 	vim.api.nvim_command("checktime")
+ end
+ 
+-function M.process_request(prompt, callback)
++local function handle_reply(reply)
++	::continue::
++
++	if reply.tools then
++		ui.show_tool_calls(reply.tools)
++		local out = run_tool_calls(reply.tools)
++		reply = chat.send("Result of tool calls:\n" .. out)
++		goto continue
++	end
++	if reply.patch then
++		vim.api.nvim_buf_create_user_command(
++			ui.buffer_nr,
++			'ApplyTaiPatch',
++			function() apply_patch(reply.patch) end,
++			{}
++		)
++	end
++	if reply.commands then
++		vim.api.nvim_buf_create_user_command(
++			ui.buffer_nr,
++			'RunTaiCommand',
++			function()
++				local out = run_commands(reply.commands)
++				reply = chat.send(out)
++				ui.show_response(reply)
++			end,
++			{}
++		)
++	end
++	ui.show_response(reply)
++end
++
++function M.process_request(prompt)
+ 	log.debug("Processing request " .. prompt)
+ 
+ 	if config.provider == "mistral" then
+-		planner.receive_prompt(prompt, callback)
++		planner.receive_prompt(
++			prompt,
++			function(reply, err)
++				vim.schedule(function()
++					handle_reply(reply)
++				end)
++			end
++		)
+ 	else
+-		local reply = chat.send(config.model, prompt)
+-
+-		::continue::
+-
+-		if reply.tools then
+-			ui.show_tool_calls(reply.tools)
+-			local out = run_tool_calls(reply.tools)
+-			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
+-			goto continue
+-		end
+-		if reply.patch then
+-			vim.api.nvim_buf_create_user_command(
+-				ui.buffer_nr,
+-				'ApplyTaiPatch',
+-				function() apply_patch(reply.patch) end,
+-				{}
+-			)
+-		end
+-		if reply.commands then
+-			vim.api.nvim_buf_create_user_command(
+-				ui.buffer_nr,
+-				'RunTaiCommand',
+-				function()
+-					local out = run_commands(reply.commands)
+-					reply = chat.send(config.model, out)
+-					ui.show_response(reply)
+-				end,
+-				{}
+-			)
+-		end
+-		ui.show_response(reply)
++		local reply = chat.send(prompt)
++		handle_reply(reply)
+ 	end
+ end
+ 
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 88a418c..e6d6f52 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -375,22 +375,25 @@ function M.send(model, messages)
+ 
+ 	local response = table.concat(result)
+ 	if #err_data &gt; 0 then
+-		vim.schedule(function()
+-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-		end)
+-		return nil
++		return { text = "[tai] API error: " .. table.concat(err_data) }
+ 	end
+ 
+ 	log.debug("response: " .. response)
++	if not response or response == "" then
++		return { text = "[tai] Received empty response from Gemini" }
++	end
++
+ 	local ok, parsed = pcall(json.decode, response)
+ 	if not ok then
+-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+-		return nil
++		return { text = "[tai] Failed to decode JSON: " .. response }
+ 	end
+ 
++	if #parsed &gt; 0 and parsed[1].error then
++		return { text = "[tai] Received error: " .. parsed[1].error.message }
++		end
++
+ 	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Gemini, received " .. response, vim.log.levels.ERROR)
+-		return nil
++		return { text = "[tai] No response from Gemini, received " .. response }
+ 	end
+ 
+ 	local message = parsed.choices[1].message
+@@ -400,7 +403,7 @@ function M.send(model, messages)
+ 		ok, fields = pcall(json.decode, message.content)
+ 		if not ok then
+ 			vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+-			return nil
++			return { text = "[tai] Failed to decode message: " .. response }
+ 		end
+ 	end
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 0d51588..5bb007c 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -3,18 +3,6 @@ local log = require("tai.log")
+ 
+ local bufname = "tai-chat"
+ 
+-function M.append_to_buffer(content)
+-	local new_lines = vim.split(content, "\n")
+-	local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
+-	if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
+-		-- If buffer is essentially empty (one empty line), replace it
+-		vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+-	else
+-		-- Append to existing content
+-		vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false, new_lines)
+-	end
+-end
+-
+ local function ensure_buf()
+ 	local bufnr = vim.fn.bufnr(bufname)
+ 	if bufnr == -1 then
+@@ -31,6 +19,21 @@ end
+ 
+ M.buffer_nr = ensure_buf()
+ 
++function M.append_to_buffer(content)
++	local new_lines = vim.split(content, "\n")
++	vim.schedule(function()
++		local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
++		if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
++			-- If buffer is essentially empty (one empty line), replace it
++			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
++		else
++			-- Append to existing content
++			vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false,
++				new_lines)
++		end
++	end)
++end
++
+ function M.toggle_output_window()
+ 	local bufnr = M.buffer_nr
+ 	local winid = vim.fn.bufwinnr(bufnr)
+@@ -47,25 +50,26 @@ function M.toggle_output_window()
+ end
+ 
+ function M.open()
+-	if vim.fn.bufwinnr(M.buffer_nr) == -1 then
+-		vim.cmd("vsplit")
+-		local win = vim.api.nvim_get_current_win()
+-		vim.api.nvim_win_set_buf(win, M.buffer_nr)
+-		vim.api.nvim_win_set_width(win, 80)
+-	end
++	vim.schedule(function()
++		if vim.fn.bufwinnr(M.buffer_nr) == -1 then
++			vim.cmd("vsplit")
++			local win = vim.api.nvim_get_current_win()
++			vim.api.nvim_win_set_buf(win, M.buffer_nr)
++			vim.api.nvim_win_set_width(win, 80)
++		end
++	end)
+ end
+ 
+ function M.show_response(fields)
+ 	log.debug("Showing response")
+ 
+-	local content = ""
+-
++	local content = "\n----------------------------\n"
+ 	if fields.plan and #fields.plan &gt; 0 then
+-		content = "Plan:\n\n"
++		content = "--- Plan ------------------------\n\n"
+ 		for i, p in ipairs(fields.plan) do
+ 			content = content .. i .. ". " .. p .. "\n"
+ 		end
+-		content = content .. "\n----------------\n\n"
++		content = content .. "___________________________\n\n"
+ 	end
+ 	if fields.text then
+ 		content = content .. fields.text
+@@ -88,10 +92,11 @@ end
+ function M.show_tool_calls(calls)
+ 	log.debug("Showing tool calls")
+ 
+-	local content = "\n-----------------------------\n"
++	local content = "\n--- tool calls ---------------------\n"
+ 	for _, call in ipairs(calls) do
+ 		content = content .. "&gt; Sending output of " .. call["function"].name .. "\n"
+ 	end
++	content = content .. "____________________________________\n"
+ 
+ 	M.append_to_buffer(content)
+ 	M.open()
+@@ -149,7 +154,7 @@ function M.input(callback)
+ 	vim.bo[bufnr].buftype = 'nofile'
+ 	vim.bo[bufnr].bufhidden = 'wipe'
+ 	vim.bo[bufnr].swapfile = false
+-	vim.bo[bufnr].filetype = 'tai-input'
++	vim.bo[bufnr].filetype = 'text'
+ 
+ 	vim.keymap.set('n', '&lt;CR&gt;', function()
+ 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+</pre>

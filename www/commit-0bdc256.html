@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 0bdc256</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 0bdc256
+parent <a href=commit-85b433d.html>85b433d</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-20T19:05:10-03:00
+
+    added file checks for patch
+
+    - added config overrides for system and custom prompts
+    - improved some tools description
+    - minor fixes
+
+<a href=tree-0bdc256.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 2a62ddc..716fa6a 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -10,15 +10,22 @@ local provider = require('tai.' .. config.provider)
+ 
+ local host = vim.uv.os_uname()
+ 
+-M.system_prompt = [[
++local default_system_prompt = [[
+ You are a coding agent working in a project. You have read/write access to the
+ project's codebase in the current folder: ]] .. config.root .. [[
+ 
+ Please work on the tasks given by the user.
+ ]]
+ 
++M.system_prompt = config.system_prompt or default_system_prompt
++if config.custom_prompt and config.custom_prompt ~= "" then
++	M.system_prompt = M.system_prompt .. "\n" .. config.custom_prompt
++end
++
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+ 
++
++
+ function M.task(msgs, callback)
+ 	log.info("Agent executing task")
+ 	provider.request(
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index e757c7b..9766618 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -70,6 +70,8 @@ function M.reload()
+ 	M.think = data.think or nil
+ 	M.allowed_commands = data.allowed_commands
+ 	M.provider_tools = data.provider_tools
++	M.system_prompt = data.system_prompt or nil
++	M.custom_prompt = data.custom_prompt or nil
+ 
+ 	return true
+ end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 791f8dc..34977b7 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -1,6 +1,7 @@
+ local M = {}
+ 
+ local log = require('tai.log')
++local config = require("tai.config")
+ 
+ M.summary_msg = {
+ 	role = "user",
+@@ -26,7 +27,8 @@ M.defs = {
+ 				properties = {
+ 					file = {
+ 						type = "string",
+-						description = "The path to the file to read. Relative to the project's folder."
++						description =
++						"The path to the file to read. Relative to the project's folder."
+ 					},
+ 					range = {
+ 						type = "string",
+@@ -68,8 +70,8 @@ M.defs = {
+ 								operation = {
+ 									type = "string",
+ 									description =
+-									"Operation of this change: add will append new content after the line or interval; change will substitute the range with the new content; delete will erase the lines in range.",
+-									enum = { "add", "change", "delete" }
++									"Operation of this change: add will append new content after the line or interval; update will substitute the range with the new content; delete will erase the lines in range.",
++									enum = { "add", "update", "delete" }
+ 								},
+ 								lines = {
+ 									type = "string",
+@@ -104,7 +106,7 @@ M.defs = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder."
++						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -136,7 +138,8 @@ M.defs = {
+ 				properties = {
+ 					file = {
+ 						type = "string",
+-						description = "The path to the image file to send. Relative to the project's folder."
++						description =
++						"The path to the image file to send. Relative to the project's folder."
+ 					},
+ 					prompt = {
+ 						type = "string",
+@@ -270,28 +273,28 @@ function M.read_file(file_path, range)
+ 	return numbered_content
+ end
+ 
+-function M.check_command(cmd)
++function M.unsafe_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
+-	local config = require("tai.config")
++	-- Check for disallowed redirect operators
++	if cmd:match('[&gt;&lt;]') then
++		log.debug("Command contains redirects, which are not allowed: " .. cmd)
++		return "[sys] Redirects (&gt;, &lt;, &gt;&gt;, &lt;&lt;, etc.) are not allowed."
++	end
++
+ 	local allowed = config.get_allowed_commands()
+ 
+ 	-- Extract the base command (first word)
+ 	local base_cmd = cmd:match("^%s*(%w+)")
+-	local is_allowed = base_cmd and allowed[base_cmd]
++	if not base_cmd and allowed[base_cmd] then
++		return "[sys] Command " .. base_cmd .. " is not allowed."
++	end
+ 
+-	-- Return the base command and whether it's allowed
+-	return base_cmd, is_allowed
++	return false
+ end
+ 
+ function M.exec_command(cmd)
+ 	log.debug("Executing `" .. cmd .. "`")
+-	-- Check for disallowed redirect operators
+-	if cmd:match('[&gt;&lt;]') then
+-		log.debug("Command contains redirects, which are not allowed: " .. cmd)
+-		return "[sys] Redirects (&gt;, &lt;, &gt;&gt;, &lt;&lt;, etc.) are not allowed."
+-	end
+-
+ 
+ 	local env = {}
+ 	for _, name in ipairs({ "PATH" }) do
+@@ -412,9 +415,9 @@ function M.apply_patch(name, file, changes)
+ 			vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
+ 			-- Track the addition for subsequent changes
+ 			line_shift = line_shift + #new_lines
+-		elseif operation == "change" then
++		elseif operation == "update" then
+ 			-- Replace lines with new content
+-			local new_lines = vim.split(content, '\n')
++			local new_lines = vim.split(content or "", '\n')
+ 			local old_line_count = adjusted_end - adjusted_start + 1
+ 			local new_line_count = #new_lines
+ 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
+@@ -438,28 +441,9 @@ end
+ 
+ -- Convert image file to base64 data URL
+ function M.image_data_url(image_path)
+-	local full_path = image_path
+-
+-	-- Handle relative paths (relative to project root or CWD)
+-	if image_path:sub(1, 1) ~= "/" then
+-		-- Try project root first
+-		local config = require("tai.config")
+-		if config.root then
+-			local try_path = config.root .. "/" .. image_path
+-			if vim.fn.filereadable(try_path) == 1 then
+-				full_path = try_path
+-			end
+-		end
+-	end
+-
+ 	-- Check if file exists
+-	if vim.fn.filereadable(full_path) ~= 1 then
+-		-- Try as absolute path
+-		if vim.fn.filereadable(image_path) == 1 then
+-			full_path = image_path
+-		else
+-			return nil, "Image file not found: " .. image_path
+-		end
++	if vim.fn.filereadable(image_path) ~= 1 then
++		return nil, "Image file not found: " .. image_path
+ 	end
+ 
+ 	-- Detect MIME type from extension
+@@ -481,7 +465,7 @@ function M.image_data_url(image_path)
+ 	end
+ 
+ 	-- Read file and encode to base64 using curl
+-	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)
++	local cmd = string.format("base64 -i '%s' | tr -d '\n'", image_path)
+ 	local handle = io.popen(cmd, "r")
+ 	if not handle then
+ 		return nil, "Failed to read image file"
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index b5bbc12..34925d3 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -102,10 +102,10 @@ function M.append_to_buffer(content)
+ end
+ 
+ function M.focus_input()
+-       vim.schedule(function()
+-               vim.api.nvim_set_current_win(input_win)
+-               vim.cmd("startinsert")
+-       end)
++	vim.schedule(function()
++		vim.api.nvim_set_current_win(input_win)
++		vim.cmd("startinsert")
++	end)
+ end
+ 
+ local function scroll_down()
+@@ -164,9 +164,8 @@ local function run_tools(tool_calls)
+ 		end
+ 
+ 		if name == "shell" then
+-			local _, is_allowed = tools.check_command(args.command)
+ 
+-			if is_allowed then
++			if not tools.unsafe_command(args.command) then
+ 				-- Allowed command: execute directly without confirmation
+ 				log.debug("Executing allowed command: " .. args.command)
+ 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+@@ -218,6 +217,12 @@ local function run_tools(tool_calls)
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
++            if vim.fn.filereadable(args.file) ~= 1 then
++                M.append_to_buffer("{{{ Attaching file failed: file does not exist or is not readable: " .. args.file .. "\n}}}")
++                res.content = "[sys] file does not exist or is not readable"
++                goto continue
++            end
++
+ 
+ 			M.append_to_buffer("{{{ Attaching " .. args.file)
+ 			res.content = tools.read_file(args.file, args.range)
+@@ -230,9 +235,10 @@ local function run_tools(tool_calls)
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
+-			if not args.changes or #args.changes == 0 then
+-				M.append_to_buffer("{{{ Patching file failed: empty changes field.\n}}}")
+-				res.content = "[sys] missing empty changes field"
++			if not args.changes or type(args.changes) ~= "table" or #args.changes == 0 then
++				M.append_to_buffer(
++				"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
++				res.content = "[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
+ 				goto continue
+ 			end
+ 
+</pre>

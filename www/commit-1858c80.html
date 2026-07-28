@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 1858c80</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 1858c80
+parent <a href=commit-fef0958.html>fef0958</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-14T22:55:29-03:00
+
+    nvim: wip make mistral work
+
+<a href=tree-1858c80.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/client.lua b/lua/tai/agents/client.lua
+index 58528e9..d52d94a 100644
+--- a/lua/tai/agents/client.lua
++++ b/lua/tai/agents/client.lua
+@@ -34,4 +34,26 @@ function M.request(method, endpoint, data, callback)
+ 	end)
+ end
+ 
++-- Function to make an asynchronous request to the Mistral API
++function M.upload(method, endpoint, filepath, callback)
++	local url = API_URL .. endpoint
++	local request_body = vim.json.encode(data)
++
++	log.debug("Uploading " .. method .. " " .. url .. " with " .. request_body)
++	vim.system({
++		'curl', '-s', '-X', method, url,
++		'-H', 'Authorization: Bearer ' .. API_KEY,
++		"-F", "file=@" .. filepath ..";filename=" .. filepath
++	}, { text = true }, function(obj)
++		if obj.code ~= 0 then
++			log.error("Mistral API request failed: " .. obj.stderr)
++			callback(nil, "Request failed: " .. obj.stderr)
++			return
++		end
++
++		log.debug("Request response: " .. obj.stdout)
++		local response = vim.json.decode(obj.stdout)
++		callback(response)
++	end)
++end
+ return M
+diff --git a/lua/tai/agents/init.lua b/lua/tai/agents/init.lua
+index 36d5d29..40856dc 100644
+--- a/lua/tai/agents/init.lua
++++ b/lua/tai/agents/init.lua
+@@ -121,22 +121,18 @@ local function set_agent_id(name, id)
+ 	elseif name == "writer" then
+ 		writer.id = id
+ 	end
+-
+-	log.info("Initialized agent: " .. name .. " with ID: " .. id)
+ end
+ 
+ -- Initialize library and agents
+-function M.init(callback)
+-	log.info("Initializing agents")
++function M.init()
+ 	if not library.id then
+-		callback("Failed to initialize agents: library id is empty")
++		log.error("Failed to initialize agents: library id is empty")
+ 		return
+ 	end
+ 
+ 	list_agents(function(agents, err)
+ 		if err then
+ 			log.error("Failed to initialize agents: " .. err)
+-			callback()
+ 			return
+ 		end
+ 
+@@ -165,8 +161,6 @@ function M.init(callback)
+ 				end
+ 			end
+ 		end)()
+-
+-		callback()
+ 	end)
+ end
+ 
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index 44b5a4c..21943f7 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -36,20 +36,42 @@ Use the plan created to guide you and the agents towards the goal.
+ -- Function to receive a prompt and request implementation
+ function M.receive_prompt(prompt, callback)
+     log.info("Planner received prompt: " .. prompt)
+-    -- Request implementation from the coder agent using the conversations API
+-    client.request("POST", 'conversations', {
+-        agent_id = M.id,
+-        messages = {
+-            { role = "user", content = prompt }
+-        }
+-    }, function(response, err)
+-        if err then
+-            log.error("Planner request failed: " .. err)
+-            callback(nil, err)
+-        else
+-            callback(response)
+-        end
+-    end)
++    if M.conversation_id then
++	    client.request("POST", 'conversations/' .. M.conversation_id, {
++		agent_id = M.id,
++		inputs = prompt,
++	    }, function(response, err)
++		if err then
++		    log.error("Planner request failed: " .. err)
++		    callback(nil, err)
++		else
++		    callback(response)
++		end
++	    end)
++    else
++	    client.request("GET", 'conversations', nil, function(response, err)
++		if err then
++		    log.error("Planner request failed: " .. err)
++		    callback(nil, err)
++		else
++			if #response &gt; 0 then
++				M.conversation_id = response[1]["id"]
++			else
++		    callback(response)
++		end
++	    end)
++	    client.request("POST", 'conversations', {
++		agent_id = M.id,
++		inputs = prompt,
++	    }, function(response, err)
++		if err then
++		    log.error("Planner request failed: " .. err)
++		    callback(nil, err)
++		else
++		    callback(response)
++		end
++	    end)
++    end
+ end
+ 
+ return M
+diff --git a/lua/tai/library.lua b/lua/tai/library.lua
+index df346d7..c4c7b7c 100644
+--- a/lua/tai/library.lua
++++ b/lua/tai/library.lua
+@@ -64,27 +64,28 @@ end
+ 
+ -- Function to upload a file to the library
+ function M.upload_file(filepath, callback)
+-	local file_content = table.concat(vim.fn.readfile(filepath), '\n')
+ 	local file_stat = vim.uv.fs_stat(filepath)
+ 
+-	client.request("POST", 'libraries/' .. config.library_id .. '/files', {
+-		name = filepath,
+-		content = file_content
+-	}, function(response, err)
+-		if err then
+-			log.error("Failed to upload file: " .. filepath .. " - " .. err)
+-			callback(nil, err)
+-		else
+-			log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
+-			M.files[filepath] = {
+-				id = response.id,
+-				hash = response.hash,
+-				creation_time = file_stat.mtime
+-				    .sec
+-			}
+-			callback(response.id)
++	client.upload(
++		"POST",
++		'libraries/' .. M.id .. '/documents',
++		filepath,
++		function(response, err)
++			if err then
++				log.error("Failed to upload file: " .. filepath .. " - " .. err)
++				callback(nil, err)
++			else
++				log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
++				M.files[filepath] = {
++					id = response.id,
++					hash = response.hash,
++					creation_time = file_stat.mtime
++					    .sec
++				}
++				callback(response.id)
++			end
+ 		end
+-	end)
++	)
+ end
+ 
+ -- Function to check if a file is in the library
+@@ -95,6 +96,7 @@ function M.is_file_in_library(filepath, callback)
+ 		if err then
+ 			log.error("Failed to list files in library: " .. err)
+ 			callback(nil, err)
++			return
+ 		else
+ 			for _, file in ipairs(response.data) do
+ 				if file.name == filepath then
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 351945a..a11e8e2 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -25,17 +25,19 @@ function M.init()
+ 		end
+ 		log.info("Library initialized with ID: " .. library_id)
+ 
+-		agents.init(function()
+-			log.info("Agents init complete")
+-		end)
++		agents.init()
++		log.info("Agents init complete")
+ 
++		log.info("Uploading project files")
+ 		for _, filepath in ipairs(files) do
+-			if not vim.fn.isdirectory(filepath) then
+-				M.is_file_in_library(filepath, function(exists, err)
++			log.debug("Checking file " .. filepath)
++			if vim.fn.isdirectory(filepath) == 0 then
++				library.is_file_in_library(filepath, function(exists, err)
+ 					if err then
+ 						log.error("Failed to check file in library: " .. filepath .. " - " .. err)
+ 					elseif not exists then
+-						M.upload_file(filepath, function(file_id, err)
++						log.info("Uploading file " .. filepath)
++						library.upload_file(filepath, function(file_id, err)
+ 							if err then
+ 								log.error("Failed to upload file: " ..
+ 									filepath .. " - " .. err)
+@@ -44,6 +46,7 @@ function M.init()
+ 					end
+ 				end)
+ 			end
++			os.execute("sleep 5")
+ 		end
+ 	end)
+ end
+</pre>

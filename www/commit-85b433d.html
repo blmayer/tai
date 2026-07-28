@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 85b433d</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 85b433d
+parent <a href=commit-fe6986b.html>fe6986b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-19T21:13:00-03:00
+
+    added chinese character tai
+
+<a href=tree-85b433d.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index f3edff0..ec70112 100644
+--- a/README.md
++++ b/README.md
+@@ -1,4 +1,4 @@
+-# tai.nvim
++# 泰.nvim
+ 
+ ![tai.nvim in action](www/screenshot.png)
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index c31570d..791f8dc 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -44,7 +44,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state.",
++			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state. After applying a patch you should check the affected files. For best results make the smallest possible changes.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 4987e48..b5bbc12 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -171,8 +171,7 @@ local function run_tools(tool_calls)
+ 				log.debug("Executing allowed command: " .. args.command)
+ 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+ 				local out = tools.exec_command(args.command)
+-				M.append_to_buffer((out or "") .. "\n")
+-				M.append_to_buffer("}}}")
++				M.append_to_buffer((out or "") .. "\n}}}")
+ 				res.content = out
+ 				goto continue
+ 			end
+@@ -188,7 +187,7 @@ local function run_tools(tool_calls)
+ 				log.debug("Confirmed")
+ 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+ 				local out = tools.exec_command(args.command)
+-				M.append_to_buffer((out or "") .. "\n")
++				M.append_to_buffer((out or ""))
+ 				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+@@ -197,22 +196,22 @@ local function run_tools(tool_calls)
+ 				if comment and comment ~= "" then
+ 					res.content = "[sys] User declined running this command. Comment: " ..
+ 					    comment
+-					M.append_to_buffer("Comment: " .. comment .. "\n")
++					M.append_to_buffer("Comment: " .. comment)
+ 				else
+ 					res.content = "[sys] User declined running this command"
+ 				end
+ 			else
+ 				local comment = vim.fn.input("Comment (optional): ")
+-				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
++				M.append_to_buffer("{{{ Stopped at " .. args.command)
+ 				if comment and comment ~= "" then
+ 					res.content = "[sys] User stopped the task. Comment: " .. comment
+-					M.append_to_buffer("Comment: " .. comment .. "\n")
++					M.append_to_buffer("Comment: " .. comment)
+ 				else
+ 					res.content = "[sys] User stopped the task"
+ 				end
+ 				stop = true
+ 			end
+-			M.append_to_buffer("}}}")
++			M.append_to_buffer("\n}}}")
+ 		elseif name == "track_file" then
+ 			if not args.file then
+ 				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
+@@ -220,12 +219,11 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			end
+ 
+-			M.append_to_buffer("{{{ Attaching " .. args.file .. "\n")
++			M.append_to_buffer("{{{ Attaching " .. args.file)
+ 			res.content = tools.read_file(args.file, args.range)
+ 			res.file_path = args.file
+ 			res.file_range = args.range
+-			M.append_to_buffer(res.content .. "\n")
+-			M.append_to_buffer("}}}")
++			M.append_to_buffer(res.content .. "\n}}}")
+ 		elseif name == "patch" then
+ 			if not args.file then
+ 				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
+@@ -238,7 +236,7 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			end
+ 
+-			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
++			M.append_to_buffer("{{{ Patching " .. args.file)
+ 			for _, change in ipairs(args.changes or {}) do
+ 				if not change.lines or not change.operation then
+ 					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
+@@ -257,8 +255,7 @@ local function run_tools(tool_calls)
+ 
+ 			local out = tools.apply_patch(args.name, args.file, args.changes)
+ 			res.content = out
+-			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
+-			M.append_to_buffer("}}}")
++			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}")
+ 		elseif name == "summarize" then
+ 			M.append_to_buffer("{{{ Summarizing chat\n}}}")
+ 			tai.task(
+@@ -341,7 +338,7 @@ local function process_response(fields)
+ 
+ 	-- Display reasoning details (interleaved thinking) folded
+ 	if fields.reasoning_details and #fields.reasoning_details &gt; 0 then
+-		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "\n}}}")
++		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning_details[1].text .. "}}}")
+ 		vim.schedule(function() refresh_and_close_folds() end)
+ 	end
+ 
+diff --git a/www/index.html b/www/index.html
+index 9f6883d..8b0d0a0 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -4,8 +4,9 @@
+ &lt;meta name="color-scheme" content="light dark"&gt;
+ &lt;link rel=icon href=data:,&gt;
+ &lt;style&gt;pre{width:52ch;margin:2ch auto}a{color:#ff00ff}img{max-width:100%}&lt;/style&gt;
+-&lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim&lt;/b&gt;&lt;/i&gt;
+-
++&lt;pre&gt;
++&lt;h1&gt;泰&lt;/h1&gt;
++&lt;i&gt;&lt;b&gt;tai.nvim&lt;/b&gt;&lt;/i&gt;
+ &lt;img src="screenshot.png" alt="tai.nvim in action"&lt;/img&gt;
+ 
+ a minimal Neovim plugin built to bring AI coding
+</pre>

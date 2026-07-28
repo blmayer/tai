@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f8366b7</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f8366b7
+parent <a href=commit-12b2bb5.html>12b2bb5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-01T16:56:00-03:00
+
+    nvim: added allowed commands to config package
+
+    - added line numbers for sent files
+
+<a href=tree-f8366b7.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index a89025a..f4f3474 100644
+--- a/README.md
++++ b/README.md
+@@ -50,6 +50,7 @@ A proper plugin is install method is underway.
+ and load it in your `init.lua`:
+ 
+     local tai = require("tai")
++    tai.setup({})
+ 
+     _G.tai_operator_send = tai.operator_send
+     _G.tai_operator_send_with_prompt = tai.operator_send_with_prompt
+@@ -76,6 +77,10 @@ and load it in your `init.lua`:
+     	require("tai").toggle_chat_window()
+     end, { noremap = true })
+ 
++    vim.keymap.set("i", "&lt;C-X&gt;&lt;C-t&gt;", function()
++      vim.schedule(tai.complete)
++    end, { noremap = true })
++
+ 
+ ### Usage
+ 
+diff --git a/lua/tai/command.lua b/lua/tai/command.lua
+index 2769414..8cf3f82 100644
+--- a/lua/tai/command.lua
++++ b/lua/tai/command.lua
+@@ -1,22 +1,12 @@
+ local M = {}
+-
+-local allowed_commands = {
+-	["cat"] = true,
+-	["tail"] = true,
+-	["head"] = true,
+-	["grep"] = true,
+-	["cut"] = true,
+-	["ls"] = true,
+-	["wc"] = true,
+-	["sort"] = true
+-}
++local config = require("tai.config")
+ 
+ function M.validate(cmd)
+ 	local parts = vim.split(cmd, "%s+")
+ 	if #parts == 0 then return false end
+ 
+ 	local base = parts[1]:match("^([^/]+)$")
+-	if not base or not allowed_commands[base] then
++	if not base or not config.allowed_commands[base] then
+ 		return false
+ 	end
+ 
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index a49cc9b..fc05807 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -1,5 +1,19 @@
+ local M = {}
+ 
++M.allowed_commands = {
++	["cat"] = true,
++	["echo"] = true,
++	["date"] = true,
++	["tail"] = true,
++	["head"] = true,
++	["grep"] = true,
++	["cut"] = true,
++	["ls"] = true,
++	["wc"] = true,
++	["make"] = true,
++	["sort"] = true
++}
++
+ M.model = "moonshotai/kimi-k2-instruct"
+ M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
+ M.complete_model = "llama-3.3-70b-versatile"
+@@ -11,10 +25,18 @@ function M.load(path)
+ 	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
+ 	file:close()
+ 	if not data then return end
+-	
++
+ 	M.model = data.model or M.model
+ 	M.summary_model = data.summary_model or M.summary_model
+ 	M.complete_model = data.complete_model or M.complete_model
++	if data.allowed_commands then
++		M.allowed_commands = {}
++
++		-- Convert the list to a map for quick lookup
++		for _, cmd in ipairs(data.allowed_commands) do
++			M.allowed_commands[cmd] = true
++		end
++	end
+ 	M.skip_cache = data.skip_cache or M.skip_cache
+ 	vim.notify("[tai] Config loaded.", vim.log.levels.INFO)
+ end
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index f27331a..c327fa4 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -1,5 +1,4 @@
+ local M = {}
+-local json = vim.json
+ local chat = require("tai.chat")
+ local config = require("tai.config")
+ 
+@@ -31,8 +30,7 @@ Diff format (unified diff) is line-oriented:
+   - Use relative paths, LF line endings
+ 2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
+   - Commands are run in a shell and their output will be sent to you.
+-  - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
+-  - The content you send here is validated and executed in a shell session, i.e. bash or zsh.
++  - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Use POSIX shell compliant scripting.
+   - Use this to request the info needed to complete the current task.
+   - Don't use commands for code changes, use the patch field.
+@@ -47,7 +45,7 @@ Diff format (unified diff) is line-oriented:
+ 6. **Complex tasks**: Use a plan to analyse and execute chages, make smaller tasks.
+   - If you need more information in order to fullfill a task request the user with by text or using available commands.
+   - Make sure you stick to the plan, let it clear to the user what step you are and what are the changes.
+-  - Propose valid patches one file at a time. 
++  - Propose valid patches one file at a time.
+ 		]]
+ 	}
+ }
+@@ -63,7 +61,8 @@ For each function, method, class, interface, variable, enum etc, group them in a
+ For classes that have members/fields do the same in a nested fashion
+ ]]
+ 
+-local completion_prompt =  "You are an autocomplete assistant. You will receive the current line, you job is to return the continuation of it, don't add any formatting. Line:\n"
++local completion_prompt =
++"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining, don't add any formatting. Line:\n"
+ 
+ local cache = ".tai-cache/"
+ local tai_root = nil
+@@ -136,12 +135,6 @@ local function is_cache_up_to_date(file_path)
+ 	return cache_stat.mtime.sec &gt;= file_stat.mtime.sec
+ end
+ 
+-local function read_tai_config()
+-	local file = io.open(tai_root .. "/.tai", "r")
+-	if not file then return {} end
+-	return vim.fn.json_decode(file:read("*a")) or {}
+-end
+-
+ local function find_tai_root()
+ 	local current = vim.fn.getcwd()
+ 	while current ~= "/" do
+@@ -161,7 +154,7 @@ function M.init()
+ 		return
+ 	end
+ 	cache = tai_root .. "/.tai-cache/"
+-	
++
+ 	config.load(tai_root .. "/.tai")
+ 	if config.skip_cache then
+ 		return
+@@ -189,7 +182,7 @@ function M.init()
+ 				local content = table.concat(lines, "\n")
+ 				reply = await_send_raw(
+ 					config.summary_model,
+-					{{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }}
++					{ { role = "user", content = summary_prompt .. path .. ":\n\n" .. content } }
+ 				)
+ 			else
+ 				reply = path .. ": binary file"
+@@ -214,45 +207,30 @@ function M.init()
+ 	end)
+ end
+ 
+-local function add_file_to_history(filepath)
+-	-- Read file content
+-	local lines = vim.fn.readfile(filepath)
+-	local content = table.concat(lines, "\n")
+-
+-	-- Generate unique id for this file
+-	local file_id = "file:" .. filepath
++function M.request_append_file(filepath, prompt)
++	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
+ 
+-	-- Remove old messages for this file from history
+-	local new_history = {}
+-	for _, msg in ipairs(history) do
+-		if not (msg.id and msg.id == file_id) then
+-			table.insert(new_history, msg)
+-		end
++	local lines
++	if buffer_path:match("/" .. filepath .. "$") then
++		-- Use current buffer
++		local bufnr = vim.api.nvim_get_current_buf()
++		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++	else
++		-- Use file on disk
++		lines = vim.fn.readfile(filepath)
+ 	end
+-	history = new_history
+-
+-	table.insert(history, {
+-		role = "system",
+-		content = "File content for " .. filepath .. "\n\n" .. content,
+-		id = file_id
+-	})
+-
+-	return file_id
+-end
+ 
+-local function add_current_buffer_to_history()
+-	-- Get current buffer content
+-	local bufnr = vim.api.nvim_get_current_buf()
+-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-	local content = table.concat(lines, "\n")
++	-- add line numbers
++	local numbered = {}
++	for i, line in ipairs(lines) do
++		table.insert(numbered, string.format("%4d: %s", i-1, line))
++	end
++	local content = table.concat(numbered, "\n")
+ 
+-	-- Get buffer name/path
+-	local filepath = vim.api.nvim_buf_get_name(bufnr)
+-	--
+-	-- Generate unique id for this buffer
++	-- Generate unique id for this file
+ 	local file_id = "file:" .. filepath
+ 
+-	-- Remove old messages for this buffer from history
++	-- Remove old messages for this file from history
+ 	local new_history = {}
+ 	for _, msg in ipairs(history) do
+ 		if not (msg.id and msg.id == file_id) then
+@@ -263,22 +241,10 @@ local function add_current_buffer_to_history()
+ 
+ 	table.insert(history, {
+ 		role = "system",
+-		content = "Buffer content for " .. filepath .. "\n\n" .. content,
++		content = "File content for " .. filepath .. "\n\n" .. content,
+ 		id = file_id
+ 	})
+ 
+-	return file_id
+-end
+-
+-function M.request_append_file(filepath, prompt)
+-	local bufnr = vim.api.nvim_get_current_buf()
+-	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
+-
+-	if buffer_path:match("/" .. filepath .. "$") then
+-		add_current_buffer_to_history()
+-    	else
+-		add_file_to_history(filepath)
+-	end
+ 	return M.process_request(prompt)
+ end
+ 
+@@ -299,8 +265,8 @@ function M.complete(start)
+ 	local content = table.concat(lines, "\n")
+ 
+ 	local msgs = {
+-		{ role = "system", content = content },
+-		{ role = "user", content = completion_prompt .. start },
++		{ role = "system",    content = content },
++		{ role = "user",      content = completion_prompt .. start },
+ 		{ role = "assistant", content = start }
+ 	}
+ 
+@@ -309,4 +275,5 @@ function M.complete(start)
+ 
+ 	return reply
+ end
++
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 94a0342..5d86b97 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -76,6 +76,9 @@ function M.show_response(fields)
+ 		local win = vim.api.nvim_get_current_win()
+ 		vim.api.nvim_win_set_buf(win, bufnr)
+ 		vim.api.nvim_win_set_width(win, 80)
++	else
++		-- Ensure focus on existing window
++		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
+ 	end
+ end
+ 
+@@ -174,7 +177,6 @@ function M.run_commands(cmds)
+ 		else
+ 			output = output .. "\n\n```" .. cmd .. "``` returned null"
+ 		end
+-
+ 	end
+ 
+ 	vim.schedule(function()
+</pre>

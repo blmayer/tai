@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 78a505c</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 78a505c
+parent <a href=commit-ea357c4.html>ea357c4</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-07-28T16:20:21-03:00
+
+    nvim-tai: finished mime parsing
+
+<a href=tree-78a505c.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/tai.lua b/nvim-tai/tai.lua
+index 1e9dff2..9ce1ad5 100644
+--- a/nvim-tai/tai.lua
++++ b/nvim-tai/tai.lua
+@@ -27,18 +27,22 @@ end
+ local function parse_mime(raw)
+   local result = {}
+ 
+-  local header, remaining = read_until_blank_line(raw)
+-  local boundary = header:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
++  local start, remaining = read_until_blank_line(raw)
++  local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
+   if not boundary then return nil, "No boundary found" end
++  boundary = boundary:gsub("-", "%-")
+   print("[tai] boundary: " .. boundary)
+ 
+-  local s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+-  if not s then
+-    return nil, "no body"
+-  end
+-
+-  while s do
+-    remaining = remaining:sub(s)
++  while 1 do
++    local _, e = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
++    if not e then
++      print("missing boundary")
++      break
++    end
++    remaining = remaining:sub(e+1)
++    if not remaining or remaining == "" then
++      break
++    end
+     print("[tai] re: " .. remaining)
+ 
+     local header, body = read_until_blank_line(remaining)
+@@ -48,17 +52,17 @@ local function parse_mime(raw)
+ 
+     local name = parse_mime_header_name(header)
+     if not name then
+-      return nil, "no name in header"
++      print("name not found in header")
++      break
+     end
+ 
+-    s, i = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
++    local s = body:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+     if not s then
+-      print("[tai] last body: " .. body)
+-      result[name] = body
++      print("no more boundaries")
+       break
+     end
+-    print("[tai] body: " .. body:sub(s - #header))
+-    result[name] = body:sub(1, s - #header)
++    print("[tai] " .. name .. ": " .. body:sub(1, s))
++    result[name] = body:sub(1, s)
+   end
+ 
+   return result, nil
+</pre>

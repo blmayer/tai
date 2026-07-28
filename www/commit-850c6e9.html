@@ -1,0 +1,1267 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 850c6e9</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 850c6e9
+parent <a href=commit-a2df35c.html>a2df35c</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-09T00:41:29-03:00
+
+    nvim: separated chat into implementations
+
+<a href=tree-850c6e9.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 8b0720f..46d7b5e 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -1,252 +1,22 @@
+ local M = {}
+-local json = vim.json
+-local uv = vim.uv -- or vim.loop for Neovim &lt; 0.10
+-
+-local api_key = os.getenv("GROQ_API_KEY")
+-if not api_key then
+-	vim.schedule(function()
+-		vim.notify("[tai] ❌ Missing GROQ_API_KEY environment variable.", vim.log.levels.ERROR)
+-	end)
+-end
+-
+-local groq_url = "https://api.groq.com/openai/v1/chat/completions"
+-
+-M.response_format = {
+-	type = "json_schema", 
+-	json_schema = {
+-		name = "tai_response", 
+-		description = "The only response format for Tai.",
+-		schema = {
+-			type = "object",
+-			additionalProperties = false,
+-			required = {"text"},
+-			properties = {
+-				text = {
+-					type = "string",
+-					description = "Textual part of answer, intended for the user",
+-				},
+-				patch = {
+-					type = "string",
+-					description = "Patch part of answer, a valid diff text containing the changes requested.",
+-				},
+-				commands = {
+-					type = "array",
+-					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
+-					items = {
+-						type = "string"
+-					}
+-				},
+-				plan = {
+-					type = "array",
+-					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
+-					items = {
+-						type = "string"
+-					}
+-				},
+-
+-			}
+-		}
+-	}
+-}
+-
+-function M.send_raw_async(model, messages, callback)
+-	local req_body = {
+-		model = model,
+-		messages = messages,
+-	}
+-	local json_data = json.encode(req_body)
+-
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result, err_data = {}, {}
+-
+-	local handle
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data,
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-
+-		vim.schedule(function()
+-			if code ~= 0 then
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			if #err_data &gt; 0 then
+-				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			local ok, parsed = pcall(json.decode, table.concat(result))
+-			if not ok or not parsed.choices or #parsed.choices == 0 then
+-				vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
+-				callback(nil)
+-				return
+-			end
+-
+-			callback(parsed.choices[1].message.content)
+-		end)
+-	end)
+-
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then table.insert(result, chunk) end
+-	end)
+-
+-	uv.read_start(stderr, function(_, chunk)
+-		if chunk then table.insert(err_data, chunk) end
+-	end)
+-end
+-
+-function M.send_raw(model, messages)
+-	local req_body = {
+-		model = model,
+-		messages = vim.tbl_map(
+-			function(m) return { role = m.role, content = m.content } end,
+-			messages
+-		)
+-	}
+-
+-	local json_data = json.encode(req_body)
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result = {}
+-	local err_data = {}
+-	local handle
+-
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-		if code ~= 0 then
+-			vim.schedule(function()
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-			end)
+-		end
+-	end)
+-
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then
+-			table.insert(result, chunk)
+-		end
+-	end)
+-	vim.wait(60000, function()
+-		return not uv.is_active(handle)
+-	end, 10)
+-
+-	local response = table.concat(result)
+-	if #err_data &gt; 0 then
+-		vim.schedule(function()
+-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-		end)
+-		return nil
+-	end
+-
+-	local ok, parsed = pcall(json.decode, response)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
+-
+-	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
+-
+-	return parsed.choices[1].message.content
++local log = require("tai.log")
++
++-- Load config and determine provider
++local config = require('tai.config')
++
++-- Load the appropriate provider
++local provider
++if config.provider == 'groq' then
++    provider = require('tai.providers.groq')
++elseif config.provider == 'mistral' then
++    provider = require('tai.providers.mistral')
++else
++    error('Unknown chat provider: ' .. provider_name)
+ end
+ 
+-function M.send(model, messages)
+-	local req_body = {
+-		model = model,
+-		messages = vim.tbl_map(
+-			function(m) return { role = m.role, content = m.content } end,
+-			messages
+-		),
+-		response_format = M.response_format
+-	}
+-
+-	local json_data = json.encode(req_body)
+-	local stdout = uv.new_pipe(false)
+-	local stderr = uv.new_pipe(false)
+-	local result = {}
+-	local err_data = {}
+-	local handle
+-
+-	handle = uv.spawn("curl", {
+-		args = {
+-			"-s", "-X", "POST",
+-			groq_url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", json_data
+-		},
+-		stdio = { nil, stdout, stderr },
+-	}, function(code, _)
+-		stdout:close()
+-		stderr:close()
+-		handle:close()
+-		if code ~= 0 then
+-			vim.schedule(function()
+-				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
+-			end)
+-		end
+-	end)
+-
+-	uv.read_start(stdout, function(_, chunk)
+-		if chunk then
+-			table.insert(result, chunk)
+-		end
+-	end)
+-	vim.wait(60000, function()
+-		return not uv.is_active(handle)
+-	end, 10)
+-
+-	local response = table.concat(result)
+-	if #err_data &gt; 0 then
+-		vim.schedule(function()
+-			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
+-		end)
+-		return nil
+-	end
+-
+-	local ok, parsed = pcall(json.decode, response)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
+-
+-	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
+-
+-	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
+-	if not ok then
+-		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+-		return nil
+-	end
+-
+-	return fields
+-end
++-- Expose provider functions
++M.send = provider.send
++M.send_raw = provider.send_raw
++M.send_raw_async = provider.send_raw_async
+ 
+ return M
+diff --git a/lua/tai/command.lua b/lua/tai/command.lua
+index 8cf3f82..75162cd 100644
+--- a/lua/tai/command.lua
++++ b/lua/tai/command.lua
+@@ -1,12 +1,12 @@
+ local M = {}
+-local config = require("tai.config")
++local log = require("tai.log")
+ 
+-function M.validate(cmd)
++function M.validate(cmd, commands)
+ 	local parts = vim.split(cmd, "%s+")
+ 	if #parts == 0 then return false end
+ 
+ 	local base = parts[1]:match("^([^/]+)$")
+-	if not base or not config.allowed_commands[base] then
++	if not base or not commands[base] then
+ 		return false
+ 	end
+ 
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index f48e166..4b07d4b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -18,26 +18,48 @@ M.model = "moonshotai/kimi-k2-instruct"
+ M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
+ M.complete_model = "llama-3.3-70b-versatile"
+ M.skip_cache = false
++M.provider = "groq"
++M.cache_dir = "~/.tai-cache/"
++M.root = "~"
+ 
+-function M.load(path)
+-	local file = io.open(path, "r")
+-	if not file then return end
+-	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
+-	file:close()
+-	if not data then return end
+-
+-	M.model = data.model or M.model
+-	M.summary_model = data.summary_model or M.summary_model
+-	M.complete_model = data.complete_model or M.complete_model
+-	if data.allowed_commands then
+-		M.allowed_commands = {}
+-
+-		-- Convert the list to a map for quick lookup
+-		for _, cmd in ipairs(data.allowed_commands) do
+-			M.allowed_commands[cmd] = true
++local function find_tai_root()
++	local current = vim.fn.getcwd()
++	while current ~= "/" do
++		local tai_file = current .. "/.tai"
++		if vim.fn.filereadable(tai_file) == 1 then
++			return current
+ 		end
++		current = vim.fn.fnamemodify(current, ":h")
+ 	end
+-	M.skip_cache = data.skip_cache or M.skip_cache
++	return nil
+ end
+ 
++M.root = find_tai_root()
++if not M.root then
++	vim.notify("[tai] .tai file not found, quitting.", vim.log.levels.WARN)
++	return
++end
++
++M.cache_dir = M.root .. "/.tai-cache/"
++
++local file = io.open(M.root .. "/.tai", "r")
++if not file then return end
++local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
++file:close()
++if not data then return end
++
++M.model = data.model or M.model
++M.summary_model = data.summary_model or M.summary_model
++M.complete_model = data.complete_model or M.complete_model
++M.provider = data.provider or M.provider
++if data.allowed_commands then
++	M.allowed_commands = {}
++
++	-- Convert the list to a map for quick lookup
++	for _, cmd in ipairs(data.allowed_commands) do
++		M.allowed_commands[cmd] = true
++	end
++end
++M.skip_cache = data.skip_cache or M.skip_cache
++
+ return M
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index dae4235..f9f117a 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -1,5 +1,6 @@
+ local M = {}
+ 
++local log = require("tai.log")
+ local ui = require("tai.ui")
+ local project = require("tai.project")
+ 
+@@ -12,11 +13,10 @@ function M.toggle_chat_window()
+ end
+ 
+ function M.prompt_input()
+-	local path = vim.fn.expand("%")
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
+ 		local result = project.process_request(input)
+-		ui.show_response(result, path)
++		ui.show_response(result)
+ 	end)
+ end
+ 
+@@ -32,7 +32,7 @@ function M.prompt_full_file()
+ 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+ 
+ 		local result = project.request_append_file(path, prompt)
+-		ui.show_response(result, path)
++		ui.show_response(result)
+ 	end)
+ end
+ 
+@@ -45,22 +45,20 @@ function M.continue()
+ 	local prompt = string.format("Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.", location)
+ 
+ 	local result = project.request_append_file(path, prompt)
+-	ui.insert_response(result.text, path)
++	ui.insert_response(result.text)
+ end
+ 
+ function M.operator_send(type)
+-	local path = vim.fn.expand("%")
+ 	local old_reg = vim.fn.getreg('"')
+ 	vim.cmd('normal! gv"zy')
+ 	local text = vim.fn.getreg("z")
+ 	vim.fn.setreg('"', old_reg)
+ 
+ 	local result = project.process_request(text)
+-	ui.show_response(result, path)
++	ui.show_response(result)
+ end
+ 
+ function M.operator_send_with_prompt(type)
+-	local path = vim.fn.expand("%")
+ 	local old_reg = vim.fn.getreg('"')
+ 	vim.cmd('normal! gv"zy')
+ 	local text = vim.fn.getreg("z")
+@@ -69,7 +67,7 @@ function M.operator_send_with_prompt(type)
+ 	ui.input(function(input)
+ 		local full = input .. "\n\nSelected code:\n" .. text
+ 		local result = project.process_request(full)
+-		ui.show_response(result, path)
++		ui.show_response(result)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/log.lua b/lua/tai/log.lua
+new file mode 100644
+index 0000000..d57cd40
+--- /dev/null
++++ b/lua/tai/log.lua
+@@ -0,0 +1,70 @@
++local M = {}
++
++-- Log levels
++M.DEBUG = 1
++M.INFO = 2
++M.WARNING = 3
++M.ERROR = 4
++
++-- Current log level (default to INFO)
++M.level = M.INFO
++M.log_file = os.getenv("HOME") .. "/.cache/tai.log"
++
++-- Set the log level
++function M.set_level(level)
++	M.level = level
++end
++
++-- Set the log file path
++function M.set_log_file(path)
++	M.log_file = path
++end
++
++-- Log a message
++function M.log(level, message)
++	if level &gt;= M.level then
++		local level_str
++		if level == M.DEBUG then
++			level_str = "DEBUG"
++		elseif level == M.INFO then
++			level_str = "INFO"
++		elseif level == M.WARNING then
++			level_str = "WARNING"
++		elseif level == M.ERROR then
++			level_str = "ERROR"
++		end
++
++		local timestamp = os.date("%Y-%m-%d %H:%M:%S")
++		local log_message = string.format("[%s] [%s] %s", timestamp, level_str, message)
++
++		-- Print to stderr for ERROR and WARNING levels
++		if level == M.ERROR or level == M.WARNING then
++			io.stderr:write(log_message .. "\n")
++		end
++
++		local file = io.open(M.log_file, "a")
++		if file then
++			file:write(log_message .. "\n")
++			file:close()
++		end
++	end
++end
++
++-- Convenience functions for different log levels
++function M.debug(message)
++	M.log(M.DEBUG, message)
++end
++
++function M.info(message)
++	M.log(M.INFO, message)
++end
++
++function M.warning(message)
++	M.log(M.WARNING, message)
++end
++
++function M.error(message)
++	M.log(M.ERROR, message)
++end
++
++return M
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 9c97b0c..99909c3 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -1,6 +1,7 @@
+ local M = {}
+-local chat = require("tai.chat")
++local log = require('tai.log')
+ local config = require("tai.config")
++local chat = require("tai.chat")
+ 
+ local history = {
+ 	{
+@@ -19,23 +20,33 @@ Use the summary of the project in the system prompt to guide you.
+ ONLY propose changes that solves the issue, don't suppose anything.
+ 
+ #### Proposing Code Changes
+-Use the patch field to propose code changes, the content **MUST** be **VALID** patch in ed script format (patch -e).
+-  - To generate a patch you **NEED** to know the full content of the file.
++Use the patch field to propose code changes, the content **MUST** be **VALID** ed script.
++  - **ONLY** send a code change if you know the full content of the file.
+   - Add a small description of the changes and the file name in the text field.
+-  - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+-  - Don't forget to add the `.` for each ed command and `w` at end.
+-  - Propose valid patches one file at a time. **ALWAYS** use patch in ed script format.
++  - To input a dot only it must be escaped like `..`.
++  - Specify the file affected at start of the patch with `e file_name`.
++  - **ALWAYS** finish with `w`.
++  - Make sure you get the line numbers correct.
++Example of a valid patch:
++```
++e test.py
++1i
++print("Hello, world!")
++.
++w
++```
+ 
+ #### Commands
+-Supply the list of commands to the executed on the user's machine in the `commands` field.
++Supply the list of commands to be executed on the user's machine in the `commands` field.
+   - Commands are run in a shell and their output will be sent to you.
+   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Use POSIX shell compliant scripting.
+   - Don't use commands for code changes, use the patch field.
+-  - Reading files is **ONLY** possible with the command `@read file_name`, the file's contents is sent as system prompt.
++  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
+ 
+ #### Planning
+ If the task needs multi-steps, use the `plan` field to add the steps of the plan, don't number steps or itemize.
++For big refactors, always provide a plan before sending patches.
+ 
+ #### User Facing Text
+ Supply concise user-facing text in the `text` field.
+@@ -57,21 +68,18 @@ The only required field is text.
+ 
+ local summary_prompt = [[
+ Create a summary of the file below using the format (without &lt;&gt;):
+-&lt;file name&gt;: &lt;one line description of the file&gt;
++&lt;file_name&gt;: &lt;one line description of the file&gt;
+ 
+ Only include this for source code files:
+ List of imported modules/packages.
+ For each function, method, class, interface, variable, enum etc, group them in a section and write:
+-  &lt;name or signature&gt;: &lt;one line descrition&gt;
++  &lt;name_or_signature&gt;: &lt;one line descrition&gt;
+ For classes that have members/fields do the same in a nested fashion
+ ]]
+ 
+ local completion_prompt =
+ "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+ 
+-local cache = ".tai-cache/"
+-local tai_root = nil
+-
+ local function run_async(fn)
+ 	local co = coroutine.create(fn)
+ 
+@@ -103,6 +111,12 @@ local function await_send_raw(model, messages)
+ 	return coroutine.yield()
+ end
+ 
++local function sleep(n)
++  local co = coroutine.running()
++  vim.defer_fn(function() coroutine.resume(co) end, n * 1000)
++  coroutine.yield()
++end
++
+ local function mkdir_p(dir)
+ 	if vim.uv.fs_stat(dir) then return end
+ 	local parent = dir:match("(.+)/[^/]+$")
+@@ -122,7 +136,7 @@ local function is_text_file(file_path)
+ end
+ 
+ local function is_cache_up_to_date(file_path)
+-	local cache_path = cache .. file_path
++	local cache_path = config.cache_dir .. file_path
+ 	local file_stat = vim.uv.fs_stat(file_path)
+ 	local cache_stat = vim.uv.fs_stat(cache_path)
+ 
+@@ -135,42 +149,26 @@ local function is_cache_up_to_date(file_path)
+ 	return cache_stat.mtime.sec &gt;= file_stat.mtime.sec
+ end
+ 
+-local function find_tai_root()
+-	local current = vim.fn.getcwd()
+-	while current ~= "/" do
+-		local tai_file = current .. "/.tai"
+-		if vim.fn.filereadable(tai_file) == 1 then
+-			return current
+-		end
+-		current = vim.fn.fnamemodify(current, ":h")
+-	end
+-	return nil
+-end
+ 
+ function M.init()
+-	tai_root = find_tai_root()
+-	if not tai_root then
+-		vim.notify("[tai] .tai file not found, quitting.", vim.log.levels.WARN)
++	if not config then
+ 		return
+ 	end
+-	cache = tai_root .. "/.tai-cache/"
+-
+-	config.load(tai_root .. "/.tai")
+ 	if config.skip_cache then
+ 		return
+ 	end
+ 
+ 	run_async(function()
+ 		local preamble = "You are managing a project with root at " ..
+-		    tai_root .. ". Here's a summary of each file:\n"
++		    config.root .. ". Here's a summary of each file:\n"
+ 
+-		for _, path in ipairs(vim.fn.glob("**/*", true, true)) do
++		for i, path in ipairs(vim.fn.glob("**/*", true, true)) do
+ 			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then
+ 				goto continue
+ 			end
+ 
+ 			if is_cache_up_to_date(path) then
+-				local lines = vim.fn.readfile(cache .. path)
++				local lines = vim.fn.readfile(config.cache_dir .. path)
+ 				local content = table.concat(lines, "\n")
+ 				preamble = preamble .. content .. "------------------\n"
+ 				goto continue
+@@ -180,6 +178,9 @@ function M.init()
+ 			if is_text_file(path) then
+ 				local lines = vim.fn.readfile(path)
+ 				local content = table.concat(lines, "\n")
++				if i &gt; 1 then
++					sleep(5)
++				end
+ 				reply = await_send_raw(
+ 					config.summary_model,
+ 					{ { role = "user", content = summary_prompt .. path .. ":\n\n" .. content } }
+@@ -190,8 +191,8 @@ function M.init()
+ 
+ 			preamble = preamble .. reply .. "\n------------------\n"
+ 
+-			ensure_dir_exists(cache .. path)
+-			local cache_file = io.open(cache .. path, "w")
++			ensure_dir_exists(config.cache_dir .. path)
++			local cache_file = io.open(config.cache_dir .. path, "w")
+ 			if not cache_file then
+ 				vim.notify("[tai] Error writing to cache file " .. path, vim.log.levels.ERROR)
+ 				return
+@@ -223,7 +224,7 @@ function M.request_append_file(filepath, prompt)
+ 	-- add line numbers
+ 	local numbered = {}
+ 	for i, line in ipairs(lines) do
+-		table.insert(numbered, string.format("%4d: %s", i-1, line))
++		table.insert(numbered, string.format("%4d: %s", i, line))
+ 	end
+ 	local content = table.concat(numbered, "\n")
+ 
+@@ -239,7 +240,7 @@ function M.request_append_file(filepath, prompt)
+ 	end
+ 	history = new_history
+ 
+-	table.insert(history, {
++	table.insert(history, 3, {
+ 		role = "system",
+ 		content = "File content for " .. filepath .. " (numbered for your convenience)\n\n" .. content,
+ 		id = file_id
+diff --git a/lua/tai/providers/groq.lua b/lua/tai/providers/groq.lua
+new file mode 100644
+index 0000000..257ed57
+--- /dev/null
++++ b/lua/tai/providers/groq.lua
+@@ -0,0 +1,254 @@
++local M = {}
++local log = require("tai.log")
++local json = vim.json
++local uv = vim.uv -- or vim.loop for Neovim &lt; 0.10
++
++local api_key = os.getenv("GROQ_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing GROQ_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local groq_url = "https://api.groq.com/openai/v1/chat/completions"
++
++M.response_format = {
++	type = "json_schema", 
++	json_schema = {
++		name = "tai_response", 
++		description = "The only response format for Tai.",
++		schema = {
++			type = "object",
++			additionalProperties = false,
++			required = {"text"},
++			properties = {
++				text = {
++					type = "string",
++					description = "Textual part of answer, intended for the user",
++				},
++				patch = {
++					type = "string",
++					description = "Patch part of answer, a valid diff text containing the changes requested.",
++				},
++				commands = {
++					type = "array",
++					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
++					items = {
++						type = "string"
++					}
++				},
++				plan = {
++					type = "array",
++					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
++					items = {
++						type = "string"
++					}
++				},
++
++			}
++		}
++	}
++}
++
++function M.send_raw_async(model, messages, callback)
++	local req_body = {
++		model = model,
++		messages = messages,
++	}
++	local json_data = json.encode(req_body)
++
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result, err_data = {}, {}
++
++	local handle
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			groq_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data,
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++
++		vim.schedule(function()
++			if code ~= 0 then
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			if #err_data &gt; 0 then
++				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			local ok, parsed = pcall(json.decode, table.concat(result))
++			if not ok or not parsed.choices or #parsed.choices == 0 then
++				vim.notify("[tai] No valid response from Groq", vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			callback(parsed.choices[1].message.content)
++		end)
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then table.insert(result, chunk) end
++	end)
++
++	uv.read_start(stderr, function(_, chunk)
++		if chunk then table.insert(err_data, chunk) end
++	end)
++end
++
++function M.send_raw(model, messages)
++	local req_body = {
++		model = model,
++		messages = vim.tbl_map(
++			function(m) return { role = m.role, content = m.content } end,
++			messages
++		)
++	}
++
++	local json_data = json.encode(req_body)
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result = {}
++	local err_data = {}
++	local handle
++
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			groq_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++		if code ~= 0 then
++			vim.schedule(function()
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++			end)
++		end
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then
++			table.insert(result, chunk)
++		end
++	end)
++	vim.wait(60000, function()
++		return not uv.is_active(handle)
++	end, 10)
++
++	local response = table.concat(result)
++	if #err_data &gt; 0 then
++		vim.schedule(function()
++			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++		end)
++		return nil
++	end
++
++	local ok, parsed = pcall(json.decode, response)
++	if not ok then
++		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	if not parsed.choices or #parsed.choices == 0 then
++		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	return parsed.choices[1].message.content
++end
++
++function M.send(model, messages)
++	local req_body = {
++		model = model,
++		messages = vim.tbl_map(
++			function(m) return { role = m.role, content = m.content } end,
++			messages
++		),
++		response_format = M.response_format
++	}
++
++	local json_data = json.encode(req_body)
++	vim.notify("[tai] sending to grok" .. json_data, vim.log.levels.INFO)
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result = {}
++	local err_data = {}
++	local handle
++
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			groq_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++		if code ~= 0 then
++			vim.schedule(function()
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++			end)
++		end
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then
++			table.insert(result, chunk)
++		end
++	end)
++	vim.wait(60000, function()
++		return not uv.is_active(handle)
++	end, 10)
++
++	local response = table.concat(result)
++	if #err_data &gt; 0 then
++		vim.schedule(function()
++			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++		end)
++		return nil
++	end
++
++	local ok, parsed = pcall(json.decode, response)
++	if not ok then
++		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	if not parsed.choices or #parsed.choices == 0 then
++		vim.notify("[tai] No response from Groq, received " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
++	if not ok then
++		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	return fields
++end
++
++return M
+diff --git a/lua/tai/providers/mistral.lua b/lua/tai/providers/mistral.lua
+new file mode 100644
+index 0000000..27fc554
+--- /dev/null
++++ b/lua/tai/providers/mistral.lua
+@@ -0,0 +1,254 @@
++local M = {}
++
++local log = require("tai.log")
++local json = vim.json
++local uv = vim.uv
++
++local api_key = os.getenv("MISTRAL_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing MISTRAL_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local mistral_url = "https://api.mistral.ai/v1/chat/completions"
++
++local response_format = {
++	type = "json_object",
++	json_schema = {
++		name = "tai_response",
++		description = "The only response format for Tai.",
++		schema = {
++			type = "object",
++			additionalProperties = false,
++			required = {"text"},
++			properties = {
++				text = {
++					type = "string",
++					description = "Textual part of answer, intended for the user",
++				},
++				patch = {
++					type = "string",
++					description = "Patch part of answer, a valid diff text containing the changes requested.",
++				},
++				commands = {
++					type = "array",
++					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
++					items = {
++						type = "string"
++					}
++				},
++				plan = {
++					type = "array",
++					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
++					items = {
++						type = "string"
++					}
++				},
++			}
++		}
++	}
++}
++
++function M.send_raw_async(model, messages, callback)
++	local req_body = {
++		model = model,
++		messages = messages,
++	}
++	local json_data = json.encode(req_body)
++
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result, err_data = {}, {}
++
++	local handle
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			mistral_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data,
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++
++		vim.schedule(function()
++			if code ~= 0 then
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			if #err_data &gt; 0 then
++				vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			local ok, parsed = pcall(json.decode, table.concat(result))
++			if not ok or not parsed.choices or #parsed.choices == 0 then
++				vim.notify("[tai] No valid response from Mistral: " .. table.concat(result), vim.log.levels.ERROR)
++				callback(nil)
++				return
++			end
++
++			callback(parsed.choices[1].message.content)
++		end)
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then table.insert(result, chunk) end
++	end)
++
++	uv.read_start(stderr, function(_, chunk)
++		if chunk then table.insert(err_data, chunk) end
++	end)
++end
++
++function M.send_raw(model, messages)
++	local req_body = {
++		model = model,
++		messages = vim.tbl_map(
++			function(m) return { role = m.role, content = m.content } end,
++			messages
++		)
++	}
++
++	local json_data = json.encode(req_body)
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result = {}
++	local err_data = {}
++	local handle
++
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			mistral_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++		if code ~= 0 then
++			vim.schedule(function()
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++			end)
++		end
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then
++			table.insert(result, chunk)
++		end
++	end)
++	vim.wait(60000, function()
++		return not uv.is_active(handle)
++	end, 10)
++
++	local response = table.concat(result)
++	if #err_data &gt; 0 then
++		vim.schedule(function()
++			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++		end)
++		return nil
++	end
++
++	local ok, parsed = pcall(json.decode, response)
++	if not ok then
++		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	if not parsed.choices or #parsed.choices == 0 then
++		vim.notify("[tai] No response from Mistral, received " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	return parsed.choices[1].message.content
++end
++
++function M.send(model, messages)
++	local req_body = {
++		model = model,
++		messages = vim.tbl_map(
++			function(m) return { role = m.role, content = m.content } end,
++			messages
++		),
++		response_format = response_format
++	}
++
++	local json_data = json.encode(req_body)
++	local stdout = uv.new_pipe(false)
++	local stderr = uv.new_pipe(false)
++	local result = {}
++	local err_data = {}
++	local handle
++
++	handle = uv.spawn("curl", {
++		args = {
++			"-s", "-X", "POST",
++			mistral_url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", json_data
++		},
++		stdio = { nil, stdout, stderr },
++	}, function(code, _)
++		stdout:close()
++		stderr:close()
++		handle:close()
++		if code ~= 0 then
++			vim.schedule(function()
++				vim.notify("[tai] curl exited with code " .. code, vim.log.levels.ERROR)
++			end)
++		end
++	end)
++
++	uv.read_start(stdout, function(_, chunk)
++		if chunk then
++			table.insert(result, chunk)
++		end
++	end)
++	vim.wait(60000, function()
++		return not uv.is_active(handle)
++	end, 10)
++
++	local response = table.concat(result)
++	if #err_data &gt; 0 then
++		vim.schedule(function()
++			vim.notify("[tai] API error: " .. table.concat(err_data), vim.log.levels.ERROR)
++		end)
++		return nil
++	end
++
++	local ok, parsed = pcall(json.decode, response)
++	if not ok then
++		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	if not parsed.choices or #parsed.choices == 0 then
++		vim.notify("[tai] No response from Mistral, received " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
++	if not ok then
++		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
++		return nil
++	end
++
++	return fields
++end
++
++return M
++
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 7847c46..7ad1c2c 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,4 +1,5 @@
+ local M = {}
++local log = require("tai.log")
+ local command = require("tai.command")
+ local project = require("tai.project")
+ 
+@@ -147,18 +148,8 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
+-function M.apply_patch(patch, filename)
+-	local f = io.popen("patch --dry-run -p0 -e " .. filename .. " &gt; /dev/null 2&gt;&amp;1", "w")
+-	f:write(patch)
+-	local ok = f:close()
+-
+-	if not ok then
+-		vim.notify("[tai] Invalid patch – not applied", vim.log.levels.ERROR)
+-		return
+-	end
+-
+-	local real = io.popen(
+-	"patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
++function M.apply_patch(patch)
++	local real = io.popen("ed -s", "w")
+ 	real:write(patch)
+ 	real:close()
+ 	vim.api.nvim_command("checktime")
+</pre>

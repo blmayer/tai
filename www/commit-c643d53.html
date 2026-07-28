@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai c643d53</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit c643d53
+parent <a href=commit-99550ea.html>99550ea</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-05T07:03:07-03:00
+
+    improved agent prompt
+
+    - fixed bug with too large context
+
+<a href=tree-c643d53.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index c7cdc9e..2c29565 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -24,8 +24,8 @@ Output rules:
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+   assumptions.
+-- Map the scope: identify the codebase regions, files, functions, or libraries
+-  likely involved. If unknown, plan and perform targeted searches.
++- Map the scope: identify the important codebase regions, files, functions,
++  or libraries likely involved. If unknown, plan and perform targeted searches.
+   - Use `ls -Rl`, `find` or similar command to start exploring the repo.
+   - If you find an agents file (e.g. AGENTS.md), read it.
+ - Formulate an execution plan: research steps, implementation sequence, and
+@@ -53,7 +53,7 @@ You do NOT have access to tools in this session.
+ else
+ 	M.system_prompt = M.system_prompt .. [[
+ # Tools
+-You have access to tools that can help you accomplish the goal, their result
++You have access to tools that runs in the project's root folder, their result
+ is sent back to you. Choose the most appropriate tool based on the task and the
+ tool descriptions provided. Use the provider-native tool-calling mechanism.
+ 
+@@ -67,34 +67,32 @@ last 5 lines: -5:$.",
+ 
+ ## read_file
+ To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+-content of a file from the file system, or if given, a range of lines. And
++content of a file from the file system, or if given, a range of lines, and
+ returns the content. To use it call the `read_file` with the following
+ example parameters:
+ {
+ 	"file_path": "&lt;path/to/file&gt;",
+-	"range": "&lt;optional range of lines to read&gt;"
++	"range": "&lt;range of lines to read or empty for full file&gt;"
+ }
+ 
+ ## patch
+-To edit files, ALWAYS use the `patch` tool. `patch` effectively
+-allows you to write/edit files, so pay careful attention to these instructions.
+-To use the `patch` tool, you should call the tool with the following
+-structure:
++To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
++write/edit files, so pay careful attention to these instructions. To use the
++`patch` tool, you should call the tool with the following structure:
+ {
+-	"name": "&lt;optional name for the patch&gt;",
++	"name": "&lt;name for the patch&gt;",
+ 	"file": "&lt;path/to/file&gt;",
+ 	"changes": [
+ 		{
+ 			"operation": "&lt;add|change|delete&gt;",
+ 			"lines": "&lt;range of lines&gt;",
+ 			"content": "&lt;new content&gt;"
+-}
++		}
+ 	]
+ }
+-IMPORTANT: ALWAYS generate the smallest possible patch, so that you change ONLY
+-the needed lines. You can also send multiple patches, so you change multiple
+-places individualy.
+-Also send a short text explaining the change and why.
++IMPORTANT: ALWAYS generate the smallest possible patch, send ONLY the NEW lines.
++You can also send multiple patches, so you change multiple places individualy.
++Also inform the user what are you changing and why.
+ 
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+@@ -113,9 +111,8 @@ writing use the `patch` tool. Don't use absolute paths.
+ Use the `summarize` tool when you think the conversation context is getting too
+ large. This tool will summarize the entire conversation history and replace it
+ with a concise summary, reducing the context size. Use this tool proactively
+-when you notice the conversation is becoming lengthy, especially before making
+-additional tool calls that might fail due to context limits. Calling it will
+-end the current conversation, so it's better to call it after the task is done.
++when you notice the conversation is becoming lengthy, especially before starting
++new and unrelated tasks.
+ ]]
+ end
+ 
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index c47775d..ca7f37b 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -120,12 +120,26 @@ local function request_chat_completions(model_config, msgs, format, callback)
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. chat_url .. " with " .. vim.inspect(body))
+-	vim.system({
++
++	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
++	-- file instead of passing it as a curl argv element.
++	local tmp = vim.fn.tempname()
++	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
++	if not ok_write then
++		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
++	end
++
++	local function cleanup()
++		pcall(vim.fn.delete, tmp)
++	end
++
++	local ok_system, system_err = pcall(vim.system, {
+ 		"curl", "-s", "-X", "POST", chat_url,
+ 		"-H", "Authorization: Bearer " .. api_key,
+ 		"-H", "Content-Type: application/json",
+-		"-d", request_body,
++		"--data-binary", "@" .. tmp,
+ 	}, { text = true }, function(obj)
++		cleanup()
+ 		if obj.code ~= 0 then
+ 			local err_msg = "curl returned code " .. obj.code
+ 			callback(nil, err_msg)
+@@ -171,6 +185,11 @@ local function request_chat_completions(model_config, msgs, format, callback)
+ 		end
+ 		callback(fields, nil)
+ 	end)
++
++	if not ok_system then
++		cleanup()
++		return callback(nil, tostring(system_err))
++	end
+ end
+ 
+ local function request_responses(model_config, msgs, format, callback)
+@@ -237,12 +256,26 @@ local function request_responses(model_config, msgs, format, callback)
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. responses_url .. " with " .. vim.inspect(body))
+-	vim.system({
++
++	-- Avoid E2BIG (argument list too long) by writing the request body to a temp
++	-- file instead of passing it as a curl argv element.
++	local tmp = vim.fn.tempname()
++	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
++	if not ok_write then
++		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
++	end
++
++	local function cleanup()
++		pcall(vim.fn.delete, tmp)
++	end
++
++	local ok_system, system_err = pcall(vim.system, {
+ 		"curl", "-s", "-X", "POST", responses_url,
+ 		"-H", "Authorization: Bearer " .. api_key,
+ 		"-H", "Content-Type: application/json",
+-		"-d", request_body,
++		"--data-binary", "@" .. tmp,
+ 	}, { text = true }, function(obj)
++		cleanup()
+ 		if obj.code ~= 0 then
+ 			local err_msg = "curl returned code " .. obj.code
+ 			callback(nil, err_msg)
+@@ -320,6 +353,11 @@ local function request_responses(model_config, msgs, format, callback)
+ 
+ 		callback(fields, nil)
+ 	end)
++
++	if not ok_system then
++		cleanup()
++		return callback(nil, tostring(system_err))
++	end
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 62e6255..bc06007 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -83,7 +83,7 @@ local function add_sep()
+ 	M.append_to_buffer(result .. "\n")
+ end
+ 
+-local function run_tools(tool_calls, callback)
++local function run_tools(tool_calls)
+ 	local results = {}
+ 	for _, call in ipairs(tool_calls or {}) do
+ 		local name = call["function"].name
+@@ -109,8 +109,7 @@ local function run_tools(tool_calls, callback)
+ 				M.append_to_buffer("[tai] Stopped at " .. args.command .. "\n")
+ 				res.content = "[sys] User stopped the conversation"
+ 				table.insert(results, res)
+-				callback(results)
+-				return
++				return results
+ 			end
+ 		elseif name == "read_file" then
+ 			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
+@@ -118,6 +117,9 @@ local function run_tools(tool_calls, callback)
+ 			res.file_path = args.file_path
+ 		elseif name == "patch" then
+ 			M.append_to_buffer("[tai] Patching " .. args.file .. "\n")
++			if args.name then
++				M.append_to_buffer("[tai] " .. args.name .. "\n")
++			end
+ 			for _, change in ipairs(args.changes) do
+ 				M.append_to_buffer(string.format(
+ 					"Operation: %s, Lines: %s\nContent:\n%s\n",
+@@ -129,7 +131,7 @@ local function run_tools(tool_calls, callback)
+ 			res.content = tools.run(name, args)
+ 		elseif name == "summarize" then
+ 			M.append_to_buffer("[tai] Summarizing\n")
+-			return tai.task(
++			tai.task(
+ 				{ tools.summary_msg },
+ 				function(summ)
+ 					if summ.error then
+@@ -142,11 +144,12 @@ local function run_tools(tool_calls, callback)
+ 					tai.add_to_history(res)
+ 				end
+ 			)
++			return nil
+ 		end
+ 		log.debug("Output of " .. name .. ": " .. (res.content or ""))
+ 		table.insert(results, res)
+ 	end
+-	callback(results)
++	return results
+ end
+ 
+ local function process_response(fields)
+@@ -165,13 +168,12 @@ local function process_response(fields)
+ 	end
+ 
+ 	vim.schedule(function()
+-		run_tools(
+-			fields.tool_calls,
+-			function(res) tai.task(res, process_response) end
+-		)
++		local res = run_tools(fields.tool_calls)
++		if res then
++			tai.task(res, process_response)
++		end
+ 	end)
+ end
+-
+ local function send_input()
+ 	vim.schedule(function()
+ 		scroll_down()
+</pre>

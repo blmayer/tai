@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai a31edc4</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit a31edc4
+parent <a href=commit-28d079d.html>28d079d</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-08-25T17:47:08-03:00
+
+    nvim: changed response type to json
+
+    also added a config package to read the .tai file as a config file
+
+<a href=tree-a31edc4.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 851b427..ab5aecb 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -11,12 +11,46 @@ if not api_key then
+ end
+ 
+ local groq_url = "https://api.groq.com/openai/v1/chat/completions"
+-local model = "moonshotai/kimi-k2-instruct"
+---local model = "compound-beta"
+---local model = "llama3-70b-8192"
+ 
++M.response_format = {
++	type = "json_schema", 
++	json_schema = {
++		name = "tai_response", 
++		description = "The only response format for Tai.",
++		schema = {
++			type = "object",
++			additionalProperties = false,
++			required = {"text"},
++			properties = {
++				text = {
++					type = "string",
++					description = "Textual part of answer, intended for the user",
++				},
++				patch = {
++					type = "string",
++					description = "Patch part of answer, a valid diff text containing the changes requested.",
++				},
++				commands = {
++					type = "array",
++					description = "Commands part of answer, a list of commands to be ran in order in the user's machine.",
++					items = {
++						type = "string"
++					}
++				},
++				plan = {
++					type = "array",
++					description = "Plan part of answer, a list of steps to be taken in order to fullfil the big change requested.",
++					items = {
++						type = "string"
++					}
++				},
++
++			}
++		}
++	}
++}
+ 
+-function M.send_raw(messages, callback)
++function M.send_raw(model, messages, callback)
+ 	local req_body = {
+ 		model = model,
+ 		messages = messages,
+@@ -75,13 +109,14 @@ function M.send_raw(messages, callback)
+ 	end)
+ end
+ 
+-function M.send_chat(messages)
++function M.send(model, messages)
+ 	local req_body = {
+ 		model = model,
+ 		messages = vim.tbl_map(
+ 			function(m) return { role = m.role, content = m.content } end,
+ 			messages
+ 		),
++		response_format = M.response_format
+ 	}
+ 
+ 	local json_data = json.encode(req_body)
+@@ -111,7 +146,6 @@ function M.send_chat(messages)
+ 		end
+ 	end)
+ 
+-	vim.notify("[tai] Waiting for response", vim.log.levels.TRACE)
+ 	uv.read_start(stdout, function(_, chunk)
+ 		if chunk then
+ 			table.insert(result, chunk)
+@@ -140,9 +174,10 @@ function M.send_chat(messages)
+ 		return nil
+ 	end
+ 
+-	local fields, err = mime.parse(parsed.choices[1].message.content)
+-	if err then
+-		vim.notify("[tai] Failed to decode MIME message: " .. response, vim.log.levels.ERROR)
++	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
++	-- local fields, err = mime.parse(parsed.choices[1].message.content)
++	if not ok then
++		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+ 		return nil
+ 	end
+ 
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+new file mode 100644
+index 0000000..355586e
+--- /dev/null
++++ b/lua/tai/config.lua
+@@ -0,0 +1,20 @@
++local M = {}
++
++M.model = "moonshotai/kimi-k2-instruct"
++M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
++M.skip_cache = false
++
++function M.load(path)
++	local file = io.open(path, "r")
++	if not file then return end
++	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
++	file:close()
++	if not ok then return end
++	
++	M.model = data.model or M.model
++	M.summary_model = data.summary_model or M.summary_model
++	M.skip_cache = data.skip_cache or M.skip_cache
++	vim.notify("[tai] Config loaded.", vim.log.levels.INFO)
++end
++
++return M
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index be896cf..b6b7ff5 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -1,6 +1,7 @@
+ local M = {}
+-local vim = vim
++local json = vim.json
+ local chat = require("tai.chat")
++local config = require("tai.config")
+ 
+ local system_prompts = {
+ 	{
+@@ -8,7 +9,7 @@ local system_prompts = {
+ 		content = [[
+ ### System
+ You are Tai, a Neovim coding assistant plugin.
+-Return **EXACTLY** one valid multipart MIME message with no extra text before or after.
++Return **EXACTLY** one valid json object according to the passed schema.
+ 
+ ### Context
+ You run inside a Neovim session, the message history is sent to you so you can follow it, as in a normal conversation. At the
+@@ -22,47 +23,33 @@ need other info, for that you can request the user for simple questions.
+ Respond correctly to the prompts, don't propose code changes if the user didn't ask.
+ 
+ ### Format Enforcement
+-- Every response must start with the exact headers `MIME-Version: 1.0` and `Content-Type: multipart/mixed; boundary="&lt;boundary&gt;"`.
+-- Boundaries must be 8–32 alphanumeric characters only.
+-- All multipart boundaries must be closed with `--&lt;boundary&gt;--`.
+-
+-### Output format
+-You MUST return a single multipart MIME message with:
+-- MIME-Version: 1.0
+-- Content-Type: multipart/mixed; boundary="&lt;boundary&gt;"
+-- Exactly one boundary per distinct part
+-- End with `--&lt;boundary&gt;--`
+-
+-Example structure:
+-MIME-Version: 1.0\nContent-Type: multipart/mixed; boundary="abc"\n\n--abc\n...\n--abc--
++- Every response must comply with the json schema named "tai_response", only send valid JSON.
++- In case you forget, the "tai_response" schema is:
++```
++		]] .. json.encode(chat.response_format) .. [[
++```
+ 
+ ### Instructions
+-1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the MIME envelope.
+-2. **File naming**: Each part must contain `Content-Disposition: attachment; filename="&lt;filename&gt;"`.
+-3. **Line endings**: Always use single Unix line-feed (`\n`) characters.
+-4. **Diffs**: Use this part to propose code changes, the content **MUST** be a **VALID** patch file.
+-   - Use `text/x-diff` with part name `patch`.
++1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the JSON response.
++2. **Line endings**: Always use single Unix line-feed (`\n`) characters.
++3. **Diffs**: Use the patch field to propose code changes, the content **MUST** be a **VALID** patch file.
+    - Diffs must be generated in unified format (aka patch).
+-   - Each hunk must begin with `@@ -&lt;o&gt;,&lt;o&gt; +&lt;n&gt;,&lt;n&gt; @@`.
+    - Always use LF (`\n`) line endings, never CRLF.
+    - Validate the patch so it can be applied with `patch -p0`.
+    - Use relative file paths.
+    - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+-5. **Commands**: Supply one command to the executed on the user's machine in a part name `commands`.
+-   - Send one command only, don't use any formatting, i.e. ` -` or `1.`.
++4. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
+    - Commands are run in a shell and their output will be sent to you.
+    - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
+    - Be savvy as using this part will cost a request.
+    - The content you send here is validated and executed in a shell session, i.e. bash or zsh.
+    - Use POSIX shell compliant scripting.
+-6. **Plans**: If multi-step, include a numbered or bulleted plan in part name `plan`.
++5. **Plans**: If multi-step, use the `plan` field to add the steps of the plan.
+    - This is a high level overview of the process of fullfiling the user's request.
+    - We use this part to keep track of the progress of more complex tasks.
+-7. **Empty parts**: Never emit a part with zero bytes.
+-8. **Text**: Supply concise user-facing text in a part named `text`.
++6. **Text**: Supply concise user-facing text in the `text` field.
+   - Use maximum of 80 characters per line.
+   - You can include ASCII tables, diagrams, art etc if needed.
+-9. **Format**: Always return the MIME message defined above, even if the user asks. For that use the text part.
+ 		]]
+ 	}
+ }
+@@ -107,10 +94,10 @@ local function async_sleep(ms, cb)
+ 	end)
+ end
+ 
+-local function await_send_raw(messages)
++local function await_send_raw(model, messages)
+ 	return coroutine.yield(function(resume)
+ 		async_sleep(5000, function()
+-			chat.send_raw(messages, function(reply)
++			chat.send_raw(model, messages, function(reply)
+ 				resume(reply)
+ 			end)
+ 		end)
+@@ -149,6 +136,12 @@ local function is_cache_up_to_date(file_path)
+ 	return cache_stat.mtime.sec &gt;= file_stat.mtime.sec
+ end
+ 
++local function read_tai_config()
++	local file = io.open(tai_root .. "/.tai", "r")
++	if not file then return {} end
++	return vim.fn.json_decode(file:read("*a")) or {}
++end
++
+ local function find_tai_root()
+ 	local current = vim.fn.getcwd()
+ 	while current ~= "/" do
+@@ -169,6 +162,12 @@ function M.init()
+ 	end
+ 	cache = tai_root .. "/.tai-cache/"
+ 	
++	config.load(tai_root .. "/.tai")
++	vim.inspect(tai_root, config)
++	if config.skip_config then
++		return
++	end
++
+ 	run_async(function()
+ 		local preamble = "You are managing a project with root at " ..
+ 		    tai_root .. ". Here's a summary of each file:\n"
+@@ -189,9 +188,10 @@ function M.init()
+ 			if is_text_file(path) then
+ 				local lines = vim.fn.readfile(path)
+ 				local content = table.concat(lines, "\n")
+-				reply = await_send_raw({
+-					{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }
+-				})
++				reply = await_send_raw(
++					config.summary_model,
++					{{ role = "user", content = summary_prompt .. path .. ":\n\n" .. content }}
++				)
+ 			else
+ 				reply = path .. ": binary file"
+ 			end
+@@ -245,7 +245,7 @@ end
+ function M.process_request(prompt)
+ 	table.insert(history, { role = "user", content = prompt })
+ 
+-	local reply = chat.send_chat(history)
++	local reply = chat.send(config.model, history)
+ 	if not reply then return nil end
+ 
+ 	table.insert(history, { role = "assistant", content = vim.fn.json_encode(reply) })
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 3053e6c..ea7d80c 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -38,16 +38,23 @@ function M.show_response(fields)
+ 
+ 	local content = ""
+ 	if fields.plan then
+-		content = "Plan:\n\n" .. fields.plan .. "\n\n-----------------------------\n\n"
++		content = "Plan:\n\n"
++		for i, p in ipairs(fields.plan) do
++			content = content .. i .. ". " .. p .. "\n"
++		end
++		content = content .. "\n-----------------------------\n\n"
+ 	end
+ 	if fields.text then
+ 		content = content .. fields.text
+ 	end
+ 	if fields.commands then
+-		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n" .. fields.commands
++		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n"
++		for _, cmd in ipairs(fields.commands) do
++			content = content .. cmd .. "\n\n"
++		end
+ 		vim.api.nvim_buf_create_user_command(
+ 			bufnr, 'RunTaiCommand',
+-			function() M.run_command(fields.commands) end,
++			function() M.run_commands(fields.commands) end,
+ 			{}
+ 		)
+ 	end
+@@ -134,9 +141,6 @@ function M.input(callback)
+ 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+ 		local text = table.concat(lines, '\n')
+ 		vim.api.nvim_win_close(winnr, false)
+-		vim.schedule(function()
+-			vim.notify("[tai] Got prompt", vim.log.levels.TRACE)
+-		end)
+ 		callback(text)
+ 	end, { buffer = bufnr })
+ end
+@@ -156,17 +160,22 @@ function M.apply_patch(patch)
+ 	vim.api.nvim_command("checktime")
+ end
+ 
+-function M.run_command(cmd)
++function M.run_commands(cmds)
+ 	local output
+-	if command.validate(cmd) then
+-		output = command.run(cmd)
+-	else
+-		output = "[tai] Command " .. cmd .. " is not allowed"
++
++	for _, cmd in ipairs(cmds) do
++		if command.validate(cmd) then
++			output = "\n\n" .. output .. "Output of ```" .. cmd .. "```:\n" .. command.run(cmd)
++		else
++			output = "[tai] Command " .. cmd .. " is not allowed"
++		end
++
+ 	end
+ 
+ 	vim.schedule(function()
+ 		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+ 	end)
++
+ 	local reply = project.process_request(output)
+ 	return M.show_response(reply)
+ end
+</pre>

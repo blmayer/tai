@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ccd644b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ccd644b
+parent <a href=commit-a4f9af5.html>a4f9af5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-08T13:52:27-03:00
+
+    readme fixes
+
+<a href=tree-ccd644b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index bf4a40e..f3edff0 100644
+--- a/README.md
++++ b/README.md
+@@ -45,6 +45,13 @@ Uses intuitive bindings that make it easy to query and interact with your code o
+ 
+ ## Installation
+ 
++### Requirements
++
++- Neovim 0.10+
++- curl (for API calls)
++- An API key for your chosen provider
++
++
+ ### Plugin Managers
+ 
+ #### [lazy.nvim](https://github.com/folke/lazy.nvim)
+@@ -68,7 +75,7 @@ return {
+ use("blmayer/tai")
+ ```
+ 
+-#### [vim-plug](https://github.com/junegunn/vim-plug
++#### [vim-plug](https://github.com/junegunn/vim-plug)
+ 
+ ```vim
+ Plug "blmayer/tai"
+@@ -118,17 +125,17 @@ Example `.tai` file:
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+-&lt;i&gt;screenshots&lt;/i&gt;
++        "make": true
++    }
++}
++```
+ 
+-- &lt;a href="screenshot.png"&gt;tai.nvim in action&lt;/a&gt;
+-- &lt;a href="2025-08-05-174307_1372x1415_scrot.png"&gt;side panel&lt;/a&gt;
+-- &lt;a href="folding.png"&gt;side panel with folding&lt;/a&gt;
++## Screenshots
+ 
+-## Requirements
++- [www/screenshot.png](tai.nvim in action)
++- [www/2025-08-05-174307_1372x1415_scrot.png](side panel)
++- [www/folding.png](side panel with folding)
+ 
+-- Neovim 0.10+
+-- curl (for API calls)
+-- An API key for your chosen provider
+ 
+ ## License
+ 
+</pre>

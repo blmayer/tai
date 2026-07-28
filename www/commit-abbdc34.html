@@ -1,0 +1,1325 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai abbdc34</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit abbdc34
+parent <a href=commit-6d51490.html>6d51490</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-07-01T18:56:01-03:00
+
+    Fixed tool output limits, non-blocking shell, and session persistence
+
+    - Capped read/shell tool results before they reach the model to avoid oversized context
+    - Ran long-lived shell jobs fully async so Neovim no longer freezes on jobwait
+    - Wired context load/save into the UI (project .tai-session.json, both agent histories, chat buffer lines, todos/notes)
+    - Fixed config defaults when context is omitted from .tai
+    - Restored the chat transcript with correct USER / agent separators
+
+<a href=tree-abbdc34.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index bb032de..4fee8c1 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -23,12 +23,14 @@ M.rpm = 60
+ M.tpm = nil
+ 
+ -- Context persistence configuration
++-- Default file is project-scoped (.tai-session.json in project root).
++-- Set cache_dir to use a global cache path instead.
+ M.context = {
+   enabled = true,
+   cache_dir = nil,
+   auto_save = true,
+   save_on_shutdown = true,
+-  file_name = "tai_context.json"
++  file_name = ".tai-session.json"
+ }
+ 
+ -- Default allowed shell commands
+@@ -88,12 +90,33 @@ function M.reload()
+ 	M.tpm = data.tpm
+ 	M.auto_approve = data.auto_approve or false
+ 
+-	-- Context persistence settings
+-	M.context.enabled = data.context and data.context.enabled ~= false
+-	M.context.cache_dir = data.context and data.context.cache_dir
+-	M.context.auto_save = data.context and data.context.auto_save ~= false
+-	M.context.save_on_shutdown = data.context and data.context.save_on_shutdown ~= false
+-	M.context.file_name = data.context and data.context.file_name or M.context.file_name
++	-- Context persistence settings (keep defaults when `context` is omitted from .tai)
++	if data.context then
++		if data.context.enabled ~= nil then
++			M.context.enabled = data.context.enabled
++		end
++		if data.context.cache_dir ~= nil then
++			M.context.cache_dir = data.context.cache_dir
++		end
++		if data.context.auto_save ~= nil then
++			M.context.auto_save = data.context.auto_save
++		end
++		if data.context.save_on_shutdown ~= nil then
++			M.context.save_on_shutdown = data.context.save_on_shutdown
++		end
++		if data.context.file_name then
++			M.context.file_name = data.context.file_name
++		end
++	end
++
++	log.debug(string.format(
++		"Context config: enabled=%s auto_save=%s save_on_shutdown=%s file_name=%s cache_dir=%s",
++		tostring(M.context.enabled),
++		tostring(M.context.auto_save),
++		tostring(M.context.save_on_shutdown),
++		tostring(M.context.file_name),
++		tostring(M.context.cache_dir)
++	))
+ 
+ 	return true
+ end
+diff --git a/lua/tai/context.lua b/lua/tai/context.lua
+index a9426b5..fe8d25b 100644
+--- a/lua/tai/context.lua
++++ b/lua/tai/context.lua
+@@ -4,33 +4,19 @@ local log = require('tai.log')
+ -- Default configuration
+ M.default_config = {
+   enabled = true,
+-  cache_dir = nil, -- will be set to XDG_CACHE_HOME or ~/.cache
++  cache_dir = nil, -- when nil, use project root (config.root)
+   auto_save = true,
+   save_on_shutdown = true,
+-  file_name = "tai_context.json"
++  file_name = ".tai-session.json"
+ }
+ 
+ -- Get XDG cache directory
+ local function get_xdg_cache_dir()
+-  -- Check XDG_CACHE_HOME environment variable
+   local xdg_cache = os.getenv("XDG_CACHE_HOME")
+   if xdg_cache and xdg_cache ~= "" then
+     return xdg_cache
+   end
+-  -- Default to ~/.cache
+-  return os.getenv("HOME") .. "/.cache"
+-end
+-
+--- Get full path to context file
+-function M.get_context_path(config)
+-  local cache_dir = config.cache_dir or get_xdg_cache_dir()
+-  -- Ensure cache directory exists
+-  local ok, err = M.ensure_cache_dir(cache_dir)
+-  if not ok then
+-    log.warning("Failed to create cache directory: " .. (err or "unknown error"))
+-    return nil
+-  end
+-  return cache_dir .. "/" .. config.file_name
++  return (os.getenv("HOME") or "") .. "/.cache"
+ end
+ 
+ -- Ensure cache directory exists
+@@ -39,85 +25,165 @@ function M.ensure_cache_dir(dir)
+   if stat and stat.type == "directory" then
+     return true
+   end
+-  
+-  -- Try to create directory
+-  local ok, err = vim.fn.mkdir(dir, "p")
+-  if not ok then
+-    return false, err
++
++  local ok = vim.fn.mkdir(dir, "p")
++  if ok == 0 then
++    return false, "mkdir failed for " .. dir
+   end
+   return true
+ end
+ 
++-- Get full path to context file
++function M.get_context_path(config)
++  config = config or M.default_config
++  local file_name = config.file_name or M.default_config.file_name
++
++  if config.cache_dir and config.cache_dir ~= "" then
++    local ok, err = M.ensure_cache_dir(config.cache_dir)
++    if not ok then
++      log.warning("[persist] Failed to create cache directory: " .. (err or "unknown error"))
++      return nil
++    end
++    local path = config.cache_dir .. "/" .. file_name
++    log.debug("[persist] context path (cache_dir): " .. path)
++    return path
++  end
++
++  -- Project-scoped session file (default; matches README)
++  local tai_config = require("tai.config")
++  if tai_config.root then
++    local path = tai_config.root .. "/" .. file_name
++    log.debug("[persist] context path (project root): " .. path)
++    return path
++  end
++
++  -- Fallback to XDG cache
++  local cache_dir = get_xdg_cache_dir() .. "/tai"
++  local ok, err = M.ensure_cache_dir(cache_dir)
++  if not ok then
++    log.warning("[persist] Failed to create fallback cache dir: " .. (err or "unknown"))
++    return nil
++  end
++  local path = cache_dir .. "/" .. file_name
++  log.debug("[persist] context path (xdg fallback): " .. path)
++  return path
++end
++
+ -- Load context from disk
+--- Returns: { planner_history, coder_history, current_agent, last_ctx } or nil
++-- Returns state table or nil
+ function M.load(config)
+-  if not config or not config.enabled then
+-    log.debug("Context loading disabled")
++  config = config or M.default_config
++  if not config.enabled then
++    log.info("[persist] load skipped: context.enabled is false")
+     return nil
+   end
+ 
+   local context_path = M.get_context_path(config)
+   if not context_path then
+-    log.warning("Could not determine context file path")
++    log.warning("[persist] load aborted: could not determine context file path")
+     return nil
+   end
+ 
++  log.info("[persist] loading from: " .. context_path)
+   local file = io.open(context_path, "r")
+   if not file then
+-    log.debug("No existing context file found at: " .. context_path)
++    log.info("[persist] no existing session file at: " .. context_path)
+     return nil
+   end
+ 
+   local content = file:read("*a")
+   file:close()
+ 
++  if not content or content == "" then
++    log.warning("[persist] session file is empty: " .. context_path)
++    return nil
++  end
++
+   local ok, data = pcall(vim.fn.json_decode, content)
+   if not ok or type(data) ~= "table" then
+-    log.warning("Failed to parse context file, creating new context")
++    log.warning("[persist] failed to parse session file: " .. context_path)
+     return nil
+   end
+ 
+-  log.info("Loaded context from: " .. context_path)
++  local planner_n = data.planner_history and #data.planner_history or 0
++  local coder_n = data.coder_history and #data.coder_history or 0
++  log.info(string.format(
++    "[persist] loaded session: planner_msgs=%d coder_msgs=%d agent=%s todos=%d notes=%d bytes=%d saved_at=%s",
++    planner_n,
++    coder_n,
++    tostring(data.current_agent),
++    data.todos_store and #data.todos_store or 0,
++    data.notes_store and #tostring(data.notes_store) or 0,
++    #content,
++    tostring(data.saved_at)
++  ))
+   return data
+ end
+ 
+ -- Save context to disk
+-function M.save(planner_history, coder_history, current_agent, last_ctx, config)
+-  if not config or not config.enabled then
+-    log.debug("Context saving disabled")
+-    return
++-- state: { planner_history, coder_history, current_agent, last_ctx?, todos_store?, todos_next_id?, notes_store? }
++function M.save(state, config)
++  config = config or M.default_config
++  if not config.enabled then
++    log.debug("[persist] save skipped: context.enabled is false")
++    return false
++  end
++
++  if type(state) ~= "table" then
++    log.error("[persist] save failed: state must be a table")
++    return false
+   end
+ 
+   local context_path = M.get_context_path(config)
+   if not context_path then
+-    log.warning("Could not determine context file path")
+-    return
++    log.warning("[persist] save aborted: could not determine context file path")
++    return false
+   end
+ 
+   local context_data = {
+-    planner_history = planner_history,
+-    coder_history = coder_history,
+-    current_agent = current_agent,
+-    last_ctx = last_ctx,
+-    saved_at = os.date("!%Y-%m-%dT%H:%M:%SZ") -- ISO 8601 UTC
++    planner_history = state.planner_history,
++    coder_history = state.coder_history,
++    current_agent = state.current_agent,
++    last_ctx = state.last_ctx,
++    todos_store = state.todos_store,
++    todos_next_id = state.todos_next_id,
++    notes_store = state.notes_store,
++    -- Exact chat buffer text so restore shows previous messages, not just agent state
++    chat_lines = state.chat_lines,
++    saved_at = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+   }
+ 
+-  local json = vim.fn.json_encode(context_data)
++  local ok_enc, json = pcall(vim.fn.json_encode, context_data)
++  if not ok_enc or type(json) ~= "string" then
++    log.error("[persist] save failed: json_encode error: " .. tostring(json))
++    return false
++  end
++
+   local file = io.open(context_path, "w")
+   if not file then
+-    log.error("Failed to open context file for writing: " .. context_path)
+-    return
++    log.error("[persist] failed to open for writing: " .. context_path)
++    return false
+   end
+ 
+   file:write(json)
+   file:close()
+ 
+-  log.info("Context saved to: " .. context_path)
++  log.info(string.format(
++    "[persist] saved session to %s (%d bytes, planner=%d coder=%d agent=%s)",
++    context_path,
++    #json,
++    state.planner_history and #state.planner_history or 0,
++    state.coder_history and #state.coder_history or 0,
++    tostring(state.current_agent)
++  ))
++  return true
+ end
+ 
+ -- Clear context file
+ function M.clear(config)
+-  if not config or not config.enabled then
++  config = config or M.default_config
++  if not config.enabled then
++    log.debug("[persist] clear skipped: context.enabled is false")
+     return
+   end
+ 
+@@ -128,15 +194,26 @@ function M.clear(config)
+ 
+   local ok, err = os.remove(context_path)
+   if ok then
+-    log.info("Context cleared: " .. context_path)
+-  elseif err and not err:match("cannot remove") then
+-    log.warning("Failed to clear context: " .. (err or "unknown error"))
++    log.info("[persist] cleared session file: " .. context_path)
++  elseif err and not tostring(err):match("No such file") and not tostring(err):match("cannot remove") then
++    log.warning("[persist] failed to clear session: " .. tostring(err))
++  else
++    log.debug("[persist] clear: no file to remove at " .. context_path)
+   end
+ end
+ 
+ -- Initialize with config
+ function M.setup(config)
+   M.default_config = vim.tbl_extend("force", M.default_config, config or {})
++  log.info(string.format(
++    "[persist] setup: enabled=%s auto_save=%s save_on_shutdown=%s file_name=%s cache_dir=%s path=%s",
++    tostring(M.default_config.enabled),
++    tostring(M.default_config.auto_save),
++    tostring(M.default_config.save_on_shutdown),
++    tostring(M.default_config.file_name),
++    tostring(M.default_config.cache_dir),
++    tostring(M.get_context_path(M.default_config))
++  ))
+ end
+ 
+-return M
+\ No newline at end of file
++return M
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index b8ead66..470a1b7 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -7,6 +7,40 @@ M.todos_store = {}  -- list of {id, text, status}
+ M.todos_next_id = 1
+ M.notes_store = ""  -- single string notepad
+ 
++-- Max characters returned from read/shell tools to the model (head+tail truncation).
++-- Keeps requests within context limits and avoids freezing on huge outputs.
++M.MAX_TOOL_OUTPUT = 80000
++
++--- Truncate oversized tool output before it is sent back to the agent.
++--- Keeps head and tail so build/log errors near the end are still visible.
++function M.limit_output(output, source)
++	if type(output) ~= "string" then
++		return output
++	end
++	local n = #output
++	if n &lt;= M.MAX_TOOL_OUTPUT then
++		return output
++	end
++	local half = math.floor(M.MAX_TOOL_OUTPUT / 2)
++	local head = output:sub(1, half)
++	local tail = output:sub(n - half + 1)
++	local msg = string.format(
++		"\n\n[sys] Output truncated (%d chars &gt; %d limit from %s). "
++			.. "Showing head and tail. Prefer a narrower read range, grep, head/tail, or filters.\n\n"
++			.. "--- tail ---\n",
++		n,
++		M.MAX_TOOL_OUTPUT,
++		source or "tool"
++	)
++	log.warning(string.format(
++		"Truncated %s output: %d chars (limit %d)",
++		source or "tool",
++		n,
++		M.MAX_TOOL_OUTPUT
++	))
++	return head .. msg .. tail
++end
++
+ M.defs = {
+ 	read = {
+ 		type = "function",
+@@ -305,6 +339,26 @@ function M.read_file(file_path, range)
+ 		return "Binary file detected. Use send_image for images or other binary formats."
+ 	end
+ 
++	-- Avoid loading enormous files fully into memory (freezes Neovim).
++	-- Allow ranged reads up to a larger on-disk size; still truncate final output.
++	local max_read_bytes = M.MAX_TOOL_OUTPUT * 4
++	local stat = vim.uv.fs_stat(file_path)
++	if stat and stat.size and stat.size &gt; max_read_bytes and (not range or range == "") then
++		log.warning(string.format(
++			"read refused full file: %s is %d bytes (limit %d); use a range",
++			file_path,
++			stat.size,
++			max_read_bytes
++		))
++		return string.format(
++			"[sys] File `%s` is %d bytes (&gt;%d). Refuse full read to protect context size. "
++				.. "Pass a `range` (e.g. 1:200) or use shell grep/head/tail.",
++			file_path,
++			stat.size,
++			max_read_bytes
++		)
++	end
++
+ 	-- Always read from disk to ensure fresh content (buffers can be stale).
+ 	log.debug("reading from file")
+ 	local file = io.open(file_path, "r")
+@@ -322,8 +376,8 @@ function M.read_file(file_path, range)
+ 		for i, line in ipairs(lines) do
+ 			table.insert(numbered_lines, string.format("%d: %s", i, line))
+ 		end
+-		local numbered_content = table.concat(numbered_lines, "\n")
+-		return numbered_content
++	local numbered_content = table.concat(numbered_lines, "\n")
++		return M.limit_output(numbered_content, "read:" .. file_path)
+ 	end
+ 
+ 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
+@@ -362,7 +416,7 @@ function M.read_file(file_path, range)
+ 	end
+ 
+ 	local numbered_content = table.concat(numbered_lines, "\n")
+-	return numbered_content
++	return M.limit_output(numbered_content, "read:" .. file_path)
+ end
+ 
+ function M.unsafe_command(cmd)
+@@ -407,14 +461,14 @@ function M.exec_command(cmd)
+ 		return nil, "Failed to run command"
+ 	end
+ 
+-	local output = handle:read("*a")
++local output = handle:read("*a")
+ 	handle:close()
+ 
+ 	if not output then
+ 		output = cmd .. "` returned null"
+ 	end
+ 
+-	return output
++	return M.limit_output(output, "shell")
+ end
+ 
+ -- Convert image file to base64 data URL
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 0325d66..0fa9362 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -5,6 +5,7 @@ local log = require("tai.log")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
+ local agent = require("tai.agent")
++local context = require("tai.context")
+ 
+ if not config.provider then
+ 	return M
+@@ -72,6 +73,241 @@ providers_factory.on_throttle = function()
+ 	end)
+ end
+ 
++-- Strip stale restore banners so they never stack across sessions.
++local function strip_restore_banners(lines)
++	local out = {}
++	local i = 1
++	while i &lt;= #lines do
++		local line = lines[i]
++		if type(line) == "string" and line:match("^%[tai%] Restored session") then
++			i = i + 1
++			if lines[i] == "" then
++				i = i + 1
++			end
++		else
++			table.insert(out, line)
++			i = i + 1
++		end
++	end
++	-- Drop leading blank lines
++	while out[1] == "" do
++		table.remove(out, 1)
++	end
++	return out
++end
++
++local function get_chat_lines()
++	if not M.buffer_nr or not vim.api.nvim_buf_is_valid(M.buffer_nr) then
++		return {}
++	end
++	-- Never persist restore banners
++	local lines = vim.api.nvim_buf_get_lines(M.buffer_nr, 0, -1, false)
++	return strip_restore_banners(lines)
++end
++
++-- Render one agent's history into chat lines matching live UI order:
++--   ___ USER ___ / user text / ___ PLANNER|CODER AGENT ___ / assistant (+ tools)
++local function history_to_chat_lines(hist, agent_label)
++	local lines = {}
++	local function push(text)
++		if text == nil or text == vim.NIL then
++			return
++		end
++		if type(text) ~= "string" then
++			text = vim.inspect(text)
++		end
++		for _, line in ipairs(vim.split(text, "\n", { plain = true })) do
++			table.insert(lines, line)
++		end
++	end
++
++	local function agent_sep()
++		if #lines &gt; 0 then
++			table.insert(lines, "")
++		end
++		table.insert(lines, "___ " .. agent_label .. " " .. string.rep("_", 40))
++	end
++
++	local function user_sep()
++		if #lines &gt; 0 then
++			table.insert(lines, "")
++		end
++		table.insert(lines, "___ USER " .. string.rep("_", 40))
++	end
++
++	for _, msg in ipairs(hist or {}) do
++		if not msg or msg.role == "system" then
++			goto continue
++		end
++		if msg.role == "user" then
++			user_sep()
++			push(msg.content)
++		elseif msg.role == "assistant" then
++			-- Agent turn header belongs before the assistant reply (live UI does this
++			-- after each user message via add_sep before M.continue).
++			agent_sep()
++			if msg.reasoning and msg.reasoning ~= "" and msg.reasoning ~= vim.NIL then
++				table.insert(lines, "{{{ Thinking")
++				push(msg.reasoning)
++				table.insert(lines, "}}}")
++			end
++			if msg.content and msg.content ~= "" and msg.content ~= vim.NIL then
++				push(msg.content)
++			end
++			if msg.tool_calls and #msg.tool_calls &gt; 0 then
++				for _, call in ipairs(msg.tool_calls) do
++					local fn = call["function"] or {}
++					local name = fn.name or "?"
++					local args = fn.arguments or ""
++					table.insert(lines, "{{{ Tool call: " .. name)
++					push(type(args) == "string" and args or vim.inspect(args))
++					table.insert(lines, "}}}")
++				end
++			end
++		elseif msg.role == "tool" then
++			local name = msg.name or "tool"
++			table.insert(lines, "{{{ " .. name)
++			push(msg.content)
++			table.insert(lines, "}}}")
++		end
++		::continue::
++	end
++	return lines
++end
++
++-- True if chat_lines look like a real transcript (not empty / only whitespace).
++local function chat_lines_usable(chat_lines)
++	if type(chat_lines) ~= "table" or #chat_lines == 0 then
++		return false
++	end
++	for _, line in ipairs(chat_lines) do
++		if type(line) == "string" and line:match("%S") and not line:match("^%[tai%] Restored session") then
++			return true
++		end
++	end
++	return false
++end
++
++local function restore_chat_buffer(data)
++	if not M.buffer_nr or not vim.api.nvim_buf_is_valid(M.buffer_nr) then
++		return
++	end
++
++	local lines
++	-- Prefer exact buffer snapshot (both agent streams as the user saw them).
++	if chat_lines_usable(data.chat_lines) then
++		lines = strip_restore_banners(vim.deepcopy(data.chat_lines))
++		log.info(string.format(
++			"[persist] restoring chat_lines (%d lines); agent=%s planner_msgs=%d coder_msgs=%d",
++			#lines,
++			tostring(data.current_agent or current_agent),
++			#(data.planner_history or planner_history),
++			#(data.coder_history or coder_history)
++		))
++	else
++		-- Fallback: rebuild from both histories (planner then coder if used).
++		log.info(string.format(
++			"[persist] rebuilding chat from histories; agent=%s planner_msgs=%d coder_msgs=%d",
++			tostring(data.current_agent or current_agent),
++			#planner_history,
++			#coder_history
++		))
++		lines = history_to_chat_lines(planner_history, "PLANNER AGENT")
++		if #coder_history &gt; 1 then
++			if #lines &gt; 0 then
++				table.insert(lines, "")
++			end
++			local coder_lines = history_to_chat_lines(coder_history, "CODER AGENT")
++			for _, l in ipairs(coder_lines) do
++				table.insert(lines, l)
++			end
++		end
++	end
++
++	if #lines == 0 then
++		lines = { "" }
++	end
++	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, lines)
++	log.info(string.format("[persist] chat buffer restored (%d lines, agent=%s)", #lines, current_agent))
++end
++
++local function save_session()
++	if not config.context or not config.context.enabled then
++		log.debug("[persist] save_session skipped: disabled")
++		return
++	end
++	local ok = context.save({
++		planner_history = planner_history,
++		coder_history = coder_history,
++		current_agent = current_agent,
++		last_ctx = get_agent_ctx(),
++		todos_store = tools.todos_store,
++		todos_next_id = tools.todos_next_id,
++		notes_store = tools.notes_store,
++		chat_lines = get_chat_lines(),
++	}, config.context)
++	if not ok then
++		log.warning("[persist] save_session failed")
++	end
++end
++
++local function maybe_auto_save()
++	if config.context and config.context.enabled and config.context.auto_save then
++		save_session()
++	end
++end
++
++local function load_session()
++	planner_history = { { role = "system", content = agent.planner_system_prompt } }
++	coder_history = { { role = "system", content = agent.coder_system_prompt } }
++	current_agent = "planner"
++	tools.todos_store = {}
++	tools.todos_next_id = 1
++	tools.notes_store = ""
++	pending_tools = nil
++	hard_stop = false
++
++	if not config.context or not config.context.enabled then
++		log.info("[persist] load_session skipped: context disabled")
++		return
++	end
++
++	local data = context.load(config.context)
++	if not data then
++		log.info("[persist] starting fresh session (nothing loaded)")
++		return
++	end
++
++	if type(data.planner_history) == "table" and #data.planner_history &gt; 0 then
++		planner_history = data.planner_history
++		-- Ensure system prompt is present as first message
++		if not planner_history[1] or planner_history[1].role ~= "system" then
++			table.insert(planner_history, 1, { role = "system", content = agent.planner_system_prompt })
++		end
++	end
++	if type(data.coder_history) == "table" and #data.coder_history &gt; 0 then
++		coder_history = data.coder_history
++		if not coder_history[1] or coder_history[1].role ~= "system" then
++			table.insert(coder_history, 1, { role = "system", content = agent.coder_system_prompt })
++		end
++	end
++	if data.current_agent == "coder" or data.current_agent == "planner" then
++		current_agent = data.current_agent
++	end
++	if type(data.todos_store) == "table" then
++		tools.todos_store = data.todos_store
++	end
++	if type(data.todos_next_id) == "number" then
++		tools.todos_next_id = data.todos_next_id
++	end
++	if type(data.notes_store) == "string" then
++		tools.notes_store = data.notes_store
++	end
++
++	restore_chat_buffer(data)
++	log.info("[persist] session restored into UI state")
++end
++
+ function M.init()
+ 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ 	vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+@@ -107,10 +343,14 @@ function M.init()
+ 		end, { buffer = M.buffer_nr, expr = true, noremap = true })
+ 	end
+ 
+-	-- Autoclose TAI UI buffers on Neovim exit
++	-- Persist session and autoclose TAI UI buffers on Neovim exit
+ 	vim.api.nvim_create_autocmd("VimLeavePre", {
+ 		group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
+ 		callback = function()
++			if config.context and config.context.enabled and config.context.save_on_shutdown then
++				log.info("[persist] VimLeavePre: saving session on shutdown")
++				save_session()
++			end
+ 			if vim.api.nvim_buf_is_valid(M.buffer_nr) then
+ 				vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
+ 			end
+@@ -119,7 +359,7 @@ function M.init()
+ 			end
+ 		end,
+ 	})
+-	M.clear()
++load_session()
+ 	M.update_chat_name()
+ 	update_input_name()
+ end
+@@ -243,64 +483,111 @@ local function refresh_and_close_folds()
+ 	end)
+ end
+ 
+--- Run a shell command using an async job but block the caller (via jobwait slices)
+--- so that stdout/stderr is streamed live via M.append as it is produced.
+--- This gives progress output for long-running commands (downloads, builds, etc.)
+--- inside the usual fold, while preserving the original sync control flow for
+--- tool sequencing and when to call M.continue.
+--- The caller must write the opening "{{{ Running: ..." line (and the closing later).
+--- Returns the full collected output (for the tool result sent back to the LLM).
+-local function run_live_shell(command)
++-- Run a shell command fully asynchronously (does not block the Neovim main thread).
++-- Streams stdout/stderr live via M.append. Invokes on_done(full_output) when finished.
++-- The caller must write the opening "{{{ Running: ..." line (and the closing in on_done).
++local function run_live_shell(command, on_done)
+ 	local chunks = {}
+-	local exit_code = 0
+ 	local shell = vim.o.shell or "sh"
+ 	local flag = vim.o.shellcmdflag or "-c"
+ 	local full_cmd = command .. " 2&gt;&amp;1"
++	local finished = false
++	local stop_timer = nil
++
++	local function finish(out)
++		if finished then
++			return
++		end
++		finished = true
++		current_job = nil
++		if stop_timer then
++			pcall(function()
++				stop_timer:stop()
++				stop_timer:close()
++			end)
++			stop_timer = nil
++		end
++		vim.schedule(function()
++			on_done(out)
++		end)
++	end
+ 
+ 	local job = vim.fn.jobstart({ shell, flag, full_cmd }, {
+ 		on_stdout = function(_, data, _)
+-			if data then
+-				local text = table.concat(data, "\n")
+-				if text ~= "" then
+-					M.append(text)
+-					table.insert(chunks, text)
+-				end
++			if not data then
++				return
++			end
++			local text = table.concat(data, "\n")
++			if text ~= "" then
++				M.append(text)
++				table.insert(chunks, text)
++			end
++		end,
++		on_stderr = function(_, data, _)
++			if not data then
++				return
++			end
++			local text = table.concat(data, "\n")
++			if text ~= "" then
++				M.append(text)
++				table.insert(chunks, text)
+ 			end
+ 		end,
+ 		on_exit = function(_, code, _)
+-			exit_code = code or 0
++			local full = table.concat(chunks, "")
++			if (code or 0) ~= 0 then
++				full = full .. "\n[exit " .. tostring(code or 0) .. "]"
++			end
++			finish(full)
+ 		end,
++		stdout_buffered = false,
++		stderr_buffered = false,
+ 	})
+ 
+ 	current_job = job
+ 	if job &lt;= 0 then
+-		current_job = nil
+-		return "Failed to start: " .. command
++		finish("Failed to start: " .. command)
++		return
+ 	end
+ 
+-	-- Small timeouts let scheduled appends (from on_stdout) and other events run,
+-	-- so the user sees progress live in the buffer even though we are logically "blocking".
+-	while vim.fn.jobwait({ job }, 100)[1] == -1 do
++	-- Poll hard_stop without blocking the main loop (previous jobwait loop froze UI).
++	stop_timer = vim.uv.new_timer()
++	stop_timer:start(100, 100, vim.schedule_wrap(function()
++		if finished then
++			return
++		end
+ 		if hard_stop then
++			log.info("[UI] hard_stop: stopping shell job " .. tostring(job))
+ 			pcall(vim.fn.jobstop, job)
+-			break
+ 		end
+-	end
++	end))
++end
+ 
+-	current_job = nil
++-- Run tool calls; shell runs async and resumes the chain via on_done(stop).
++-- on_done(stop): stop=true means do not call M.continue (pending confirm, agent switch, hard stop).
++local function run_tools(tool_calls, history, start_index, on_done)
++	start_index = start_index or 1
++	on_done = on_done or function() end
++	local stop = false
+ 
+-	local full = table.concat(chunks, "")
+-	if exit_code ~= 0 then
+-		full = full .. "\n[exit " .. tostring(exit_code) .. "]"
++	if start_index == 1 then
++		M.append("\n")
+ 	end
+-	return full
+-end
+ 
+-local function run_tools(tool_calls, history)
+-	M.append("\n")
+-	local stop = false
++	local function process_from(i)
++		if hard_stop then
++			log.debug("[UI] run_tools aborted by hard_stop at index " .. tostring(i))
++			on_done(true)
++			return
++		end
++
++		local calls = tool_calls or {}
++		if i &gt; #calls then
++			on_done(stop)
++			return
++		end
+ 
+-	for i, call in ipairs(tool_calls or {}) do
++		local call = calls[i]
+ 		log.debug("[UI] running tool: " .. vim.inspect(call))
+ 		local name = call["function"].name
+ 		local args = vim.json.decode(call["function"].arguments)
+@@ -311,117 +598,121 @@ local function run_tools(tool_calls, history)
+ 			tool_call_id = call.id,
+ 		}
+ 
+-		if hard_stop then
+-			goto continue
++		local function finish_one()
++			refresh_and_close_folds()
++			table.insert(history, res)
++			if stop then
++				on_done(true)
++				return
++			end
++			process_from(i + 1)
+ 		end
++
+ 		if name == "shell" then
+ 			local unsafe = tools.unsafe_command(args.command)
+ 			if not unsafe or config.auto_approve then
+ 				log.debug("Executing allowed command: " .. args.command)
+ 				local label = unsafe and "Auto-approved" or "Running"
+ 				M.append("{{{ " .. label .. ": " .. args.command .. "\n")
+-				local out = run_live_shell(args.command)
+-				M.append("\n}}}\n")
+-				res.content = out
+-			else
+-				-- Set pending confirmation and output the question to chat buffer
+-				local tcs = vim.deepcopy(tool_calls)
+-				for j = 1, i - 1 do
+-					table.remove(tcs, 1)
+-				end
+-				pending_tools = tcs
+-				M.append("Run `" .. args.command .. "`? (y/n/s) ")
+-				M.focus_input()
+-				return true
++				current_state = "tools"
++				update_input_name()
++				run_live_shell(args.command, function(out)
++					local limited = tools.limit_output(out, "shell")
++					M.append("\n}}}\n")
++					res.content = limited
++					finish_one()
++				end)
++				return -- async; do not block main thread
++			end
++
++			-- Pending confirmation: remaining tools from this index
++			local tcs = {}
++			for j = i, #calls do
++				table.insert(tcs, calls[j])
+ 			end
++			pending_tools = tcs
++			M.append("Run `" .. args.command .. "`? (y/n/s) ")
++			M.focus_input()
++			on_done(true)
++			return
+ 		elseif name == "read" then
+ 			if not args.file then
+ 				M.append("{{{ Attaching file failed: no file field.\n}}}")
+ 				res.content = "missing file field"
+-				goto continue
+-			end
+-			if vim.fn.filereadable(args.file) ~= 1 then
++			elseif vim.fn.filereadable(args.file) ~= 1 then
+ 				M.append("{{{ Attaching " .. args.file .. " failed\nFile not readable.}}}\n")
+ 				res.content = "file does not exist or is not readable"
+-				goto continue
++			else
++				local range_label = args.range and (" [" .. args.range .. "]") or ""
++				M.append("{{{ Reading " .. args.file .. range_label .. "\n")
++				res.content = tools.read_file(args.file, args.range)
++				res.file_range = args.range
++				M.append(res.content .. "\n}}}\n")
+ 			end
+-
+-			local range_label = args.range and (" [" .. args.range .. "]") or ""
+-			M.append("{{{ Reading " .. args.file .. range_label .. "\n")
+-			res.content = tools.read_file(args.file, args.range)
+-			res.file_range = args.range
+-			M.append(res.content .. "\n}}}\n")
+ 		elseif name == "edit" then
+ 			if not args.file then
+ 				M.append("{{{ Patching file failed: no file field.\n}}}")
+ 				res.content = "missing file field"
+-				goto continue
++			else
++				local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
++				res.content = out
++				local multi_label = args.multi and " (multi)" or ""
++				M.append("{{{ " .. out .. multi_label .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .. "\n}}}\n")
+ 			end
+-			local out = tools.edit(args.file, args.old_text, args.new_text, args.multi)
+-			res.content = out
+-			local multi_label = args.multi and " (multi)" or ""
+-			M.append("{{{ " .. out .. multi_label .. "\n" .. (args.old_text or "") .. "\n---\n" .. (args.new_text or "") .."\n}}}\n")
+ 		elseif name == "write" then
+ 			if not args.file then
+ 				M.append("{{{ Write file failed: no file field.\n}}}")
+ 				res.content = "missing file field"
+-				goto continue
+-			end
+-			if not args.content then
++			elseif not args.content then
+ 				M.append("{{{ Write file failed: no content field.\n}}}")
+ 				res.content = "missing content field"
+-				goto continue
++			else
++				local out = tools.write(args.file, args.content)
++				res.content = out
++				M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
+ 			end
+-
+-			local out = tools.write(args.file, args.content)
+-			res.content = out
+-			M.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
+ 		elseif name == "coder" then
+ 			if not args.prompt then
+ 				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
+ 				res.content = "Missing prompt field"
+-				goto continue
+-			end
+-
+-			M.append("{{{ Calling coder agent\nPrompt:\n" .. args.prompt .. "\n}}}\n")
+-			add_sep("___ CODER AGENT ")
+-
+-			stop = true
+-			res.content = "coder is working on the task."
+-			coder_history = {
+-				{ role = "system", content = agent.coder_system_prompt },
+-				{ role = "user", content = args.prompt }
+-			}
+-			current_agent = "coder"
+-			M.update_chat_name()
+-			update_input_name()
++			else
++				M.append("{{{ Calling coder agent\nPrompt:\n" .. args.prompt .. "\n}}}\n")
++				add_sep("___ CODER AGENT ")
++
++				stop = true
++				res.content = "coder is working on the task."
++				coder_history = {
++					{ role = "system", content = agent.coder_system_prompt },
++					{ role = "user", content = args.prompt }
++				}
++				current_agent = "coder"
++				M.update_chat_name()
++				update_input_name()
++				maybe_auto_save()
+ 
+-			M.continue()
+-			-- fall through to insert the stub res.content into caller's (planner) history
++				M.continue()
++			end
+ 		elseif name == "planner" then
+ 			if not args.prompt then
+ 				M.append("{{{ Calling planner failed: no prompt field.\n}}}\n")
+ 				res.content = "Missing prompt field"
+-				goto continue
+-			end
++			else
++				M.append("{{{ Calling planner agent\nReport:\n" .. args.prompt .. "\n}}}\n")
++				add_sep("___ PLANNER AGENT ")
+ 
+-			M.append("{{{ Calling planner agent\nReport:\n" .. args.prompt .. "\n}}}\n")
+-			add_sep("___ PLANNER AGENT ")
++				res.content = "planner is working on the task."
++				table.insert(planner_history, {
++					role = "user",
++					content = "Coder agent has completed its work and handed back. Report from coder:\n\n" .. args.prompt
++				})
++				current_agent = "planner"
++				M.update_chat_name()
++				update_input_name()
++				maybe_auto_save()
+ 
+-			res.content = "planner is working on the task."
+-			-- Deliver the coder's final report into the planner's independent history
+-			-- as a fresh user message so planner can review / summarize / re-task.
+-			table.insert(planner_history, {
+-				role = "user",
+-				content = "Coder agent has completed its work and handed back. Report from coder:\n\n" .. args.prompt
+-			})
+-			current_agent = "planner"
+-			M.update_chat_name()
+-			update_input_name()
+-
+-			M.continue()
+-			-- fall through to insert the stub res.content into caller's (coder) history
+-			stop = true
++				M.continue()
++				stop = true
++			end
+ 		elseif name == "todos" then
+ 			local out = tools.run_todos(args)
+ 			res.content = out
+@@ -434,44 +725,38 @@ local function run_tools(tool_calls, history)
+ 			if not args.file then
+ 				M.append("{{{ Addind image failed: no file field.\n}}}")
+ 				res.content = "Missing file field"
+-				goto continue
+-			end
+-
+-			local image_url, err = tools.image_data_url(args.file)
+-			if not image_url then
+-				M.append("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
+-				res.content = "Error: " .. err
+-				goto continue
+-			end
+-			res.content = "Image " .. args.file .. " added."
+-			M.append("{{{ Adding image " .. args.file .. "\n}}}")
+-
+-			local content = { }
+-			if args.prompt then
+-				table.insert(content, {
+-					type = "text",
+-					text = args.prompt
+-				})
++			else
++				local image_url, err = tools.image_data_url(args.file)
++				if not image_url then
++					M.append("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
++					res.content = "Error: " .. err
++				else
++					res.content = "Image " .. args.file .. " added."
++					M.append("{{{ Adding image " .. args.file .. "\n}}}")
++
++					local content = {}
++					if args.prompt then
++						table.insert(content, {
++							type = "text",
++							text = args.prompt
++						})
++					end
++					table.insert(content, {
++						type = "image_url",
++						image_url = { url = image_url }
++					})
++					res.content = content
++				end
+ 			end
+-			table.insert(content, {
+-				type = "image_url",
+-				image_url = { url = image_url }
+-			})
+-			res.content = content
+ 		else
+ 			res.content = "Invalid tool name: " .. (name or "")
+ 			M.append("{{{ Invalid tool name\n}}}\n")
+ 		end
+ 
+-		-- add response to history
+-		::continue::
+-
+-		-- table.remove(pending_tool_calls, 1)
+-		refresh_and_close_folds()
+-		table.insert(history, res)
++		finish_one()
+ 	end
+ 
+-	return stop
++	process_from(start_index)
+ end
+ 
+ local function send_input()
+@@ -508,33 +793,63 @@ local function send_input()
+ 
+ 			M.append(input .. "\n")
+ 
++local function after_pending_tools()
++				maybe_auto_save()
++				log.debug("[UI] got user input (pending tools done): " .. input)
++				if current_agent == "coder" then
++					add_sep("___ CODER AGENT ")
++				else
++					add_sep("___ PLANNER AGENT ")
++				end
++				M.continue()
++				update_input_name()
++			end
++
+ 			if response == "y" or response == "yes" then
+ 				log.debug("Confirmed")
+ 				M.append("Confirmed...\n")
+ 				M.append("{{{ Running: " .. args.command .. "\n")
+-				local out = run_live_shell(args.command)
+-				M.append("\n}}}\n")
+-				res.content = out
++				run_live_shell(args.command, function(out)
++					local limited = tools.limit_output(out, "shell")
++					M.append("\n}}}\n")
++					res.content = limited
++					table.insert(history, res)
++					table.remove(pending_tools, 1)
++					run_tools(pending_tools, history, 1, function(stop)
++						if stop or hard_stop then
++							log.debug("[UI] stopped")
++							maybe_auto_save()
++							return
++						end
++						after_pending_tools()
++					end)
++				end)
++				return -- async shell
+ 			elseif response == "s" or response == "stop" then
+ 				log.debug("Stopped")
+ 				M.append("Stopped\n")
+ 				M.append("{{{ Stopped at " .. args.command .. " (user: " .. input .. ")\n}}}\n")
+-				-- Add to history
+ 				hard_stop = true
+ 				res.content = "User stopped execution."
++				table.insert(history, res)
++				table.remove(pending_tools, 1)
++				maybe_auto_save()
++				return
+ 			else
+ 				log.debug("Declined")
+ 				M.append("{{{ Declined " .. args.command .. " (user: " .. input .. ")\n}}}\n")
+-				-- Add to history
+ 				res.content = "User declined running this command"
+-				-- Treat any other input as decline
+ 				log.debug("Declined (invalid response)")
+-			end
+-			table.insert(history, res)
+-			table.remove(pending_tools, 1)
+-			local stop = run_tools(pending_tools, history)
+-			if stop or hard_stop then
+-				log.debug("[UI] stopped")
++				table.insert(history, res)
++				table.remove(pending_tools, 1)
++				run_tools(pending_tools, history, 1, function(stop)
++					if stop or hard_stop then
++						log.debug("[UI] stopped")
++						maybe_auto_save()
++						return
++					end
++					after_pending_tools()
++				end)
+ 				return
+ 			end
+ 		else
+@@ -550,6 +865,7 @@ local function send_input()
+ 		else
+ 			add_sep("___ PLANNER AGENT ")
+ 		end
++		maybe_auto_save()
+ 		M.continue()
+ 		update_input_name()
+ 	end)
+@@ -627,9 +943,17 @@ function M.clear()
+ 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
+ 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
+ 	current_agent = "planner"
++	tools.todos_store = {}
++	tools.todos_next_id = 1
++	tools.notes_store = ""
++	pending_tools = nil
+ 	pcall(function()
+ 		providers_factory.cancel_pending_waits()
+ 	end)
++	if config.context and config.context.enabled then
++		log.info("[persist] clear: removing session file")
++		context.clear(config.context)
++	end
+ 	M.update_chat_name()
+ 	update_input_name()
+ end
+@@ -706,9 +1030,10 @@ function M.continue()
+ 				if data.error then
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 				end
+-				if not data.tool_calls or #data.tool_calls == 0 then
++if not data.tool_calls or #data.tool_calls == 0 then
+ 					current_state = "idle"
+ 					update_input_name()
++					maybe_auto_save()
+ 					if is_coder then
+ 						log.debug("[UI] coder finished (no more tool calls)")
+ 					end
+@@ -718,12 +1043,14 @@ function M.continue()
+ 				current_state = "tools"
+ 				update_input_name()
+ 				log.debug("[UI] running tools")
+-				local stop = run_tools(data.tool_calls, hist)
+-				if stop or hard_stop then
+-					log.debug("[UI] stopped")
+-					return
+-				end
+-				M.continue()
++				run_tools(data.tool_calls, hist, 1, function(stop)
++					maybe_auto_save()
++					if stop or hard_stop then
++						log.debug("[UI] stopped")
++						return
++					end
++					M.continue()
++				end)
+ 			end
+ 		)
+ 	else
+@@ -737,6 +1064,7 @@ function M.continue()
+ 					update_input_name()
+ 					M.append("{{{ Error\n" .. err .. "\n}}}")
+ 					table.insert(hist, { role = "assistant", content = err })
++					maybe_auto_save()
+ 					return
+ 				end
+ 				local response = { role = "assistant" }
+@@ -768,6 +1096,7 @@ function M.continue()
+ 				if not fields.tool_calls or #fields.tool_calls == 0 then
+ 					current_state = "idle"
+ 					update_input_name()
++					maybe_auto_save()
+ 					if is_coder then
+ 						log.debug("[UI] coder finished (no more tool calls)")
+ 					end
+@@ -778,12 +1107,14 @@ function M.continue()
+ 					current_state = "tools"
+ 					update_input_name()
+ 					log.debug("[UI] running tools")
+-					local stop = run_tools(fields.tool_calls, hist)
+-					if stop or hard_stop then
+-						log.debug("[UI] stopped")
+-						return
+-					end
+-					M.continue()
++					run_tools(fields.tool_calls, hist, 1, function(stop)
++						maybe_auto_save()
++						if stop or hard_stop then
++							log.debug("[UI] stopped")
++							return
++						end
++						M.continue()
++					end)
+ 				end)
+ 			end
+ 		)
+</pre>

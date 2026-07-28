@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 80741b5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 80741b5
+parent <a href=commit-5713ef0.html>5713ef0</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-16T20:20:42-03:00
+
+    fixed local provider
+
+<a href=tree-80741b5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index d8f4e1f..de4a2f1 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -1,27 +1,37 @@
+ local M = {}
+ 
+ local log = require("tai.log")
+-local tools = require("tai.agents.tools")
++local tools = require("tai.tools")
+ 
+-local url = 'http://localhost:11434/api/chat'
++local url = 'http://localhost:11434/v1/chat/completions'
+ 
+ local history = nil
+ 
+ function M.add_to_history(message)
++	log.debug("adding message to history")
+ 	local msg = vim.deepcopy(message)
++	for _, call in ipairs(msg.tool_calls or {}) do
++		local args = call["function"].arguments
++		call["function"].arguments = vim.json.encode(args)
++	end
++
+ 	if not history then
++		log.debug("new history")
+ 		history = { msg }
+-	else
+-		table.insert(history, msg)
++		return
+ 	end
++	log.debug("insert into history")
++	table.insert(history, msg)
+ end
+ 
+ function M.clear_history()
+ 	history = nil
+ end
+ 
+-function M.request(model_config, msg, format, callback)
+-	M.add_to_history(msg)
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
+ 
+ 	local agent_tools = vim.tbl_map(
+ 		function(t)
+@@ -62,7 +72,7 @@ function M.request(model_config, msg, format, callback)
+ 
+ 			log.debug("Request response: " .. obj.stdout)
+ 			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Gemini")
++				return callback(nil, "Received empty response from server")
+ 			end
+ 
+ 			local parsed = vim.json.decode(obj.stdout)
+@@ -70,15 +80,11 @@ function M.request(model_config, msg, format, callback)
+ 				return callback(nil, "Failed to decode JSON: " .. parsed)
+ 			end
+ 
+-			if #parsed &gt; 0 and parsed.error then
+-				return callback(nil, "Received error: " .. parsed.error)
+-			end
+-
+ 			if parsed.error then
+-				return callback(nil, parsed.error)
++				return callback(nil, "Received error: " .. parsed.error.message)
+ 			end
+ 
+-			local content = parsed.message.content
++			local content = parsed.choices[1].message.content
+ 			local fields = {}
+ 			if content and content ~= "" then
+ 				log.debug("response content: " .. content)
+@@ -92,7 +98,15 @@ function M.request(model_config, msg, format, callback)
+ 					fields.content = content
+ 				end
+ 			end
+-			fields.tool_calls = parsed.message.tool_calls
++
++			local tool_calls = parsed.choices[1].message.tool_calls
++			if tool_calls and tool_calls ~= vim.NIL then
++				fields.tool_calls = tool_calls
++				for _, call in ipairs(fields.tool_calls) do
++					local args = call["function"].arguments
++					call["function"].arguments = vim.json.decode(args)
++				end
++			end
+ 			callback(fields, nil)
+ 		end)
+ end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index f4e497c..37caa4f 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -9,13 +9,18 @@ M.defs = {
+ 		["function"] = {
+ 			name = "read_file",
+ 			description =
+-			"Reads the content of a file from the file system. And returns the content with numberred lines. Don't use `cat` command. Use this tool.",
++			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					file_path = {
+ 						type = "string",
+ 						description = "The path to the file to read."
++					},
++					range = {
++						type = "string",
++						description =
++						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d-$: get last lines. Examples: lines 1 throught 10: 1-10; fith line: 5; tenth to last: 10-$; last 5 lines: -5-$.",
+ 					}
+ 				},
+ 				required = { "file_path" }
+@@ -27,7 +32,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Creates a patch from the given changes, please double check the line numbers. This will ask for user approval and will not return.",
++			"Applies the given changes in order. Please double check the line numbers match, they ere altered by changes. Returns nil.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -88,7 +93,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "shell",
+ 			description =
+-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Don't use this for reading files.",
++			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Don't use this for reading files. Returns the otput of the command.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -130,8 +135,39 @@ function M.pretty_info(tools)
+ 	return pre .. table.concat(tools_desc, "\n") .. "\n"
+ end
+ 
+-local function read_file(file_path)
+-	log.debug("Running read_file `" .. file_path .. "`")
++-- indexes are 0 based
++local function parse_lines(range)
++	-- Handle "$" (last line)
++	if range == "$" then
++		return -1, -1
++	end
++
++	-- Handle negative ranges (e.g., -5-$ for last 5 lines)
++	local start, end_line = range:match("^(-%d+)-%$")
++	if start and end_line then
++		return tonumber(start), -1
++	end
++
++	-- Handle range (e.g., "2-5")
++	start, end_line = range:match("^(%d+)-(%d+)$")
++	if start and end_line then
++		return tonumber(start) - 1, tonumber(end_line) - 1
++	end
++
++	-- Handle single line (e.g., "3")
++	local line = tonumber(range)
++	if line == 0 then
++		return 0, 0
++	end
++	if line then
++		return line - 1, line - 1
++	end
++
++	return 0, 0
++end
++
++local function read_file(file_path, range)
++	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
+ 
+ 	if file_path:sub(1, 1) == "/" then
+ 		return "[sys] Paths cannot start from root (/). Use relative."
+@@ -143,15 +179,51 @@ local function read_file(file_path)
+ 		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+ 	end
+ 
+-	local content = file:read("*all")
++	local numbered_lines = {}
++	if not range then
++		local content = file:read("*all")
++		file:close()
++
++		local lines = vim.split(content, '\n', { plain = true })
++
++		-- If no range is specified, return all lines
++		for i, line in ipairs(lines) do
++			table.insert(numbered_lines, string.format("%d: %s", i, line))
++		end
++		local numbered_content = table.concat(numbered_lines, "\n")
++		log.debug("read_file output: " .. numbered_content)
++		return numbered_content
++	end
++
++	-- Parse the range
++	local start, end_line = parse_lines(range)
++	local lines = #file:lines()
++	if start &lt; 0 or end_line &lt; 0 then
++		start = lines + start + 1
++		end_line = lines + end_line + 1
++	end
++
++	local current_line = 1
++	for line in file:lines() do
++		if current_line &gt;= start and current_line &lt;= end_line then
++			table.insert(numbered_lines, string.format("%d: %s", current_line, line))
++		end
++
++		-- Stop early if we've passed the end of our range
++		if current_line &gt; end_line then
++			break
++		end
++
++		current_line = current_line + 1
++	end
++
+ 	file:close()
+ 
+-	local numbered_lines = {}
+-	for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
+-		table.insert(numbered_lines, string.format("%d: %s", i, line))
++	if #numbered_lines == 0 then
++		return "[sys] Invalid range: " .. range
+ 	end
+-	local numbered_content = table.concat(numbered_lines, "\n")
+ 
++	local numbered_content = table.concat(numbered_lines, "\n")
+ 	log.debug("read_file output: " .. numbered_content)
+ 	return numbered_content
+ end
+@@ -235,31 +307,6 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
+--- indexes are 0 based
+-local function parse_lines(lines_str)
+-	-- Handle "$" (last line)
+-	if lines_str == "$" then
+-		return -1, -1
+-	end
+-
+-	-- Handle range (e.g., "2-5")
+-	local start, end_line = lines_str:match("^(%d+)-(%d+)$")
+-	if start and end_line then
+-		return tonumber(start) - 1, tonumber(end_line) - 1
+-	end
+-
+-	-- Handle single line (e.g., "3")
+-	local line = tonumber(lines_str)
+-	if line == 0 then
+-		return 0, 0
+-	end
+-	if line then
+-		return line - 1, line - 1
+-	end
+-
+-	return 0, 0
+-end
+-
+ local function apply_patch(name, changes)
+ 	log.debug("Running patch in " .. #changes .. " file(s).")
+ 
+</pre>

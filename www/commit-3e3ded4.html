@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 3e3ded4</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 3e3ded4
+parent <a href=commit-b082704.html>b082704</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-20T15:45:32-03:00
+
+    nvim: added support for gemini just like groq
+
+<a href=tree-3e3ded4.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 46d7b5e..1dc9aec 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -8,14 +8,26 @@ local config = require('tai.config')
+ local provider
+ if config.provider == 'groq' then
+     provider = require('tai.providers.groq')
+-elseif config.provider == 'mistral' then
+-    provider = require('tai.providers.mistral')
++elseif config.provider == 'gemini' then
++    provider = require('tai.providers.gemini')
+ else
+     error('Unknown chat provider: ' .. provider_name)
+ end
+ 
++local history = {
++	{ role = "system", content = provider.system_prompt }
++}
++
+ -- Expose provider functions
+-M.send = provider.send
++function M.send(model, prompt)
++	local msg = { role = "user", content = prompt }
++	table.insert(history, msg)
++	local reply = provider.send(config.model, history)
++	log.debug("received reply: " .. vim.json.encode(reply))
++	table.insert(history, { role = "assistant", content = reply })
++	return reply
++end
++
+ M.send_raw = provider.send_raw
+ M.send_raw_async = provider.send_raw_async
+ 
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 0a088e1..8ffa691 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -7,34 +7,46 @@ local config = require("tai.config")
+ local agents = require("tai.agents")
+ local library = require("tai.library")
+ local planner = require("tai.agents.planner")
++local chat = require("tai.chat")
+ 
+ local completion_prompt =
+ "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+ 
+ 
+ function M.init()
++	log.info("Starting Tai, provider " .. config.provider)
+ 	if not config or config.skip_cache then
+ 		return
+ 	end
+ 
+-	local files = vim.fn.glob('**/*', true, true)
+-	library.setup(function(library_id, err)
+-		if err then
+-			log.error("Failed to setup library: " .. err)
+-			return
+-		end
+-		log.info("Library initialized with ID: " .. library_id)
++	if config.provider == "mistral" then
++		local files = vim.fn.glob('**/*', true, true)
++		library.setup(function(library_id, err)
++			if err then
++				log.error("Failed to setup library: " .. err)
++				return
++			end
++			log.info("Library initialized with ID: " .. library_id)
+ 
+-		agents.init()
+-		log.info("Agents init complete")
++			agents.init()
++			log.info("Agents init complete")
+ 
+-		-- initial sync
+-		library.sync(files)
+-	end)
++			-- initial sync
++			library.sync(files)
++		end)
++	end
+ end
+ 
+ function M.process_request(prompt, callback)
+-	planner.receive_prompt(prompt, callback)
++	log.debug("Processing request " .. prompt)
++
++	if config.provider == "mistral" then
++		planner.receive_prompt(prompt, callback)
++	else
++		local reply = chat.send(config.model, prompt)
++		callback(reply)
++		return
++	end
+ end
+ 
+ --function M.complete(start)
+diff --git a/lua/tai/providers/mistral.lua b/lua/tai/providers/gemini.lua
+similarity index 59%
+rename from lua/tai/providers/mistral.lua
+rename to lua/tai/providers/gemini.lua
+index 27fc554..90e1b66 100644
+--- a/lua/tai/providers/mistral.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -1,17 +1,137 @@
+ local M = {}
+ 
++local config = require("tai.config")
+ local log = require("tai.log")
+ local json = vim.json
+ local uv = vim.uv
+ 
+-local api_key = os.getenv("MISTRAL_API_KEY")
++local api_key = os.getenv("GEMINI_API_KEY")
+ if not api_key then
+ 	vim.schedule(function()
+-		vim.notify("[tai] ❌ Missing MISTRAL_API_KEY environment variable.", vim.log.levels.ERROR)
++		vim.notify("[tai] ❌ Missing GEMINI_API_KEY environment variable.", vim.log.levels.ERROR)
+ 	end)
+ end
+ 
+-local mistral_url = "https://api.mistral.ai/v1/chat/completions"
++local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
++
++M.system_prompt = [[
++You are Tai, a coding assistant running inside a Neovim session.
++
++INSTRUCTIONS
++Users will send coding tasks/questions, your goal is to fullfill them with success.
++ONLY propose steps that solves the issue, don't suppose anything.
++Generate code changes is the user wants, use the ed format explainded below.
++
++UNDERSTANDING NEEDED CODE CHANGES
++Understand the problem and the path to the solution and generate patches to
++implement the solution.
++
++USING PLANS
++For solutions that will need many steps that includes interaction from the user generate
++a step by step plan and pass it to the writer agent, so it will forward it to the user.
++Use the plan created to guide you and the agents towards the goal.
++
++COMPLEX TASKS
++Sometimes the task will be too complex to be solved at once, in those cases you can inform the user
++of the need, you can also ask the user to run commands on its machine and send you the output.
++
++COMMANDS
++Supply the list of commands to be executed on the user's machine for the writer agent.
++  - Commands are run in a shell and their output will be sent to you.
++  - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
++  - Use POSIX shell compliant scripting.
++  - Don't use commands for code changes, use the patch field.
++  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
++
++ED FORMAT
++
++General Rules
++- A script is a sequence of ed commands followed by w and q.
++- To input a dot only it must be escaped like `..`.
++- Lines are addressed by number or by special symbols.
++- Ranges can apply to a single line, multiple lines, or the whole file.
++- When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
++- To return to command mode, you enter a line containing only a single `.`.
++
++Addressing and Ranges
++1 	first line
++$ 	last line
++. 	current line
++0 	line before the first line (only valid with a to prepend)
++N,M 	lines N through M (inclusive)
++% 	shorthand for 1,$ (the whole file)
++/regex/ first line matching regex
++?regex? search backwards for regex
++
++Editing Commands
++a		append after the addressed line
++  		0a appends at the start of the file (prepending), use it for empty files.
++i		insert before the addressed line
++c		change (replace) the addressed line(s)
++d		delete the addressed line(s)
++s/pat/repl/	substitute text in the current line (use g at the end for global)
++m		move addressed line(s) to after another line (e.g. 1,3m$)
++t		copy addressed line(s) after another line (like m, but duplicate)
++
++File Commands
++e filename	open file (if it doesn’t exist, buffer is empty)
++r filename	read contents of file into current buffer (after current line)
++w [filename]	write buffer to file (creates if missing)
++q		quit
++
++EXAMPLES
++- Addind text at start of file:
++e test.py
++0a
++print("Hello, world!")
++.
++w
++q
++
++- Replace line 5 with new content:
++e foo.lua
++5c
++print("Hello, world")
++.
++w
++q
++
++- Delete all lines containing “DEBUG”:
++e foo.lua
++g/DEBUG/d
++w
++q
++
++- Substitute globally in whole file:
++e foo.lua
++%s/foo/bar/g
++w
++q
++
++- A content line with escaped `.`:
++e foo.lua
++15a
++new line
++next line is only a dot.
++..
++some text
++.
++w
++q
++
++NOTES
++You must know the original content of the files affected.
++
++RESPONSE FORMAT
++**ALWAYS** return a JSON object with the following format:
++{
++       "text": string,
++       "plan": []string,
++       "patch": string,
++       "commands": []string
++}
++The only required field is text.
++]]
+ 
+ local response_format = {
+ 	type = "json_object",
+@@ -29,7 +149,7 @@ local response_format = {
+ 				},
+ 				patch = {
+ 					type = "string",
+-					description = "Patch part of answer, a valid diff text containing the changes requested.",
++					description = "Patch part of answer, a valid ed script text containing the changes requested.",
+ 				},
+ 				commands = {
+ 					type = "array",
+@@ -196,7 +316,7 @@ function M.send(model, messages)
+ 	handle = uv.spawn("curl", {
+ 		args = {
+ 			"-s", "-X", "POST",
+-			mistral_url,
++			url,
+ 			"-H", "Authorization: Bearer " .. api_key,
+ 			"-H", "Content-Type: application/json",
+ 			"-d", json_data
+@@ -230,6 +350,7 @@ function M.send(model, messages)
+ 		return nil
+ 	end
+ 
++	log.debug("response: " .. response)
+ 	local ok, parsed = pcall(json.decode, response)
+ 	if not ok then
+ 		vim.notify("[tai] Failed to decode JSON: " .. response, vim.log.levels.ERROR)
+</pre>

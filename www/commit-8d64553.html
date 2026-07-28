@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 8d64553</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 8d64553
+parent <a href=commit-3168cae.html>3168cae</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-04T16:26:39-03:00
+
+    simplified token usage and thinking responses
+
+    - fixed config init
+
+<a href=tree-8d64553.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+index 5dce34e..7cdb703 100644
+--- a/lua/tai/minimax.lua
++++ b/lua/tai/minimax.lua
+@@ -81,18 +81,6 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, extract_err)
+ 		end
+ 
+-		-- Extract reasoning_details (interleaved thinking) from MiniMax response
+-		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
+-			local msg = parsed.choices[1].message
+-			if msg.reasoning_details then
+-				fields.reasoning_details = msg.reasoning_details
+-			end
+-		end
+-
+-		-- Extract token usage if available
+-		if parsed.usage and parsed.usage.total_tokens then
+-			fields.token_usage = parsed.usage.total_tokens
+-		end
+ 		callback(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 5719704..89ac779 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -86,20 +86,6 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, extract_err)
+ 		end
+ 
+-		-- Extract token usage if available
+-		if parsed.usage and parsed.usage.total_tokens then
+-			fields.token_usage = parsed.usage.total_tokens
+-		end
+-
+-		-- Extract reasoning details from OpenRouter response
+-		if parsed.choices and parsed.choices[1] and parsed.choices[1].message then
+-			local msg = parsed.choices[1].message
+-			local reasoning_text = msg.reasoning or msg.reasoning_content
+-			if reasoning_text and reasoning_text ~= "" then
+-				fields.reasoning_details = { { text = reasoning_text } }
+-			end
+-		end
+-
+ 		callback(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index a0b24e0..c79d9fc 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -79,6 +79,7 @@ function M.extract_fields(parsed, format)
+ 	if not message then
+ 		return nil, "No message in response"
+ 	end
++
+ 	local content = message.content
+ 	if content and content ~= "" then
+ 		if format ~= nil then
+@@ -94,6 +95,21 @@ function M.extract_fields(parsed, format)
+ 		-- Some providers fail if you send them a message without content
+ 		fields.content = ""
+ 	end
++
++	-- Extract reasoning details from response
++	if message.reasoning or message.reasoning_content then
++		local reasoning_text = message.reasoning or message.reasoning_content
++		if reasoning_text and reasoning_text ~= "" then
++			fields.reasoning_details = { { text = reasoning_text } }
++		end
++
++		-- Some providers offer a more detailed reasoning response
++		if message.reasoning_details then
++			fields.reasoning_details = message.reasoning_details
++		end
++
++	end
++
+ 	if message.tool_calls and message.tool_calls ~= vim.NIL then
+ 		fields.tool_calls = message.tool_calls
+ 		for _, call in ipairs(fields.tool_calls) do
+@@ -106,6 +122,12 @@ function M.extract_fields(parsed, format)
+ 			end
+ 		end
+ 	end
++
++	-- Extract token usage if available
++	if parsed.usage and parsed.usage.total_tokens then
++		fields.token_usage = parsed.usage.total_tokens
++	end
++
+ 	return fields, nil
+ end
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index b84b9b6..cbbbcf2 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -334,6 +334,16 @@ function M.apply_patch(name, file, changes)
+ 		buf = vim.api.nvim_get_current_buf()
+ 	end
+ 
++
++	-- Ensure parent directory exists before writing
++	local dir = vim.fn.fnamemodify(file, ":p:h")
++	if dir and dir ~= "" and dir ~= "." and vim.fn.isdirectory(dir) == 0 then
++		local mkdir_result = vim.fn.mkdir(dir, "p")
++		if mkdir_result == -1 then
++			return "[sys] Error: Could not create directory: " .. dir
++		end
++	end
++
+ 	-- If buffer already exists (visible or not), reuse it directly.
+ 	-- No need to open a window since we modify via nvim_buf_set_lines API.
+ 
+</pre>

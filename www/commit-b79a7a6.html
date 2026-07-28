@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai b79a7a6</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit b79a7a6
+parent <a href=commit-b318bdd.html>b318bdd</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-28T16:01:36-03:00
+
+    prompt and tools improvements
+
+    - Added binary file check for read_file
+    - Simplified send_image tool response
+    - Added a prompt line about git commands
+
+<a href=tree-b79a7a6.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 857c7a9..2b67730 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -11,7 +11,8 @@ local host = vim.uv.os_uname()
+ local tool_usage = [[
+ You can use tools to help on your task.
+ 
+-- Don't use `cat` for just reading files instead use `track_file`.
++- Don't use `cat` for just reading files instead use `track_file`. Binary files
++  are not supported, for images use the `send_image` tool.
+ - Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
+   file is useless.
+ - Do NOT guess file paths — verify they exist with directory listing or `find`
+@@ -24,6 +25,8 @@ You can use tools to help on your task.
+ - The output of tool calls are sent to you, so you can keep iterating on the
+   task, if you need input from the user or when you are done, don't emit tool
+   calls.
++- Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
++  previous to yours.
+ ]]
+ 
+ M.planner_system_prompt = [[
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 3ea3727..a2d0822 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -175,6 +175,28 @@ local function parse_lines(range)
+ 	return {}, false
+ end
+ 
++local function is_binary_file(file_path)
++	local file = io.open(file_path, "rb")
++	if not file then return false end
++
++	local content = file:read(8192) -- Read first 8KB
++	file:close()
++
++	-- Check for null bytes (strong indicator of binary)
++	if not content then
++		return false
++	end
++
++	for i = 1, #content do
++		local byte = content:byte(i)
++		if (byte &lt; 9) then
++			return true
++		end
++	end
++
++	return false
++end
++
+ function M.read_file(file_path, range)
+ 	log.debug("Running read_file `" .. file_path .. "` with range: " .. (range or "nil"))
+ 
+@@ -182,6 +204,11 @@ function M.read_file(file_path, range)
+ 		return "[sys] Paths cannot start from root (/). Use relative."
+ 	end
+ 
++	-- Check if file is binary before attempting to read
++	if is_binary_file(file_path) then
++		return "[sys] Binary file detected. Use send_image for images or other binary formats."
++	end
++
+ 	-- Always read from disk to ensure fresh content (buffers can be stale).
+ 	log.debug("reading from file")
+ 	local file = io.open(file_path, "r")
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index e63aeb5..fed9ee9 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -185,7 +185,6 @@ local function run_tools(tool_calls)
+ 	-- pending_tool_calls = tool_calls
+ 	local results = {}
+ 	local stop = false
+-	local inputs = {}
+ 
+ 	for _, call in ipairs(tool_calls or {}) do
+ 		log.debug("[UI] running tool: " .. vim.inspect(call))
+@@ -308,7 +307,6 @@ local function run_tools(tool_calls)
+ 
+ 			M.code()
+ 			goto next
+-			-- res.content = coder_history[-1].content
+ 		elseif name == "send_image" then
+ 			if not args.file then
+ 				M.append("{{{ Addind image failed: no file field.\n}}}")
+@@ -325,22 +323,18 @@ local function run_tools(tool_calls)
+ 			res.content = "[sys] Image " .. args.file .. " added."
+ 			M.append("{{{ Adding image " .. args.file .. "\n}}}")
+ 
++			local content = { }
+ 			if args.prompt then
+-				table.insert(inputs, {
+-					role = "user",
+-					content = {
+-						type = "text",
+-						text = args.prompt
+-					}
++				table.insert(content, {
++					type = "text",
++					text = args.prompt
+ 				})
+ 			end
+-			table.insert(inputs, {
+-				role = "user",
+-				content = {
+-					type = "image_url",
+-					image_url = { url = image_url }
+-				}
++			table.insert(content, {
++				type = "image_url",
++				image_url = { url = image_url }
+ 			})
++			res.content = content
+ 		else
+ 			res.content = "[sys] Invalid tool name: " .. (name or "")
+ 			M.append("{{{ Invalid tool name\n}}}\n")
+@@ -356,12 +350,6 @@ local function run_tools(tool_calls)
+ 		::next::
+ 	end
+ 
+-	-- Second pass is needed for image inputs
+-	if #inputs &gt; 0 then
+-		for _, i in ipairs(inputs) do
+-			table.insert(results, i)
+-		end
+-	end
+ 	return results, stop
+ end
+ 
+</pre>

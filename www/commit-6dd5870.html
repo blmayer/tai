@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 6dd5870</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 6dd5870
+parent <a href=commit-48075eb.html>48075eb</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-17T19:54:10-03:00
+
+    added minimax provider
+
+<a href=tree-6dd5870.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 5709dd4..d173dee 100644
+--- a/README.md
++++ b/README.md
+@@ -4,7 +4,7 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StpeFun and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
++This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
+ 
+        GROQ_API_KEY=your_api_key_here
+ 
+@@ -20,10 +20,11 @@ for Z.AI, or:
+ 
+        OPENAI_API_KEY=your_api_key_here
+ 
+-for OpenAI, or configure a local Ollama server (localhost:11434).
++for OpenAI, or:
+ 
+-Mistral support is in progress (their API is flaky ATM).
++       MINIMAX_API_KEY=your_api_key_here
+ 
++for Minimax, or configure a local Ollama server (localhost:11434).
+ 
+ ## Integrated workflow
+ 
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+new file mode 100644
+index 0000000..709644c
+--- /dev/null
++++ b/lua/tai/minimax.lua
+@@ -0,0 +1,87 @@
++local M = {}
++
++local provider_common = require("tai.provider_common")
++local tools = require("tai.tools")
++local config = require("tai.config")
++local log = require("tai.log")
++
++local url = "https://api.minimax.io/v1/text/chatcompletion_v2"
++
++local api_key = os.getenv("MINIMAX_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing MINIMAX_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local history = nil
++
++function M.add_to_history(message)
++	if not history then
++		history = { message }
++		return
++	end
++	table.insert(history, message)
++end
++
++function M.clear_history()
++	history = nil
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local agent_tools = provider_common.build_agent_tools(model_config)
++
++	local body = {
++		model = model_config.model,
++		messages = provider_common.filter_messages(history),
++	}
++
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
++	end
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++		if err then
++			return callback(nil, err)
++		end
++
++		log.debug("Request response: " .. vim.inspect(parsed))
++
++		if parsed.object == "error" then
++			return callback(nil, parsed.message or "Unknown Minimax API error")
++		end
++
++		local fields, extract_err = provider_common.extract_fields(parsed, format)
++		if extract_err then
++			return callback(nil, extract_err)
++		end
++
++		-- Extract token usage if available
++		if parsed.usage and parsed.usage.total_tokens then
++			fields.token_usage = parsed.usage.total_tokens
++		end
++		callback(fields, nil)
++	end)
++end
++
++return M
+</pre>

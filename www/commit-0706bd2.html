@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 0706bd2</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 0706bd2
+parent <a href=commit-78d44d4.html>78d44d4</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-23T11:42:47-03:00
+
+    nvim: adjusted tools ui
+
+<a href=tree-0706bd2.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+index 854388e..1148d38 100644
+--- a/lua/tai/agents/all_rounder.lua
++++ b/lua/tai/agents/all_rounder.lua
+@@ -48,6 +48,7 @@ INSTRUCTIONS
+   - Before finishing ask yourself if you correctly implemented the task.
+ - Don't use commands to change files unless explicitly told to.
+ - To actually implement the changes you must call the patch tool.
++- Normaly the task ends with the patch, also respond with notes or instructions.
+ ]]
+ 
+ local history = { { role = "system", content = M.system_prompt } }
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index b5c8851..cfc152c 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -46,7 +46,7 @@ M.defs = {
+ 								},
+ 								lines = {
+ 									type = "string",
+-									description = "Range of lines that the operation is on. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
++									description = "Range of lines that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+ 								},
+ 								content = {
+ 									type = "string",
+@@ -203,21 +203,23 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
+-local function apply_patch(patch)
+-	local real = io.popen("ed -s 2&gt;&amp;1", "w")
+-	if not real then
+-		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
+-		return
+-	end
++local function apply_patch(changes)
++	log.debug("Running patch with " .. #changes .. " changes")
+ 
+-	real:write(patch)
+-	local output = real:read("*all")
+-	real:close()
++	-- local real = io.popen("ed -s 2&gt;&amp;1", "w")
++	-- if not real then
++	-- 	vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
++	-- 	return
++	-- end
+ 
+-	if output then
+-		log.debug("Patch application output: " .. output)
+-	end
+-	vim.api.nvim_command("checktime")
++	-- real:write(changes)
++	-- local output = real:read("*all")
++	-- real:close()
++
++	-- if output then
++	-- 	log.debug("Patch application output: " .. output)
++	-- end
++	-- vim.api.nvim_command("checktime")
+ end
+ 
+ function M.run(cmd)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 28dc32b..f122908 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -91,7 +91,12 @@ function M.show_tool_calls(calls)
+ 
+ 	local content = "\n"
+ 	for _, call in ipairs(calls) do
+-		content = content .. "&gt; Calling " .. call["function"].name .. "\n"
++		if call["function"].name == "run" then
++			content = content .. "[tai] Running " .. call["function"].arguments.command .. "\n"
++		elseif call["function"].name == "read_file" then
++			content = content .. "[tai] Reading " .. call["function"].arguments.file_name .. "\n"
++		elseif call["function"].name == "read_file" then
++			content = content .. "[tai]  t " .. call["function"].arguments.file_name .. "\n"
+ 		for k, v in pairs(call["function"].arguments) do
+ 			content = content .. "\t" .. k .. ": " .. v .. "\n"
+ 		end
+</pre>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 89477af</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 89477af
+parent <a href=commit-ba6b4a7.html>ba6b4a7</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-22T16:52:39-03:00
+
+    nvim: added patch function
+
+<a href=tree-89477af.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+index 6f57957..4c84bb8 100644
+--- a/lua/tai/agents/all_rounder.lua
++++ b/lua/tai/agents/all_rounder.lua
+@@ -32,7 +32,7 @@ You are a Tai, an excelent coding agent. You are in charge of implementing
+ the tasks requested in the current project. You will receive high level
+ feature requests or general questions. Your job is to address them.
+ 
+-You have full access to the code base, and a shell in the project's root.
++You have full access to the code base, and a shell at the project's root.
+ 
+ ]] .. tools.pretty_info(config.all_rounder.tools) .. [[
+ 
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index bc92073..5b8813b 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -183,6 +183,23 @@ local function run_command(cmd)
+ 	return output
+ end
+ 
++local function apply_patch(patch)
++	local real = io.popen("ed -s 2&gt;&amp;1", "w")
++	if not real then
++		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
++		return
++	end
++
++	real:write(patch)
++	local output = real:read("*all")
++	real:close()
++
++	if output then
++		log.debug("Patch application output: " .. output)
++	end
++	vim.api.nvim_command("checktime")
++end
++
+ function M.run(cmd)
+ 	log.debug("Running tool call")
+ 
+@@ -199,6 +216,11 @@ function M.run(cmd)
+ 			return "[tai] missing command argument"
+ 		end
+ 		return run_command(args.command)
++	elseif tool == "patch" then
++		if not args.changes then
++			return "[tai] missing changes argument"
++		end
++		return apply_patch(args.changes)
+ 	end
+ 
+ 	return "[tai] Unknown tool `" .. tool .. "`"
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index fd32c98..cffd941 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -22,23 +22,6 @@ function M.init()
+ 	agents.init()
+ end
+ 
+-local function apply_patch(patch)
+-	local real = io.popen("ed -s 2&gt;&amp;1", "w")
+-	if not real then
+-		vim.notify("[tai] failed to apply patch: popen is null", vim.log.levels.ERROR)
+-		return
+-	end
+-
+-	real:write(patch)
+-	local output = real:read("*all")
+-	real:close()
+-
+-	if output then
+-		log.debug("Patch application output: " .. output)
+-	end
+-	vim.api.nvim_command("checktime")
+-end
+-
+ local function handle_coder_req(req, cb)
+ 	log.debug("handling coder request: " .. req)
+ 	coder.task(
+</pre>

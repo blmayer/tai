@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 9688d24</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 9688d24
+parent <a href=commit-c90a3b6.html>c90a3b6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-11T18:01:14-03:00
+
+    improved ui
+
+<a href=tree-9688d24.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 0d45ad0..6d3c945 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -20,6 +20,7 @@ function M.chat()
+ 
+ 		vim.schedule(function()
+ 			ui.open()
++			ui.append_to_buffer("--------------------------\n&gt; " .. input .. "\n")
+ 		end)
+ 
+ 		project.chat(input)
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 8eb9f4e..e1b361a 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -3,10 +3,6 @@ local M = {}
+ local log = require('tai.log')
+ local config = require("tai.config")
+ local agents = require("tai.agents")
+-local planner = require("tai.agents.planner")
+-local coder = require("tai.agents.coder")
+-local patcher = require("tai.agents.patcher")
+-local writer = require("tai.agents.writer")
+ local tai = require("tai.agents.tai")
+ local tools = require("tai.agents.tools")
+ local ui = require("tai.ui")
+@@ -59,10 +55,10 @@ end
+ -- 		end
+ -- 	)
+ -- end
+--- 
++--
+ -- local function handle_planner_reply(reply)
+ -- 	log.info("handling reply")
+--- 
++--
+ -- 	if reply.tool_calls then
+ -- 		ui.show_tool_calls(reply.tool_calls)
+ -- 		planner.run_tools(
+@@ -77,14 +73,14 @@ end
+ -- 		)
+ -- 		return
+ -- 	end
+--- 
++--
+ -- 	if not reply.content.coder then
+ -- 		if not reply.content.writer then
+ -- 			log.error("planner did not sent writer field")
+ -- 			ui.show_response({ error = "Planner did not sent writer field" })
+ -- 			return
+ -- 		end
+--- 
++--
+ -- 		log.debug("calling writer after planner: " .. reply.content.writer)
+ -- 		writer.write(
+ -- 			reply.content.writer,
+@@ -99,7 +95,7 @@ end
+ -- 		)
+ -- 		return
+ -- 	end
+--- 
++--
+ -- 	-- planner called coder
+ -- 	handle_coder_req(
+ -- 		reply.content.coder,
+@@ -124,10 +120,10 @@ end
+ -- 		end
+ -- 	)
+ -- end
+--- 
++--
+ -- function M.process_request(prompt)
+ -- 	log.debug("Processing request " .. prompt)
+--- 
++--
+ -- 	planner.plan(
+ -- 		prompt,
+ -- 		function(reply, err)
+@@ -136,7 +132,7 @@ end
+ -- 				ui.show_response({ error = err })
+ -- 				return
+ -- 			end
+--- 
++--
+ -- 			vim.schedule(function() handle_planner_reply(reply) end)
+ -- 		end
+ -- 	)
+@@ -162,7 +158,7 @@ local function handle_chat_reply(reply)
+ 			local out
+ 			if name == "run" then
+ 				log.debug("Asking for confirmation")
+-				local input = vim.fn.confirm("Proceed? [y/N]", "&amp;y\n&amp;N", 2)
++				local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;y\n&amp;N", 2)
+ 				if input == 1 then
+ 					log.debug("Confirmed")
+ 					out = tools.run(name, args)
+@@ -183,19 +179,12 @@ local function handle_chat_reply(reply)
+ 			)
+ 		end
+ 
+-		tai.task(
+-			"I added the tool calls outputs, continue with the task.",
+-			function(reply, err) vim.schedule(function()
+-				handle_chat_reply(reply) end)
+-			end
+-		)
++		return M.chat("I added the tool calls outputs, continue with the task.")
+ 	end
+ end
+ 
+ function M.chat(prompt)
+ 	log.debug("Processing chat request " .. prompt)
+-
+-	ui.append_to_buffer("--------------------------\n&gt; " .. prompt .. "\n")
+ 	tai.task(
+ 		prompt,
+ 		function(reply, err)
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 7d0e459..f7ee98a 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -102,7 +102,7 @@ function M.request(model_config, msg, format, callback)
+ 			end
+ 
+ 			fields.tool_calls = message.tool_calls
+-			for _, call in ipairs(fields.tool_calls) do
++			for _, call in ipairs(fields.tool_calls or {}) do
+ 				local args = call["function"].arguments
+ 				call["function"].arguments = vim.json.decode(args)
+ 			end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 66216ff..11da051 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -70,6 +70,10 @@ function M.show_response(fields)
+ 		M.append_to_buffer(content)
+ 		return
+ 	end
++	if fields.content and fields.content ~= "" then
++		content = content .. fields.content .. "\n"
++	end
++
+ 	if fields.tool_calls then
+ 		for _, call in ipairs(fields.tool_calls) do
+ 			local args = call["function"].arguments
+@@ -83,10 +87,6 @@ function M.show_response(fields)
+ 			end
+ 		end
+ 	end
+-	if fields.content and fields.content ~= "" then
+-		content = content .. fields.content .. "\n"
+-	end
+-
+ 	if not fields.tool_calls and not fields.content then
+ 		content = content .. "[tai] Received empty reply."
+ 	end
+@@ -160,32 +160,4 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
+--- Prompt user for simple input
+-function M.ask(callback)
+-	local bufnr = vim.api.nvim_create_buf(false, true)
+-	local width = math.min(80, vim.o.columns - 10)
+-	local height = math.min(10, vim.o.lines - 10)
+-
+-	local winnr = vim.api.nvim_open_win(bufnr, true, {
+-		relative = 'editor',
+-		width = width,
+-		height = height,
+-		col = (vim.o.columns - width) / 2,
+-		row = (vim.o.lines - height) / 2,
+-		style = 'minimal',
+-		border = 'rounded'
+-	})
+-
+-	vim.bo[bufnr].buftype = 'nofile'
+-	vim.bo[bufnr].bufhidden = 'wipe'
+-	vim.bo[bufnr].swapfile = false
+-	vim.bo[bufnr].filetype = 'text'
+-
+-	vim.keymap.set('n', '&lt;CR&gt;', function()
+-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-		local text = table.concat(lines, '\n')
+-		vim.api.nvim_win_close(winnr, false)
+-		callback(text)
+-	end, { buffer = bufnr })
+-end
+ return M
+</pre>

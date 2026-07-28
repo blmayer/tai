@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai c59ce2c</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit c59ce2c
+parent <a href=commit-9688d24.html>9688d24</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-17T21:45:09-03:00
+
+    made folders simpler
+
+<a href=tree-c59ce2c.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 8263920..62b7996 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -5,10 +5,9 @@ local M = {}
+ -- Import necessary modules
+ local config = require('tai.config')
+ local log = require('tai.log')
+-local ui = require('tai.ui')
+ local tools = require('tai.agents.tools')
+ 
+-if not config.root then
++if not config.root or not config.coder then
+ 	return M
+ end
+ 
+diff --git a/lua/tai/agents/init.lua b/lua/tai/agents/init.lua
+index a7c0fbe..5507ca1 100644
+--- a/lua/tai/agents/init.lua
++++ b/lua/tai/agents/init.lua
+@@ -3,181 +3,171 @@
+ local M = {}
+ 
+ local log = require('tai.log')
+-local library = require('tai.library')
+-local client = require('tai.agents.client')
+-local planner = require('tai.agents.planner')
+-local coder = require('tai.agents.coder')
+-local patcher = require('tai.agents.patcher')
+-local writer = require('tai.agents.writer')
+-
+--- Agent configurations
+-local agent_names = { "writer", "patcher", "coder", "planner" }
+-
+--- Function to list existing agents in Mistral
+-local function list_agents(callback)
+-	client.request("GET", 'agents', {}, function(response, err)
+-		if err then
+-			log.error("Failed to list agents: " .. err)
+-			callback(nil, err)
+-		else
+-			local existing_agents = {}
+-			for _, agent in ipairs(response) do
+-				existing_agents[agent.name] = agent.id
+-			end
+-			callback(existing_agents)
+-		end
+-	end)
+-end
+-
+--- Function to create an agent in Mistral if it does not exist
+-local function create_agent(name, callback)
+-	local handoffs = {
+-		writer = nil,
+-		patcher = { writer.id },
+-		coder = { patcher.id, writer.id },
+-		planner = { coder.id, patcher.id, writer.id }
+-	}
+-
+-	local agent_configs = {
+-		writer = {
+-			name = "writer",
+-			model = config.writer_model,
+-			instructions = writer.system_prompt,
+-			handoffs = handoffs[name],
+-			tools = {
+-				{
+-					type = "document_library",
+-					library_ids = { library.id }
+-				}
+-			}
+-		},
+-		patcher = {
+-			name = "patcher",
+-			model = config.patcher_model,
+-			instructions = patcher.system_prompt,
+-			handoffs = handoffs[name],
+-			tools = {
+-				{
+-					type = "document_library",
+-					library_ids = { library.id }
+-				}
+-			}
+-		},
+-		coder = {
+-			name = "coder",
+-			model = config.coder_model,
+-			instructions = coder.system_prompt,
+-			handoffs = handoffs[name],
+-			tools = {
+-				{
+-					type = "document_library",
+-					library_ids = { library.id }
+-				}
+-			}
+-		},
+-		planner = {
+-			name = "planner",
+-			model = config.planner_model,
+-			instructions = planner.system_prompt,
+-			handoffs = handoffs[name],
+-			tools = {
+-				{
+-					type = "document_library",
+-					library_ids = { library.id }
+-				}
+-			}
+-		}
+-	}
+-
+-	client.request("POST", 'agents', agent_configs[name], function(response, err)
+-		if err then
+-			log.error("Failed to create agent: " .. name .. " - " .. err)
+-			callback(nil, err)
+-			return
+-		end
+-		if response.id then
+-			log.info("Created agent " .. name)
+-			callback(response.id)
+-		end
+-	end)
+-end
+-
+-local function await_create_agent(name)
+-	local co = coroutine.running()
+-	create_agent(name, function(result)
+-		coroutine.resume(co, result)
+-	end)
+-	return coroutine.yield()
+-end
+-
+-
+-local function set_agent_id(name, id)
+-	if name == "planner" then
+-		planner.id = id
+-	elseif name == "coder" then
+-		coder.id = id
+-	elseif name == "patcher" then
+-		patcher.id = id
+-	elseif name == "writer" then
+-		writer.id = id
+-	end
+-end
++local config = require('tai.config')
++
++-- -- Agent configurations
++-- local agent_names = { "writer", "patcher", "coder", "planner" }
++--
++-- -- Function to list existing agents in Mistral
++-- local function list_agents(callback)
++-- 	client.request("GET", 'agents', {}, function(response, err)
++-- 		if err then
++-- 			log.error("Failed to list agents: " .. err)
++-- 			callback(nil, err)
++-- 		else
++-- 			local existing_agents = {}
++-- 			for _, agent in ipairs(response) do
++-- 				existing_agents[agent.name] = agent.id
++-- 			end
++-- 			callback(existing_agents)
++-- 		end
++-- 	end)
++-- end
++--
++-- -- Function to create an agent in Mistral if it does not exist
++-- local function create_agent(name, callback)
++-- 	local handoffs = {
++-- 		writer = nil,
++-- 		patcher = { writer.id },
++-- 		coder = { patcher.id, writer.id },
++-- 		planner = { coder.id, patcher.id, writer.id }
++-- 	}
++--
++-- 	local agent_configs = {
++-- 		writer = {
++-- 			name = "writer",
++-- 			model = config.writer_model,
++-- 			instructions = writer.system_prompt,
++-- 			handoffs = handoffs[name],
++-- 			tools = {
++-- 				{
++-- 					type = "document_library",
++-- 					library_ids = { library.id }
++-- 				}
++-- 			}
++-- 		},
++-- 		patcher = {
++-- 			name = "patcher",
++-- 			model = config.patcher_model,
++-- 			instructions = patcher.system_prompt,
++-- 			handoffs = handoffs[name],
++-- 			tools = {
++-- 				{
++-- 					type = "document_library",
++-- 					library_ids = { library.id }
++-- 				}
++-- 			}
++-- 		},
++-- 		coder = {
++-- 			name = "coder",
++-- 			model = config.coder_model,
++-- 			instructions = coder.system_prompt,
++-- 			handoffs = handoffs[name],
++-- 			tools = {
++-- 				{
++-- 					type = "document_library",
++-- 					library_ids = { library.id }
++-- 				}
++-- 			}
++-- 		},
++-- 		planner = {
++-- 			name = "planner",
++-- 			model = config.planner_model,
++-- 			instructions = planner.system_prompt,
++-- 			handoffs = handoffs[name],
++-- 			tools = {
++-- 				{
++-- 					type = "document_library",
++-- 					library_ids = { library.id }
++-- 				}
++-- 			}
++-- 		}
++-- 	}
++--
++-- 	client.request("POST", 'agents', agent_configs[name], function(response, err)
++-- 		if err then
++-- 			log.error("Failed to create agent: " .. name .. " - " .. err)
++-- 			callback(nil, err)
++-- 			return
++-- 		end
++-- 		if response.id then
++-- 			log.info("Created agent " .. name)
++-- 			callback(response.id)
++-- 		end
++-- 	end)
++-- end
++--
++-- local function await_create_agent(name)
++-- 	local co = coroutine.running()
++-- 	create_agent(name, function(result)
++-- 		coroutine.resume(co, result)
++-- 	end)
++-- 	return coroutine.yield()
++-- end
++--
++--
++-- local function set_agent_id(name, id)
++-- 	if name == "planner" then
++-- 		planner.id = id
++-- 	elseif name == "coder" then
++-- 		coder.id = id
++-- 	elseif name == "patcher" then
++-- 		patcher.id = id
++-- 	elseif name == "writer" then
++-- 		writer.id = id
++-- 	end
++-- end
+ 
+ -- Initialize library and agents
+ function M.init()
+-	if not library.id then
+-		log.error("Failed to initialize agents: library id is empty")
+-		return
+-	end
+-
+-	list_agents(function(agents, err)
+-		if err then
+-			log.error("Failed to initialize agents: " .. err)
+-			return
+-		end
+-
+-		coroutine.wrap(function()
+-			for _, agent_name in pairs(agent_names) do
+-				log.debug("Checking agent " .. agent_name)
+-
+-				local found = false
+-				for name, id in pairs(agents) do
+-					if agent_name == name then
+-						found = true
+-						set_agent_id(name, id)
+-						log.debug("Found agent " .. name .. " ID " .. id)
+-					end
+-				end
+-
+-				if not found then
+-					log.debug("Creating agent " .. agent_name)
+-					local id, err = await_create_agent(agent_name)
+-					if err then
+-						log.error("Failed to initialize agent: " .. agent_name)
+-						return
+-					end
+-
+-					set_agent_id(agent_name, id)
+-				end
+-			end
+-		end)()
+-	end)
+-
+-	if config.provider == "mistral" then
+-		local files = vim.fn.glob('**/*', true, true)
+-		library.setup(function(library_id, err)
+-			if err then
+-				log.error("Failed to setup library: " .. err)
+-				return
+-			end
+-			log.info("Library initialized with ID: " .. library_id)
+-
+-			log.info("Agents init complete")
+-
+-			-- initial sync
+-			library.sync(files)
+-		end)
+-	end
++	-- list_agents(function(agents, err)
++	-- 	if err then
++	-- 		log.error("Failed to initialize agents: " .. err)
++	-- 		return
++	-- 	end
++
++	-- 	coroutine.wrap(function()
++	-- 		for _, agent_name in pairs(agent_names) do
++	-- 			log.debug("Checking agent " .. agent_name)
++
++	-- 			local found = false
++	-- 			for name, id in pairs(agents) do
++	-- 				if agent_name == name then
++	-- 					found = true
++	-- 					set_agent_id(name, id)
++	-- 					log.debug("Found agent " .. name .. " ID " .. id)
++	-- 				end
++	-- 			end
++
++	-- 			if not found then
++	-- 				log.debug("Creating agent " .. agent_name)
++	-- 				local id, err = await_create_agent(agent_name)
++	-- 				if err then
++	-- 					log.error("Failed to initialize agent: " .. agent_name)
++	-- 					return
++	-- 				end
++
++	-- 				set_agent_id(agent_name, id)
++	-- 			end
++	-- 		end
++	-- 	end)()
++	-- end)
++
++	-- if config.provider == "mistral" then
++	-- 	local files = vim.fn.glob('**/*', true, true)
++	-- 	library.setup(function(library_id, err)
++	-- 		if err then
++	-- 			log.error("Failed to setup library: " .. err)
++	-- 			return
++	-- 		end
++	-- 		log.info("Library initialized with ID: " .. library_id)
++
++	-- 		log.info("Agents init complete")
++
++	-- 		-- initial sync
++	-- 		library.sync(files)
++	-- 	end)
++	-- end
+ end
+ 
+ return M
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+index 0fc9d0f..d3518e9 100644
+--- a/lua/tai/agents/patcher.lua
++++ b/lua/tai/agents/patcher.lua
+@@ -6,7 +6,7 @@ local M = {}
+ local config = require('tai.config')
+ local log = require('tai.log')
+ 
+-if not config.root then
++if not config.root or not config.patcher then
+ 	return M
+ end
+ 
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index cc41aa8..1825f2e 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -8,7 +8,7 @@ local log = require('tai.log')
+ local client = require('tai.agents.client')
+ local tools = require('tai.agents.tools')
+ 
+-if not config.root then
++if not config.root or not config.planner then
+ 	return M
+ end
+ 
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agents/tai.lua
+index 0fe5e26..069e324 100644
+--- a/lua/tai/agents/tai.lua
++++ b/lua/tai/agents/tai.lua
+@@ -5,27 +5,13 @@ local M = {}
+ -- Import necessary modules
+ local config = require('tai.config')
+ local log = require('tai.log')
++local provider = require('tai.provider')
+ local tools = require('tai.agents.tools')
+ 
+ if not config.root then
+ 	return M
+ end
+ 
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+@@ -43,12 +29,11 @@ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+ INSTRUCTIONS
+ Understand the user's request and gather all the knowledge/context needed.
+ - You can ask the user for more info or details of the task.
+-- Don't return xml tags for plain text. Don't use markdown, only ASCII/ANSI.
+ - If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
+ If the demand is specific to the current project then:
+ - Explore the code base before delivering the solution:
+   - Use the tools available to understand the code base.
+-  - A good starter is `ls -R` or `find`. Reading AGENTS.md can help too.
++  - A good starter is `ls -R` or `find`, reading AGENTS.md and README.md helps.
+   - The imports help you understand the code organization and structure.
+ If code changes are needed:
+ - Implement the task considering the constraints given.
+@@ -56,6 +41,7 @@ If code changes are needed:
+ - You must know the contents before changing a file.
+ - Don't use the run tool to change files unless explicitly told to.
+ - Call the patch tool to implement the changes you want.
++Text must be ASCII/ANSI plain text, this is shown verbatim to the user.
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index d27d64a..4a5b2cb 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -67,7 +67,7 @@ M.defs = {
+ 											content = {
+ 												type = "string",
+ 												description =
+-												"New content. Not used for delete operation.",
++												"New content, will be pasted verbatim. Not used for delete operation. Don't add line numbers.",
+ 											},
+ 										},
+ 										required = { "operation", "lines" }
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index 0baec4b..de05924 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -7,6 +7,10 @@ local config = require('tai.config')
+ local log = require('tai.log')
+ local client = require('tai.agents.client')
+ 
++if not config.root or not config.writer then
++	return M
++end
++
+ local provider
+ if config.provider == 'groq' then
+ 	provider = require('tai.providers.groq')
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 317ba0c..0168774 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -54,40 +54,52 @@ if file then
+ 		M.summary_model = data.summary_model or M.summary_model
+ 		M.complete_model = data.complete_model or M.complete_model
+ 		M.provider = data.provider or M.provider
+-		M.planner = {
+-			model = data.planner.model,
+-			options = data.planner.options,
+-			tools = data.planner.tools,
+-			think = data.planner.think or nil
+-		}
+-		M.coder = {
+-			model = data.coder.model,
+-			options = data.coder.options,
+-			tools = data.coder.tools,
+-			think = data.coder.think or nil
+-		}
+-		M.patcher = {
+-			model = data.patcher.model,
+-			options = data.patcher.options,
+-			tools = data.patcher.tools,
+-			think = data.patcher.think or nil
+-		}
+-		M.writer = {
+-			model = data.writer.model,
+-			options = data.writer.options,
+-			tools = data.writer.tools,
+-			think = data.writer.think or nil
+-		}
+-		M.tai = {
+-			model = data.tai.model,
+-			options = data.tai.options,
+-			tools = data.tai.tools,
+-			think = data.tai.think or nil
+-		}
++		M.skip_cache = data.skip_cache or M.skip_cache
++
+ 		if data.allowed_commands then
+ 			M.allowed_commands = data.allowed_commands
+ 		end
+-		M.skip_cache = data.skip_cache or M.skip_cache
++
++		if data.planner then
++			M.planner = {
++				model = data.planner.model,
++				options = data.planner.options,
++				tools = data.planner.tools,
++				think = data.planner.think or nil
++			}
++		end
++		if data.coder then
++			M.coder = {
++				model = data.coder.model,
++				options = data.coder.options,
++				tools = data.coder.tools,
++				think = data.coder.think or nil
++			}
++		end
++		if data.patcher then
++			M.patcher = {
++				model = data.patcher.model,
++				options = data.patcher.options,
++				tools = data.patcher.tools,
++				think = data.patcher.think or nil
++			}
++		end
++		if data.writer then
++			M.writer = {
++				model = data.writer.model,
++				options = data.writer.options,
++				tools = data.writer.tools,
++				think = data.writer.think or nil
++			}
++		end
++		if data.tai then
++			M.tai = {
++				model = data.tai.model,
++				options = data.tai.options,
++				tools = data.tai.tools,
++				think = data.tai.think or nil
++			}
++		end
+ 	end
+ end
+ 
+diff --git a/lua/tai/config.lua.rej b/lua/tai/config.lua.rej
+deleted file mode 100644
+index 5502e55..0000000
+--- a/lua/tai/config.lua.rej
++++ /dev/null
+@@ -1,26 +0,0 @@
+---- lua/tai/config.lua
+-+++ lua/tai/config.lua
+-@@ -1,13 +1,13 @@
+- local M = {}
+- 
+--M.allowed_commands_list = {
+--	"cat",
+--	"tail",
+--	"head",
+--	"grep",
+--	"cut",
+--	"ls",
+--	"wc",
+--	"make",
+--	"sort"
+-+M.allowed_commands = {
+-+	"cat",
+-+	"tail",
+-+	"head",
+-+	"grep",
+-+	"cut",
+-+	"ls",
+-+	"wc",
+-+	"make",
+-+	"sort"
+- }
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/gemini.lua
+similarity index 97%
+rename from lua/tai/providers/gemini.lua
+rename to lua/tai/gemini.lua
+index f7ee98a..a77b3e6 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -78,7 +78,7 @@ function M.request(model_config, msg, format, callback)
+ 			end
+ 
+ 			if #parsed &gt; 0 and parsed[1].error then
+-				return callback(nil, "Received error: " .. parsed[1].error)
++				return callback(nil, "Received error: " .. parsed[1].error.message)
+ 			end
+ 
+ 			if parsed.error then
+diff --git a/lua/tai/providers/groq.lua b/lua/tai/groq.lua
+similarity index 100%
+rename from lua/tai/providers/groq.lua
+rename to lua/tai/groq.lua
+diff --git a/lua/tai/providers/local.lua b/lua/tai/local.lua
+similarity index 100%
+rename from lua/tai/providers/local.lua
+rename to lua/tai/local.lua
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index e1b361a..8087694 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -158,7 +158,7 @@ local function handle_chat_reply(reply)
+ 			local out
+ 			if name == "run" then
+ 				log.debug("Asking for confirmation")
+-				local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;y\n&amp;N", 2)
++				local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
+ 				if input == 1 then
+ 					log.debug("Confirmed")
+ 					out = tools.run(name, args)
+diff --git a/lua/tai/project.lua.rej b/lua/tai/project.lua.rej
+deleted file mode 100644
+index a48e231..0000000
+--- a/lua/tai/project.lua.rej
++++ /dev/null
+@@ -1,18 +0,0 @@
+---- lua/tai/project.lua
+-+++ lua/tai/project.lua
+-@@ -1,5 +1,6 @@
+- local M = {}
+- local chat = require("tai.chat")
+-+local config = require("tai.config")
+- 
+- local history = {
+- 	{
+-@@ -35,7 +36,7 @@
+-   - Commands: Supply the list of commands to the executed on the user's machine in the `commands` field.
+-   - Commands are run in a shell and their output will be sent to you.
+--  - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
+-+  - Use programs that are common in a Linux environment, i.e. `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+-   - Use POSIX shell compliant scripting.
+-   - Use this to request the info needed to complete the current task.
+- 
+- 
+diff --git a/lua/tai/provider.lua b/lua/tai/provider.lua
+new file mode 100644
+index 0000000..0ffe1a9
+--- /dev/null
++++ b/lua/tai/provider.lua
+@@ -0,0 +1,4 @@
++local config = require('tai.config')
++
++return require('tai.' .. config.provider)
++
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 11da051..0411994 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -83,7 +83,17 @@ function M.show_response(fields)
+ 			elseif call["function"].name == "read_file" then
+ 				content = content .. "[tai] Reading " .. args.file_path .. "\n"
+ 			elseif call["function"].name == "patch" then
+-				content = content .. "[tai] Patching " .. #args.changes .. " changes.\n"
++				content = content .. "[tai] Patching " .. #args.changes .. " file(s):\n"
++				for _, change in ipairs(args.changes) do
++					content = content .. "\t" .. change.file .. ":\n"
++					for _, hunk in ipairs(change.hunks) do
++						if hunk.operation == "delete" then
++							content = content .. "\tdelete " .. hunk.lines .. "\n"
++						else
++							content = content .. "\t" .. hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
++						end
++					end
++				end
+ 			end
+ 		end
+ 	end
+</pre>

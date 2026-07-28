@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai c44ec85</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit c44ec85
+parent <a href=commit-2f91bc5.html>2f91bc5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-05-17T15:40:09-03:00
+
+    fixed not closing the command fold
+
+    - updated the config in readme
+
+<a href=tree-c44ec85.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index a6f949d..d07bb2c 100644
+--- a/README.md
++++ b/README.md
+@@ -62,9 +62,11 @@ return {
+   opts = {},
+   -- Optional: keybindings
+   keys = {
+-    { "&lt;leader&gt;ti", "&lt;cmd&gt;Tai chat&lt;cr&gt;", desc = "Open Tai chat" },
++    { "&lt;leader&gt;tt", "&lt;cmd&gt;Tai chat&lt;cr&gt;", desc = "Open Tai chat" },
++    { "&lt;leader&gt;tc", "&lt;cmd&gt;Tai reload&lt;cr&gt;", desc = "Reload Tai config" },
++    { "&lt;leader&gt;ta", "&lt;cmd&gt;Tai agent&lt;cr&gt;", desc = "Switch agent" },
+     { "&lt;leader&gt;tr", "&lt;cmd&gt;Tai clear&lt;cr&gt;", desc = "Clear Tai history" },
+-    { "&lt;C-w&gt;&lt;C-t&gt;", "&lt;cmd&gt;Tai toggle&lt;cr&gt;", desc = "Toggle Tai window" },
++    { "&lt;leader&gt;ts", "&lt;cmd&gt;Tai stop&lt;cr&gt;", desc = "Stop Tai" },
+   },
+ }
+ ```
+@@ -81,6 +83,27 @@ use("blmayer/tai")
+ Plug "blmayer/tai"
+ ```
+ 
++#### Native Installation
++
++For a minimal setup without plugin managers, add to your `init.lua`:
++
++```lua
++-- Clone the plugin to your nvim config
++-- git clone https://github.com/blmayer/tai.git ~/.config/nvim/lua/tai
++
++local tai = require("tai")
++tai.setup({})
++
++-- Optional: keybindings
++vim.keymap.set("n", "&lt;leader&gt;tt", tai.chat, { noremap = true })
++vim.keymap.set("n", "&lt;leader&gt;tc", tai.reload, { noremap = true })
++vim.keymap.set("n", "&lt;leader&gt;ta", tai.switch_agent, { noremap = true })
++vim.keymap.set("n", "&lt;leader&gt;tr", tai.clear_history, { noremap = true })
++vim.keymap.set("n", "&lt;leader&gt;ts", tai.stop, { noremap = true })
++
++vim.keymap.set("n", "&lt;C-W&gt;&lt;C-T&gt;", tai.toggle_chat_window, { noremap = true })
++```
++
+ #### Manual Installation
+ 
+ Place the plugin code at:
+@@ -92,14 +115,7 @@ and load it in your `init.lua`:
+     local tai = require("tai")
+     tai.setup({})
+ 
+-The plugin also provides the `:Tai` command for common operations:
+-
+-- `:Tai chat` - Open the chat window
+-- `:Tai toggle` - Toggle the chat window
+-- `:Tai clear` - Clear conversation history
+-- `:Tai reload` - Reload configuration
+-
+-## Configuration
++## Project Configuration
+ 
+ tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 6e31df0..bd62702 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -382,8 +382,10 @@ local function send_input()
+ 			if response == "y" or response == "yes" then
+ 				log.debug("Confirmed")
+ 				M.append("Confirmed...\n")
++				M.append("{{{ Running: " .. args.command .. "\n")
+ 				local out = tools.exec_command(args.command)
+ 				M.append(out or "")
++				M.append("\n}}}\n")
+ 				res.content = out
+ 			elseif response == "s" or response == "stop" then
+ 				log.debug("Stopped")
+</pre>

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 5f02321</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 5f02321
+parent <a href=commit-78a505c.html>78a505c</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-07-28T21:25:53-03:00
+
+    main: improved pipeline prompt
+
+<a href=tree-5f02321.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/ide-mode.go b/ide-mode.go
+index 4ebbbe3..603ae83 100644
+--- a/ide-mode.go
++++ b/ide-mode.go
+@@ -22,7 +22,7 @@ var (
+ 			Role: "system",
+ 			Content: `### System
+ 			You are Tai, a coding assistant for nvim that can return code changes, execute commands and give general code advice.
+-			Return **ONLY** valid multipart MIME message with named parts.
++			Return **ONLY** valid multipart MIME message with named parts, do NOT add anything outside of the MIME message.
+ 
+ 			### Intructions
+ 			Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
+@@ -36,8 +36,8 @@ var (
+ 			- Do not nest MIME messages.
+ 
+ 			#### patch
+-			For the patch part return a valid patch text to be used by the patch program. Use correct locations based on
+-			the provided cursor position, or the file content if sent.
++			For the patch part return a valid patch text to be used by the patch program. Use correct file and locations based on
++			the provided cursor position and context, or the file content if sent.
+ 			If the location is needed and was not sent use a @read command to request the file content.
+ 			If the location is not important also include the patch in a human friendly form in the "text" part.
+ 
+@@ -88,13 +88,14 @@ var (
+ 			--asdfasdfasdf--
+ 			`,
+ 		},
++		{Role: "system", Content: preamble},
+ 	}
+ )
+ 
+ // InitProjectPrompt scans the current directory and returns a prompt
+ // describing the file structure.
+ func InitProjectPrompt() error {
+-	fmt.Println("[tai] Starting project")
++	log.Println("[tai] Starting project mode")
+ 	dir, err := os.Getwd()
+ 	if err != nil {
+ 		return err
+diff --git a/main.go b/main.go
+index c829249..0dd7b56 100644
+--- a/main.go
++++ b/main.go
+@@ -48,11 +48,40 @@ func readLineRaw() (string, error) {
+ 	}
+ }
+ 
+-func pipelineMode(model string) {
++func pipelineMode(prompt string) {
+ 	input, _ := io.ReadAll(os.Stdin)
+ 	messages := []ChatMessage{
+-		{Role: "system", Content: "You are 'tai', a command-line AI assistant running on a shell pipeline."},
+-		{Role: "user", Content: string(input)},
++		{Role: "system", Content: `### System
++			You are 'tai', a command-line AI assistant running on a shell pipeline.
++
++			### Instructions
++			You are part of a UNIX style pipeline, so the user will give you the output from other commands such as ls, cat, grep etc; and your output will probably be used for other commands or the terminal. So:
++			- Format your responses in a line oriented way or whatever the user instructs you.
++			- You can use ANSI escapes and other terminal formating sequences for prettier output.
++			- Be concise and tune your output so other programs can easily read your output.
++			- Output **ONLY** what was requested for you, do not add comments or metadata.
++
++			### Input Format
++			You will receive the input in two optional parts:
++			1. The user prompt with instructions and
++			2. The standard input from the pipeline.
++
++			#### Example
++			Prompt:
++			Return a funny name for each file name
++
++			Input:
++			file1.txt
++			avatar.png
++			notes.md
++
++			Your example output:
++
++			garbage.txt
++			my-ugly-photo.png
++			things-i-keep-forgeting.md
++			`},
++		{Role: "user", Content: fmt.Sprintf("Prompt:\n%s\n\nInput:\n%s", prompt, string(input))},
+ 	}
+ 	resp, err := SendChat(messages)
+ 	if err != nil {
+@@ -62,7 +91,7 @@ func pipelineMode(model string) {
+ 	fmt.Println(resp)
+ }
+ 
+-func interactiveMode(model string) {
++func interactiveMode() {
+ 	log.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
+ 	messages := []ChatMessage{
+ 		{Role: "system", Content: "You are 'tai', a command-line AI assistant running in interactive mode."},
+@@ -87,31 +116,33 @@ func interactiveMode(model string) {
+ 	}
+ }
+ 
+-func ideMode(model string) {
++func projectMode() {
+ 	err := InitProjectPrompt()
+ 	if err != nil {
+ 		fmt.Fprintln(os.Stderr, "init error:", err)
+ 		os.Exit(1)
+ 	}
+ 
+-	log.Println("Socket ready")
++	log.Println("[tai] Socket ready")
+ 	taiSocket(sockPath)
+ }
+ 
+ // tai This is a go package that ... continue this comment
+ func main() {
+-	model := "llama3-70b-8192"
+-
+-	if len(os.Args) &gt; 1 &amp;&amp; os.Args[1] == "-c" {
+-		ideMode(model)
++	if len(os.Args) &gt; 1 &amp;&amp; os.Args[1] == "-s" {
++		projectMode()
+ 		return
+ 	}
+ 
+ 	fi, _ := os.Stdin.Stat()
+ 	if (fi.Mode() &amp; os.ModeCharDevice) == 0 {
+-		pipelineMode(model)
++		prompt := ""
++		if len(os.Args) &gt; 1 {
++			prompt = strings.Join(os.Args[1:], " ")
++		}
++		pipelineMode(prompt)
+ 	} else {
+-		interactiveMode(model)
++		interactiveMode()
+ 	}
+ }
+ 
+diff --git a/nvim-tai/tai.lua b/nvim-tai/tai.lua
+index 9ce1ad5..df55fdb 100644
+--- a/nvim-tai/tai.lua
++++ b/nvim-tai/tai.lua
+@@ -30,7 +30,7 @@ local function parse_mime(raw)
+   local start, remaining = read_until_blank_line(raw)
+   local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
+   if not boundary then return nil, "No boundary found" end
+-  boundary = boundary:gsub("-", "%-")
++  boundary = boundary:gsub("%-", "%%%-")
+   print("[tai] boundary: " .. boundary)
+ 
+   while 1 do
+</pre>

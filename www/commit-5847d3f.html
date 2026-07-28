@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 5847d3f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 5847d3f
+parent <a href=commit-d08c5ed.html>d08c5ed</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-06T21:30:58-03:00
+
+    fixed bug of patch getting wrong file
+
+<a href=tree-5847d3f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index de0f76c..672777c 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -81,9 +81,8 @@ or referencing frequently throughout a task. The content will automatically
+ refresh when you make changes to the file.
+ 
+ ## patch
+-To edit files, ALWAYS use the `patch` tool. `patch` effectively allows you to
+-write/edit files, so pay careful attention to these instructions. To use the
+-`patch` tool, you should call the tool with the following structure:
++Use the `patch` tool when you need to make changes to a file. To use the `patch`
++tool, you should call the tool with the following structure:
+ {
+ 	"name": "&lt;name for the patch&gt;",
+ 	"file": "&lt;path/to/file&gt;",
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index c903acf..58359cc 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -319,7 +319,9 @@ end
+ 
+ function M.apply_patch(name, file, changes)
+ 
++	local buf = nil
+ 	local is_open = false
++
+ 	if buf then
+ 		for _, win in ipairs(vim.api.nvim_list_wins()) do
+ 			if vim.api.nvim_win_get_buf(win) == buf then
+</pre>

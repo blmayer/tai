@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 9f767f2</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 9f767f2
+parent <a href=commit-21e8967.html>21e8967</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-01T16:49:53-03:00
+
+    updated non-streaming api to look like streaming
+
+<a href=tree-9f767f2.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 8ff0771..2b5207a 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -116,12 +116,8 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, msg)
+ 		end
+ 
+-		local fields, extract_err = common.extract_fields(parsed, format)
+-		if extract_err then
+-			return callback(nil, extract_err)
+-		end
+-
+-		callback(fields, nil)
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 7cb7bc5..172b632 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -65,45 +65,72 @@ function M.build_request_tools(api_format)
+ 	return request_tools
+ end
+ 
+--- Make HTTP request using curl.
+--- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
+--- callback receives (parsed, error)
+-function M.make_http_call(url, api_key, body_json, callback)
++-- Streaming HTTP client using vim.uv process
++-- Reads curl output line-by-line for true streaming support
++function M.make_http_call(url, api_key, body_json, on_complete)
+ 	local tmp = vim.fn.tempname()
+ 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
+ 	if not ok_write then
+-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
++		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
+ 	end
++
+ 	local function cleanup()
+ 		pcall(vim.fn.delete, tmp)
+ 	end
+-	local ok_system, system_err = pcall(vim.system, {
+-		"curl", "-s", "-X", "POST", url,
++
++	local response = ""
++
++	local job_id = vim.fn.jobstart({
++		"curl",
++		"-s",
++		"-X", "POST", url,
+ 		"-H", "Authorization: Bearer " .. api_key,
+ 		"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
+ 		"-H", "X-Title: tai.nvim",
+ 		"-H", "Content-Type: application/json",
+ 		"--data-binary", "@" .. tmp,
+-	}, { text = true }, function(obj)
+-		cleanup()
+-		if obj.code ~= 0 then
+-			callback(nil, "curl returned code " .. obj.code)
+-			return
+-		end
+-		if not obj.stdout or obj.stdout == "" then
+-			callback(nil, "Received empty response")
+-			return
+-		end
+-		local parsed = vim.json.decode(obj.stdout)
+-		if not parsed then
+-			callback(nil, "Failed to decode JSON response")
+-			return
+-		end
+-		callback(parsed, nil)
+-	end)
+-	if not ok_system then
++	}, {
++		stdout_buffered = true,
++		on_stdout = function(_, data)
++			if not data then
++				on_complete(nil, nil)
++				return
++			end
++			log.debug("[API] received data: " .. vim.inspect(data))
++				for _, line in ipairs(data) do
++					response = response .. line
++				end
++		end,
++
++		on_stderr = function(_, data)
++			if data then
++				for _, line in ipairs(data) do
++					if line ~= "" then
++						log.error("[API] curl error:" .. line)
++					end
++				end
++			end
++		end,
++
++		on_exit = function(_, code)
++			cleanup()
++			if code ~= 0 then
++				log.debug("[API] command returned code " .. tostring(code))
++				on_complete("curl returned code " .. tostring(code))
++				return
++			end
++			local parsed = vim.json.decode(response)
++			if not parsed then
++				on_complete(nil, "Failed to decode JSON response")
++				return
++			end
++			on_complete(parsed, nil)
++		end,
++	})
++
++	if job_id &lt;= 0 then
+ 		cleanup()
+-		callback(nil, tostring(system_err))
++		on_complete("Failed to start job")
+ 	end
+ end
+ 
+@@ -191,6 +218,8 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ 		"-N",
+ 		"-X", "POST", url,
+ 		"-H", "Authorization: Bearer " .. api_key,
++		"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
++		"-H", "X-Title: tai.nvim",
+ 		"-H", "Content-Type: application/json",
+ 		"--data-binary", "@" .. tmp,
+ 	}, {
+@@ -234,6 +263,22 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ 	end
+ end
+ 
++function M.parse_response(res, format)
++	if #res.choices == 0 or not res.choices[1].message then
++		return nil, "no choices received"
++	end
++
++	local fields, extract_err = M.extract_fields(res.choices[1].message, format)
++	if extract_err then
++		return nil, extract_err
++	end
++	if res.usage and res.usage.total_tokens then
++		fields.token_usage = res.usage.total_tokens
++	end
++
++	return fields
++end
++
+ function M.parse_chunk(chunk)
+ 	local ok, decoded = pcall(vim.json.decode, chunk)
+ 	if not ok then
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 4b46f3e..39bdb46 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -363,47 +363,6 @@ local function run_tools(tool_calls)
+ 	return results, stop
+ end
+ 
+-local function process_response(fields)
+-	log.debug("[UI] processing response")
+-	M.open()
+-
+-	if fields.token_usage then
+-		vim.schedule(function() update_token_display(fields.token_usage) end)
+-	end
+-	if fields.error then
+-		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+-	end
+-
+-	if fields.reasoning then
+-		M.append_to_buffer("{{{ Reasoning\n" .. fields.reasoning .. "\n}}}\n")
+-		vim.schedule(function() refresh_and_close_folds() end)
+-	end
+-
+-	-- For non-streaming responses, append the content to the buffer
+-	if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+-		if not config.stream then
+-			M.append_to_buffer(fields.content .. "\n")
+-		end
+-	end
+-
+-	if not fields.tool_calls or #fields.tool_calls == 0 then
+-		return
+-	end
+-
+-	vim.schedule(function()
+-		log.debug("[UI] running tools")
+-		local res, stop = run_tools(fields.tool_calls)
+-		if stop or hard_stop then
+-			for _, msg in ipairs(res) do
+-				provider.add_to_history(msg)
+-			end
+-			log.debug("[UI] stopped")
+-			return
+-		end
+-		M.task(res, process_response)
+-	end)
+-end
+-
+ local function send_input()
+ 	-- reset hard stop when user sends a message
+ 	if hard_stop then
+@@ -422,16 +381,14 @@ local function send_input()
+ 			return
+ 		end
+ 
+-		vim.schedule(function()
+-			add_sep()
+-			M.append_to_buffer(input .. "\n---\n")
+-		end)
++		add_sep()
++		M.append_to_buffer(input .. "\n---\n")
+ 
+ 		log.debug("[UI] got user input: " .. input)
+ 		if config.stream then
+ 			M.task_stream({ { role = "user", content = input } })
+ 		else
+-			M.task({ { role = "user", content = input } }, process_response)
++			M.task({ { role = "user", content = input } })
+ 		end
+ 	end)
+ end
+@@ -501,22 +458,60 @@ function M.clear()
+ 	provider.add_to_history({ role = "system", content = agent.system_prompt })
+ end
+ 
+-function M.task(msgs, callback)
++function M.task(msgs)
+ 	log.info("Agent executing task")
+ 	provider.request(
+ 		config,
+ 		msgs,
+ 		nil,
+-		function(data, err)
+-			local response = { role = "assistant" }
++		function(fields, err)
+ 			if err then
+-				return callback({ error = err })
++				M.append_to_buffer("{{{ Error\n" .. err .. "\n}}}")
++			end
++			local response = { role = "assistant" }
++			for k, v in pairs(fields) do
++				response[k] = v
+ 			end
+-			response.content = data.content
+-			response.tool_calls = data.tool_calls
+-			response.reasoning = data.reasoning
+ 			provider.add_to_history(response)
+-			callback(data, false) -- Pass non-streaming flag
++
++			log.debug("[UI] processing response: " .. vim.inspect(fields))
++			M.open()
++
++			if fields.token_usage then
++				update_token_display(fields.token_usage)
++			end
++			if fields.error then
++				M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
++			end
++
++			if fields.reasoning then
++				M.append_to_buffer("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
++				refresh_and_close_folds()
++			end
++
++			-- For non-streaming responses, append the content to the buffer
++			if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
++				if not config.stream then
++					M.append_to_buffer(fields.content .. "\n")
++				end
++			end
++
++			if not fields.tool_calls or #fields.tool_calls == 0 then
++				return
++			end
++
++			vim.schedule(function()
++				log.debug("[UI] running tools")
++				local res, stop = run_tools(fields.tool_calls)
++				if stop or hard_stop then
++					for _, msg in ipairs(res) do
++						provider.add_to_history(msg)
++					end
++					log.debug("[UI] stopped")
++					return
++				end
++				M.task(res)
++			end)
+ 		end
+ 	)
+ end
+</pre>

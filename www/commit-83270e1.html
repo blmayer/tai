@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 83270e1</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 83270e1
+parent <a href=commit-6864cab.html>6864cab</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-08-05T12:44:34-03:00
+
+    nvim: started patch support
+
+<a href=tree-83270e1.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/init.lua b/nvim-tai/init.lua
+index 05262fc..488c1f7 100644
+--- a/nvim-tai/init.lua
++++ b/nvim-tai/init.lua
+@@ -11,8 +11,8 @@ end
+ function M.prompt_input()
+ 	ui.input("Tai Input: ", function(input)
+ 		if input and input ~= "" then
+-			local result = chat.send_chat(input)
+-			ui.show_output_in_vsplit(result)
++			local result = project.process_request(input)
++			ui.show_response(result)
+ 		end
+ 	end)
+ end
+@@ -20,7 +20,7 @@ end
+ function M.prompt_full_file()
+ 	local path = vim.fn.expand("%:p")
+ 
+-	ui.input("Tai Input: ", function(user_input)
++	ui.input("Tai Input (Context): ", function(user_input)
+ 		if not user_input or user_input == "" then return end
+ 		local result = project.request_file_prompt(path, user_input)
+ 		ui.show_response(result)
+diff --git a/nvim-tai/ui.lua b/nvim-tai/ui.lua
+index dc5359b..c7f58e9 100644
+--- a/nvim-tai/ui.lua
++++ b/nvim-tai/ui.lua
+@@ -8,8 +8,7 @@ function M.show_response(fields)
+ 	end
+ 
+ 	if fields.patch then
+-		content = content .. "\n\n------------------\nPatch:\n\n" .. fields.patch
+-		vim.api.nvim_command("au BufDelete &lt;buffer&gt; lua require('tai').apply_patch('" .. fields.patch .. "')")
++		M.apply_patch(fields.patch)
+ 	end
+ 	local lines = vim.split(content, "\n", { trimempty = true })
+ 
+@@ -76,4 +75,11 @@ function M.input(prompt, callback)
+ 	end)
+ end
+ 
++function M.apply_patch(patch)
++    local f = io.popen("git apply -", "w")
++    f:write(patch)
++    f:close()
++    vim.api.nvim_command("checktime!")
++end
++
+ return M
+</pre>

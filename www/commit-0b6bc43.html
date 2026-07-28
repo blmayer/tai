@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 0b6bc43</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 0b6bc43
+parent <a href=commit-89f7d20.html>89f7d20</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-16T00:40:57-03:00
+
+    added token usage to openrouter
+
+<a href=tree-0b6bc43.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index dd98519..8ed7be9 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -117,10 +117,14 @@ function M.request(model_config, msgs, format, callback)
+                     fields.content = message.content
+                 end
+             end
+-
+             fields.tool_calls = message.tool_calls
+             provider_common.decode_tool_call_arguments(fields.tool_calls)
+ 
++            -- Extract token usage if available
++            if parsed.usage and parsed.usage.total_tokens then
++                fields.token_usage = parsed.usage.total_tokens
++            end
++
+             callback(fields, nil)
+         end)
+ end
+</pre>

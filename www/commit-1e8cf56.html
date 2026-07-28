@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 1e8cf56</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 1e8cf56
+parent <a href=commit-c59ce2c.html>c59ce2c</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-20T11:31:09-03:00
+
+    improved chat and patch tool
+
+    ui: now using a side panel for input
+    tool: fixed line range
+
+<a href=tree-1e8cf56.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agents/tai.lua
+index 069e324..9232d1e 100644
+--- a/lua/tai/agents/tai.lua
++++ b/lua/tai/agents/tai.lua
+@@ -1,5 +1,3 @@
+--- all_rounder.lua: Coder agent for Tai
+-
+ local M = {}
+ 
+ -- Import necessary modules
+@@ -16,8 +14,8 @@ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+ SYSTEM
+-You are a Tai, an excelent coding and system admin agent. You are in charge of
+-implementing the tasks requested in the current project. You will receive high
++You are a Tai, an excelent coding agent. You are in charge of implementing
++the tasks requested in the current project code base. You will receive high
+ level feature requests or general questions. Your job is to address them.
+ 
+ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+@@ -36,12 +34,12 @@ If the demand is specific to the current project then:
+   - A good starter is `ls -R` or `find`, reading AGENTS.md and README.md helps.
+   - The imports help you understand the code organization and structure.
+ If code changes are needed:
++- Patches need precise line numbering, make sure you know the files you change.
+ - Implement the task considering the constraints given.
+   - Be consistent with the code base's style.
+-- You must know the contents before changing a file.
+ - Don't use the run tool to change files unless explicitly told to.
+ - Call the patch tool to implement the changes you want.
+-Text must be ASCII/ANSI plain text, this is shown verbatim to the user.
++Text must be &lt; 80cols ASCII/ANSI text, this is shown verbatim to the user.
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index 4a5b2cb..3a72a5d 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -33,7 +33,8 @@ M.defs = {
+ 				properties = {
+ 					name = {
+ 						type = "string",
+-						description = "Name for this patch"
++						description =
++						"Name for this patch or description, can be used for commits."
+ 					},
+ 					changes = {
+ 						type = "array",
+@@ -239,16 +240,16 @@ local function parse_lines(lines_str)
+ 	-- Handle range (e.g., "2-5")
+ 	local start, end_line = lines_str:match("^(%d+)-(%d+)$")
+ 	if start and end_line then
+-		return tonumber(start)-1, tonumber(end_line)-1
++		return tonumber(start) - 1, tonumber(end_line) - 1
+ 	end
+ 
+ 	-- Handle single line (e.g., "3")
+ 	local line = tonumber(lines_str)
+ 	if line == 0 then
+-		return 0,0
++		return 0, 0
+ 	end
+ 	if line then
+-		return line-1, line-1
++		return line - 1, line - 1
+ 	end
+ 
+ 	return 0, 0
+@@ -261,7 +262,7 @@ local function apply_patch(name, changes)
+ 	for _, change in ipairs(changes) do
+ 		local file = change.file
+ 
+-		vim.cmd("vs " .. file)
++		vim.cmd("vsplit " .. file)
+ 		local buf = vim.api.nvim_get_current_buf()
+ 		-- local new_buf = vim.api.nvim_create_buf(0, false)
+ 
+@@ -280,14 +281,14 @@ local function apply_patch(name, changes)
+ 			if operation == "add" then
+ 				-- Insert content after the specified lines
+ 				local new_lines = vim.split(content, '\n')
+-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, new_lines)
++				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
+ 			elseif operation == "change" then
+ 				-- Replace lines with new content
+ 				local new_lines = vim.split(content, '\n')
+-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, new_lines)
++				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
+ 			elseif operation == "delete" then
+ 				-- Remove lines
+-				vim.api.nvim_buf_set_lines(buf, start, end_line, false, {})
++				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, {})
+ 			end
+ 		end
+ 
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 6d3c945..09aeff1 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -9,94 +9,89 @@ function M.setup(opts)
+ 	project.init()
+ end
+ 
+-function M.toggle_chat_window()
+-	ui.toggle_output_window()
+-end
+-
+-function M.chat()
+-	ui.input(function(input)
+-		if not input or input == "" then return end
+-		log.debug("Received user input: " .. input)
++function input_callback(input)
++	if not input or input == "" then return end
++	log.debug("Received user input: " .. input)
+ 
+-		vim.schedule(function()
+-			ui.open()
+-			ui.append_to_buffer("--------------------------\n&gt; " .. input .. "\n")
+-		end)
+-
+-		project.chat(input)
++	vim.schedule(function()
++		ui.append_to_buffer("--------------------------\n&gt; " .. input .. "\n")
+ 	end)
+-end
+ 
+-function M.reset()
+-	project.clear_history()
++	project.chat(input)
+ end
+ 
+-function M.prompt_full_file()
+-	local path = vim.fn.expand("%")
+-	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+-
+-	local location = string.format("line %d, column %d", row, col)
+-
+-	ui.input(function(input)
+-		if not input or input == "" then return end
+-
+-		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+-
+-		local result = project.request_append_file(path, prompt)
+-		ui.show_response(result)
+-	end)
+-end
+-
+-function M.continue()
+-	local path = vim.fn.expand("%")
+-	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+-
+-	local location = string.format("line %d, column %d", row, col)
+-
+-	local prompt = string.format(
+-	"Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.",
+-		location)
+-
+-	local result = project.request_append_file(path, prompt)
+-	ui.insert_response(result.text)
++function M.toggle_chat_window()
++	ui.toggle_output_window(input_callback)
+ end
+ 
+-function M.operator_send(type)
+-	local old_reg = vim.fn.getreg('"')
+-	vim.cmd('normal! gv"zy')
+-	local text = vim.fn.getreg("z")
+-	vim.fn.setreg('"', old_reg)
+-
+-	local result = project.process_request(text)
+-	ui.show_response(result)
+-end
++function M.chat()
++	ui.open(input_callback)
++	-- ui.input(function(input)
++	-- 	if not input or input == "" then return end
++	-- 	log.debug("Received user input: " .. input)
+ 
+-function M.operator_send_with_prompt(type)
+-	local old_reg = vim.fn.getreg('"')
+-	vim.cmd('normal! gv"zy')
+-	local text = vim.fn.getreg("z")
+-	vim.fn.setreg('"', old_reg)
++	-- 	vim.schedule(function()
++	-- 		ui.append_to_buffer("--------------------------\n&gt; " .. input .. "\n")
++	-- 	end)
+ 
+-	ui.input(function(input)
+-		local full = input .. "\n\nSelected code:\n" .. text
+-		local result = project.process_request(full)
+-		ui.show_response(result)
+-	end)
++	-- 	project.chat(input)
++	-- end)
+ end
+ 
+-function M.complete()
+-	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+-	local line = vim.api.nvim_get_current_line()
+-	local result = project.complete(line)
+-	ui.insert_response(result)
++function M.reset()
++	project.clear_history()
+ end
+ 
+-function M.replace_visual()
+-	ui.input(function(input)
+-		local payload = string.format("I'm replacing text, your text response will the pasted as is. Q:\n", input)
+-		local result = project.process_request(payload)
+-		ui.replace_visual_selection(result)
+-	end)
+-end
++-- function M.continue()
++-- 	local path = vim.fn.expand("%")
++-- 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++--
++-- 	local location = string.format("line %d, column %d", row, col)
++--
++-- 	local prompt = string.format(
++-- 	"Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.",
++-- 		location)
++--
++-- 	local result = project.request_append_file(path, prompt)
++-- 	ui.insert_response(result.text)
++-- end
++--
++-- function M.operator_send(type)
++-- 	local old_reg = vim.fn.getreg('"')
++-- 	vim.cmd('normal! gv"zy')
++-- 	local text = vim.fn.getreg("z")
++-- 	vim.fn.setreg('"', old_reg)
++--
++-- 	local result = project.process_request(text)
++-- 	ui.show_response(result)
++-- end
++--
++-- function M.operator_send_with_prompt(type)
++-- 	local old_reg = vim.fn.getreg('"')
++-- 	vim.cmd('normal! gv"zy')
++-- 	local text = vim.fn.getreg("z")
++-- 	vim.fn.setreg('"', old_reg)
++--
++-- 	ui.input(function(input)
++-- 		local full = input .. "\n\nSelected code:\n" .. text
++-- 		local result = project.process_request(full)
++-- 		ui.show_response(result)
++-- 	end)
++-- end
++--
++-- function M.complete()
++-- 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
++-- 	local line = vim.api.nvim_get_current_line()
++-- 	local result = project.complete(line)
++-- 	ui.insert_response(result)
++-- end
++--
++-- function M.replace_visual()
++-- 	ui.input(function(input)
++-- 		local payload = string.format("I'm replacing text, your text response will the pasted as is. Q:\n", input)
++-- 		local result = project.process_request(payload)
++-- 		ui.replace_visual_selection(result)
++-- 	end)
++-- end
+ 
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 0411994..871901a 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -2,6 +2,24 @@ local M = {}
+ local log = require("tai.log")
+ 
+ local bufname = "tai-chat"
++local input_bufname = "tai-chat-input"
++
++local function ensure_input_buf()
++	local bufnr = vim.fn.bufnr(input_bufname)
++	if bufnr == -1 then
++		bufnr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
++		vim.api.nvim_buf_set_name(bufnr, input_bufname)
++		vim.bo[bufnr].buftype = 'nofile'
++		vim.bo[bufnr].bufhidden = 'wipe'
++		vim.bo[bufnr].swapfile = false
++		vim.bo[bufnr].filetype = 'text'
++		vim.bo[bufnr].modifiable = true
++
++		-- Keybindings for the input buffer
++		vim.keymap.set('n', '&lt;CR&gt;', function() M.send_current_input() end, { buffer = bufnr })
++	end
++	return bufnr
++end
+ 
+ local function ensure_buf()
+ 	local bufnr = vim.fn.bufnr(bufname)
+@@ -18,6 +36,21 @@ local function ensure_buf()
+ end
+ 
+ M.buffer_nr = ensure_buf()
++M.input_buffer_nr = ensure_input_buf()
++
++-- Autoclose TAI UI buffers on Neovim exit
++vim.api.nvim_create_autocmd("VimLeavePre", {
++  group = vim.api.nvim_create_augroup("TaiUiCleanup", { clear = true }),
++  callback = function()
++    if vim.api.nvim_buf_is_valid(M.buffer_nr) then
++      vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
++    end
++    if vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
++      vim.api.nvim_buf_delete(M.input_buffer_nr, { force = true })
++    end
++  end,
++})
++M.input_buffer_nr = ensure_input_buf()
+ 
+ function M.append_to_buffer(content)
+ 	local new_lines = vim.split(content, "\n")
+@@ -34,28 +67,39 @@ function M.append_to_buffer(content)
+ 	end)
+ end
+ 
+-function M.toggle_output_window()
++function M.toggle_output_window(callback)
+ 	local bufnr = M.buffer_nr
+ 	local winid = vim.fn.bufwinnr(bufnr)
++	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
+ 	if winid ~= -1 then
+ 		-- Close the window
+-		vim.cmd(winid .. "close")
++		vim.api.nvim_win_close(winid, false)
++		if input_winid ~= -1 then
++			vim.api.nvim_win_close(input_winid, false)
++		end
+ 	else
+-		-- Open in vertical split
+-		vim.cmd("vsplit")
+-		local win = vim.api.nvim_get_current_win()
+-		vim.api.nvim_win_set_buf(win, bufnr)
+-		vim.api.nvim_win_set_width(win, 80)
++		M.open(callback)
+ 	end
+ end
+ 
+-function M.open()
++function M.open(callback)
+ 	vim.schedule(function()
+ 		if vim.fn.bufwinnr(M.buffer_nr) == -1 then
+ 			vim.cmd("vsplit")
+ 			local win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(win, M.buffer_nr)
+ 			vim.api.nvim_win_set_width(win, 80)
++
++			-- Open input buffer in horizontal split below the output
++			vim.cmd("below split") -- horizontal split below
++			local input_win = vim.api.nvim_get_current_win()
++			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
++			vim.api.nvim_win_set_height(input_win, 6) -- 6 lines for input
++
++			vim.keymap.set('n', '&lt;CR&gt;', function()
++				local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false), '\n')
++				callback(input)
++			end, { buffer = M.input_buffer_nr })
+ 		end
+ 	end)
+ end
+@@ -90,7 +134,9 @@ function M.show_response(fields)
+ 						if hunk.operation == "delete" then
+ 							content = content .. "\tdelete " .. hunk.lines .. "\n"
+ 						else
+-							content = content .. "\t" .. hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
++							content = content ..
++							    "\t" ..
++							    hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
+ 						end
+ 					end
+ 				end
+@@ -143,31 +189,35 @@ end
+ 
+ -- Prompt user for multi-line input with Shift+Enter support
+ function M.input(callback)
+-	local bufnr = vim.api.nvim_create_buf(false, true)
+-	local width = math.min(80, vim.o.columns - 10)
+-	local height = math.min(10, vim.o.lines - 10)
+-
+-	local winnr = vim.api.nvim_open_win(bufnr, true, {
+-		relative = 'editor',
+-		width = width,
+-		height = height,
+-		col = (vim.o.columns - width) / 2,
+-		row = (vim.o.lines - height) / 2,
+-		style = 'minimal',
+-		border = 'rounded'
+-	})
+-
+-	vim.bo[bufnr].buftype = 'nofile'
+-	vim.bo[bufnr].bufhidden = 'wipe'
+-	vim.bo[bufnr].swapfile = false
+-	vim.bo[bufnr].filetype = 'text'
+-
+-	vim.keymap.set('n', '&lt;CR&gt;', function()
+-		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-		local text = table.concat(lines, '\n')
+-		vim.api.nvim_win_close(winnr, false)
+-		callback(text)
+-	end, { buffer = bufnr })
++	-- Focus input window and enter insert mode
++	vim.api.nvim_get_current_win()
++	vim.cmd("startinsert")
++
++	-- local bufnr = vim.api.nvim_create_buf(false, true)
++	-- local width = math.min(80, vim.o.columns - 10)
++	-- local height = math.min(10, vim.o.lines - 10)
++
++	-- local winnr = vim.api.nvim_open_win(bufnr, true, {
++	-- 	relative = 'editor',
++	-- 	width = width,
++	-- 	height = height,
++	-- 	col = (vim.o.columns - width) / 2,
++	-- 	row = (vim.o.lines - height) / 2,
++	-- 	style = 'minimal',
++	-- 	border = 'rounded'
++	-- })
++
++	-- vim.bo[bufnr].buftype = 'nofile'
++	-- vim.bo[bufnr].bufhidden = 'wipe'
++	-- vim.bo[bufnr].swapfile = false
++	-- vim.bo[bufnr].filetype = 'text'
++
++	-- vim.keymap.set('n', '&lt;CR&gt;', function()
++	-- 	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++	-- 	local text = table.concat(lines, '\n')
++	-- 	vim.api.nvim_win_close(winnr, false)
++	-- 	callback(text)
++	-- end, { buffer = bufnr })
+ end
+ 
+ return M
+</pre>

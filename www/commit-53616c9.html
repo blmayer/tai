@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 53616c9</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 53616c9
+parent <a href=commit-cf1bae1.html>cf1bae1</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-01-03T21:40:21-03:00
+
+    improved prompt
+
+<a href=tree-53616c9.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index e361b1e..e2cfc70 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -31,7 +31,7 @@ You MUST adhere to the following criteria when executing the task:
+ - User instructions may overwrite the _CODING GUIDELINES_ section in this
+   developer message.
+ - Use `ls -R` or `find` to explore the project and gather context.
+-- If you find an agents file you MUST read it.
++- If you find an agents file you MUST read it, it contains important info.
+ - If completing the user's task requires writing or modifying files:
+   - Your code and final answer should follow these _CODING GUIDELINES_:
+     - Fix the problem at the root cause rather than applying surface-level
+@@ -71,8 +71,8 @@ content of a file from the file system, or if given, a range of lines. And
+ returns the content with numberred lines. To use it call the `read_file` with
+ the following example parameters:
+ {
+-	"file_path": "path/to/file",
+-	"range": "optional range of lines to read"
++	"file_path": "&lt;path/to/file&gt;",
++	"range": "&lt;optional range of lines to read&gt;"
+ }
+ Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
+ Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
+@@ -85,20 +85,18 @@ allows you to write/edit files, so pay careful attention to these instructions.
+ To use the `patch` tool, you should call the tool with the following
+ structure:
+ {
++	"name": "&lt;optional name for the patch&gt;",
+ 	"file": "&lt;path/to/file&gt;",
+ 	"diff": "&lt;contextual diff format&gt;"
+ }
+-
+ The contextual diff format is:
+ 
+ &lt;optional context (anchor) lines&gt;
+--&lt;old content&gt;
+-+&lt;new content&gt;
++&lt;operation&gt;&lt;content&gt;
+ 
+ or
+ 
+--&lt;old content&gt;
+-+&lt;new content&gt;
++&lt;operation&gt;&lt;content&gt;
+ &lt;optional context (anchor) lines&gt;
+ 
+ Context lines are only optional if the changes are unambiguous. If there's any
+@@ -112,7 +110,6 @@ Operations available are:
+ ### Examples:
+ 
+ Suppose the file contains:
+-
+ some text
+ more text
+ and more text
+@@ -136,31 +133,27 @@ Changing the first line:
+ +new text
+ more text
+ 
+-Invalid context: hunk has more than one context:
++Adding to Empty Files: all new lines MUST start with the `+` prefix:
+++first line
+++second line
+++third line
+ 
++Invalid context: hunk has more than one context:
+ some text
+ -more text
+ and more text
+ 
+ ### Important Notes:
+-- Ensure the context matches the file content and location to avoid errors.
++- Ensure the context matches the neighbouring content to avoid errors.
+   - Whitespace counts, it must be byte by byte correct.
+-  - Context is dangerous, use the least possible.
++  - Context is dangerous, use the minimum needed.
+ - If the patch fails, re-read the file and adjust the context accordingly.
+   - Don't repeat this more than one time.
+ - Send only one change per patch.
++- A patch must contain at leat one line with an operation `-` or `+`.
+ 
+-#### Adding to Empty Files
+-When adding content to an empty file, ALL new lines MUST start with the `+` prefix:
+-
+-+first line
+-+second line
+-+third line
+-
+-This is CRITICAL - without the `+` prefix, the patch will fail.
+-
+-#### Files with lines starting with + or -
+-In order to not confuse the parser escape the lines with \, for example:
++#### Escaping context lines starting with + or -
++In order to not confuse the parser escape the lines with `\`, for example:
+ 
+ - this is a list item
+ 
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index d00fcd2..e8fd3df 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -109,9 +109,7 @@ function M.request(model_config, msgs, format, callback)
+ 			local content = message.content
+ 			local fields = {}
+ 			if content and content ~= "" then
+-				log.debug("response content: " .. content)
+ 				if format == "json_object" then
+-					log.debug("parsing JSON content")
+ 					fields.content = vim.json.decode(content)
+ 					if not fields.content then
+ 						return callback(nil, "Failed to decode message content as JSON")
+</pre>

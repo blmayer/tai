@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai bb50daf</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit bb50daf
+parent <a href=commit-f8366b7.html>f8366b7</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-02T18:21:55-03:00
+
+    nvim: switched to ed format for diff:wq
+
+<a href=tree-bb50daf.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 7265156..8b0720f 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -1,7 +1,6 @@
+ local M = {}
+ local json = vim.json
+ local uv = vim.uv -- or vim.loop for Neovim &lt; 0.10
+-local mime = require("tai.mime")
+ 
+ local api_key = os.getenv("GROQ_API_KEY")
+ if not api_key then
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 925f1a7..dae4235 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -12,10 +12,11 @@ function M.toggle_chat_window()
+ end
+ 
+ function M.prompt_input()
++	local path = vim.fn.expand("%")
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
+ 		local result = project.process_request(input)
+-		ui.show_response(result)
++		ui.show_response(result, path)
+ 	end)
+ end
+ 
+@@ -31,33 +32,35 @@ function M.prompt_full_file()
+ 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+ 
+ 		local result = project.request_append_file(path, prompt)
+-		ui.show_response(result)
++		ui.show_response(result, path)
+ 	end)
+ end
+ 
+-function M.insert_with_full_file()
++function M.continue()
+ 	local path = vim.fn.expand("%")
+ 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+ 
+ 	local location = string.format("line %d, column %d", row, col)
+ 
+-	local prompt = string.format("Cursor is at %s. Return the correct continuation.", location)
++	local prompt = string.format("Cursor is at %s, user asked you to complete the code next to the cursor, return the **ONLY** the correct continuation.", location)
+ 
+ 	local result = project.request_append_file(path, prompt)
+-	ui.insert_response(result)
++	ui.insert_response(result.text, path)
+ end
+ 
+ function M.operator_send(type)
++	local path = vim.fn.expand("%")
+ 	local old_reg = vim.fn.getreg('"')
+ 	vim.cmd('normal! gv"zy')
+ 	local text = vim.fn.getreg("z")
+ 	vim.fn.setreg('"', old_reg)
+ 
+ 	local result = project.process_request(text)
+-	ui.show_response(result)
++	ui.show_response(result, path)
+ end
+ 
+ function M.operator_send_with_prompt(type)
++	local path = vim.fn.expand("%")
+ 	local old_reg = vim.fn.getreg('"')
+ 	vim.cmd('normal! gv"zy')
+ 	local text = vim.fn.getreg("z")
+@@ -66,7 +69,7 @@ function M.operator_send_with_prompt(type)
+ 	ui.input(function(input)
+ 		local full = input .. "\n\nSelected code:\n" .. text
+ 		local result = project.process_request(full)
+-		ui.show_response(result)
++		ui.show_response(result, path)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index c327fa4..9228192 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -17,35 +17,53 @@ Users will send coding tasks/questions, your goal is to fullfill them with succe
+ Use the summary of the project in the system prompt to guide you.
+ ONLY propose changes that solves the issue, don't suppose anything.
+ 
+-1. **Patches**: Use the patch field to propose code changes, the content **MUST** be a **VALID** diff file.
++#### Proposing Code Changes
++Use the patch field to propose code changes, the content **MUST** be **VALID** patch in ed script format (patch -e).
++  - To generate a patch you **NEED** to know the full content of the file.
+   - Add a small description of the changes in the text field.
+-  - Validate the patch so it can be applied with `patch -p0`.
+   - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+-Diff format (unified diff) is line-oriented:
+-  - Starts with --- old_file +++ new_file
+-  - @@ -old_start,old_count +new_start,new_count @@ for each hunk
+-  - Lines prefixed with - (removed), + (added), or space (unchanged)
+-  - Context lines (unchanged) provide anchor points
+-  - Each change is a contiguous block (hunk) with 3 lines of context by default
+-  - Use relative paths, LF line endings
+-2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
++  - Don't forget to add the `.` for each ed command and `w` at end.
++
++#### Commands
++Supply the list of commands to the executed on the user's machine in the `commands` field.
+   - Commands are run in a shell and their output will be sent to you.
+   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Use POSIX shell compliant scripting.
+   - Use this to request the info needed to complete the current task.
+   - Don't use commands for code changes, use the patch field.
+-3. **Plans**: If multi-step, use the `plan` field to add the steps of the plan.
++
++#### Planning
++If the task needs multi-steps, use the `plan` field to add the steps of the plan.
+   - This is a high level overview of the process of fullfiling the user's request.
+   - Use this part to keep track of the progress of more complex tasks.
+-4. **Text**: Supply concise user-facing text in the `text` field.
++  - Don't number steps or itemize
++
++#### User Facing Text
++Supply concise user-facing text in the `text` field.
+   - Use maximum of 80 characters per line.
+   - You can include ASCII tables, diagrams, art etc if needed.
+-5. **Single file changes**: Only propose changes if you have all info you need to complete the task.
++
++#### Single file changes
++Only propose changes if you have all info you need to complete the task.
+   - Propose a valid patch if you think the user wants, else you can walk the user throught it using text.
+-6. **Complex tasks**: Use a plan to analyse and execute chages, make smaller tasks.
++
++#### Complex tasks
++Use a plan to analyse and execute chages, make smaller tasks.
+   - If you need more information in order to fullfill a task request the user with by text or using available commands.
+   - Make sure you stick to the plan, let it clear to the user what step you are and what are the changes.
+   - Propose valid patches one file at a time.
++
++### Response format
++**ALWAYS** return a JSON object with the following format:
++{
++	"text": ...,
++	"plan": [...],
++	"patch": ...,
++	"commands": [{...}]
++}
++The only required field is text.
++
++**IMPORTANT**: Do not add anything outside of the JSON object such as formatting or code blocks.
+ 		]]
+ 	}
+ }
+@@ -62,7 +80,7 @@ For classes that have members/fields do the same in a nested fashion
+ ]]
+ 
+ local completion_prompt =
+-"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining, don't add any formatting. Line:\n"
++"You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+ 
+ local cache = ".tai-cache/"
+ local tai_root = nil
+@@ -71,36 +89,31 @@ local function run_async(fn)
+ 	local co = coroutine.create(fn)
+ 
+ 	local function step(...)
+-		local ok, wait_fn = coroutine.resume(co, ...)
++		local ok, result = coroutine.resume(co, ...)
+ 		if not ok then
+-			vim.notify("[tai] Coroutine error: " .. tostring(wait_fn), vim.log.levels.ERROR)
++			vim.notify("[tai] Coroutine error: " .. tostring(result), vim.log.levels.ERROR)
+ 			return
+ 		end
+-		if type(wait_fn) == "function" then
+-			wait_fn(step)
++		if type(result) == "function" then
++			result(step)
+ 		end
+ 	end
+ 
+ 	step()
+ end
+ 
+-local function async_sleep(ms, cb)
+-	local t = vim.uv.new_timer()
+-	t:start(ms, 0, function()
+-		t:stop()
+-		t:close()
+-		vim.schedule(cb) -- ensures callback runs on main thread
+-	end)
+-end
+-
+ local function await_send_raw(model, messages)
+-	return coroutine.yield(function(resume)
+-		async_sleep(2000, function()
+-			chat.send_raw(model, messages, function(reply)
+-				resume(reply)
+-			end)
++	local thread = coroutine.running()
++	if not thread then
++		vim.notify("[tai] Not in coroutine context", vim.log.levels.ERROR)
++		return nil
++	end
++	chat.send_raw_async(model, messages, function(reply)
++		vim.schedule(function()
++			coroutine.resume(thread, reply)
+ 		end)
+ 	end)
++	return coroutine.yield()
+ end
+ 
+ local function mkdir_p(dir)
+@@ -241,7 +254,7 @@ function M.request_append_file(filepath, prompt)
+ 
+ 	table.insert(history, {
+ 		role = "system",
+-		content = "File content for " .. filepath .. "\n\n" .. content,
++		content = "File content for " .. filepath .. " (numbered for your convenience)\n\n" .. content,
+ 		id = file_id
+ 	})
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 5d86b97..9c09ed0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -33,7 +33,7 @@ function M.toggle_output_window()
+ 	end
+ end
+ 
+-function M.show_response(fields)
++function M.show_response(fields, filename)
+ 	local bufnr = ensure_buf()
+ 
+ 	local content = ""
+@@ -62,7 +62,7 @@ function M.show_response(fields)
+ 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+ 		vim.schedule(function()
+ 			local patch = fields.patch
+-			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch) end,
++			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch, filename) end,
+ 				{})
+ 		end)
+ 	end
+@@ -147,8 +147,8 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
+-function M.apply_patch(patch)
+-	local f = io.popen("patch --dry-run -p0 &gt; /dev/null 2&gt;&amp;1", "w")
++function M.apply_patch(patch, filename)
++	local f = io.popen("patch --dry-run -p0 -e " .. filename .. " &gt; /dev/null 2&gt;&amp;1", "w")
+ 	f:write(patch)
+ 	local ok = f:close()
+ 
+@@ -157,14 +157,14 @@ function M.apply_patch(patch)
+ 		return
+ 	end
+ 
+-	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet", "w")
++	local real = io.popen("patch -p0 --no-backup-if-mismatch --fuzz=3 --ignore-whitespace --quiet -e -f " .. filename, "w")
+ 	real:write(patch)
+ 	real:close()
+ 	vim.api.nvim_command("checktime")
+ end
+ 
+ function M.run_commands(cmds)
+-	local output
++	local output = ""
+ 
+ 	for _, cmd in ipairs(cmds) do
+ 		if not command.validate(cmd) then
+</pre>

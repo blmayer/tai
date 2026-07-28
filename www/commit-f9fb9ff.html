@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f9fb9ff</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f9fb9ff
+parent <a href=commit-d30e879.html>d30e879</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-12T19:07:07-03:00
+
+    nvim: improved tool calls and prompts
+
+<a href=tree-f9fb9ff.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 1182d71..361d7d8 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -6,6 +6,8 @@ local M = {}
+ local config = require('tai.config')
+ local log = require('tai.log')
+ local client = require('tai.agents.client')
++local ui = require('tai.ui')
++local tools = require('tai.tools')
+ 
+ if not config.root then
+ 	return M
+@@ -33,6 +35,8 @@ INSTRUCTIONS
+ You will receive a list of implementation instructions, your job is to generate
+ a set of instructions to the patcher agent in order to implement them
+ successfully in the user's codebase. 
++Only use the patcher to implement code changes that are complete, don't issue
++partial solutions
+ 
+ You have access to other agents that will help you fullfill the user's goal:
+ - patcher: takes code changes and formats them in the correct format.
+@@ -41,13 +45,17 @@ You have access to other agents that will help you fullfill the user's goal:
+ COMPLEX TASKS
+ Sometimes the task will be too complex to be solved at once, in those cases you
+ can inform the writer of the need, you can also ask the user to run commands
+-on its machine and send you the output. And add plans.
++on its machine to send you the output.
+ 
+ COMMANDS
+ Supply the list of commands to be executed on the user's machine for the writer agent.
+   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Don't use commands for code changes, use the patcher agent.
+ 
++TOOLS
++You also have access to tools that will help you implement the code changes:
++- read_file &lt;file_name&gt;: will send you the content of the file &lt;file_name&gt;
++
+ RESPONSE FORMAT
+ After figuring out the needed code changes generate intructions to the patcher
+ agent so it can correctly apply the changes in the original files. The patcher
+@@ -57,19 +65,52 @@ file name, line numbers and the new code.
+ To the writer agent you can pass intructions about what the user needs to do, eg. executing commands.
+ Return only the JSON object, no markdown or code fences (```) in the format:
+ {
+-	"patcher": "instructions to the patcher agent (required)",
+-	"writer": "instructions or text to the writer agent (optional)"
++	"patcher": "instructions to the patcher agent",
++	"writer": "instructions or text to the writer agent"
+ }
+ ]]
+ 
++local response_format = {
++	name = "coder response",
++	type = "object",
++	properties = {
++		patcher = {
++			description = "Intructions for the patcher agent",
++		      	type = "string",
++		},
++		writer = {
++			description = "Text for the writer agent",
++			type = "string",
++		},
++	},
++}
++
+ function M.task(task, callback)
+ 	log.info("Coder executing task: " .. task)
++	local messages = {
++		{ role = "system", content = M.system_prompt },
++		{ role = "user", content = task },
++	}
+ 	provider.request(
+ 		config.coder,
+-		M.system_prompt,
+-		task,
+-		"json",
++		messages,
++		response_format,
+ 		function(data, err)
++			if data.tools then
++				ui.show_tool_calls(data.tools)
++				local out = tools.run(data.tools)
++				table.insert(messages, { role = "tool", content = out })
++
++				provider.request(
++					config.coder,
++					messages,
++					response_format,
++					function(data, err)
++						callback(data, err)
++					end
++				)
++				return
++			end
+ 			callback(data, err)
+ 		end
+ 	)
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index d0a1901..d96d9a2 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -31,13 +31,14 @@ Agents will send you text, that can be code changes, text for the user, plans
+ and commands to be executed.
+ Your goal is to gather them and format them correctly.
+ 
+-Supply concise user-facing text in the `text` field.
++Supply concise and friendly user-facing text in the `text` field.
+ - Use maximum of 80 characters per line.
+ - You can include ASCII tables, diagrams, art etc if needed.
+ - Format the commands and plan as lists on the respective fields.
+ 
+ RESPONSE FORMAT
+-Return only a JSON object, no code fences(```), no markdown, with the format:
++Return ONLY a JSON object, no code fences(```), no file type indication,
++no markdown, with the format:
+ {
+        "text": string,
+        "plan": []string,
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index b4a4ccf..121f7a4 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -10,6 +10,7 @@ local patcher = require("tai.agents.patcher")
+ local writer = require("tai.agents.writer")
+ local command = require("tai.command")
+ local ui = require("tai.ui")
++local tools = require("tai.tools")
+ 
+ local completion_prompt =
+ "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+@@ -24,31 +25,6 @@ function M.init()
+ 	agents.init()
+ end
+ 
+-local function run_tool_calls(cmds)
+-	log.debug("Running tools")
+-	local output = ""
+-
+-	for _, cmd in ipairs(cmds) do
+-		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
+-		local args = vim.json.decode(cmd["function"].arguments)
+-		local file = io.open(args.file_path, "r")
+-		if file then
+-			local content = file:read("*all")
+-			file:close()
+-
+-			local numbered_lines = {}
+-			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
+-				table.insert(numbered_lines, string.format("%d: %s", i, line))
+-			end
+-			local numbered_content = table.concat(numbered_lines, "\n")
+-			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
+-		else
+-			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
+-		end
+-	end
+-
+-	return output
+-end
+ 
+ local function run_commands(cmds)
+ 	local output = ""
+@@ -112,7 +88,7 @@ local function handle_planner_reply(reply)
+ 
+ 	if reply.tools then
+ 		ui.show_tool_calls(reply.tools)
+-		local out = run_tool_calls(reply.tools)
++		local out = tools.run(reply.tools)
+ 		reply = planner.plan("Result of tool calls:\n" .. out, function(data, err) end)
+ 		goto continue
+ 	end
+@@ -126,6 +102,7 @@ local function handle_planner_reply(reply)
+ 		return
+ 	end
+ 
++	-- planner called coder
+ 	handle_coder_req(
+ 		reply.coder,
+ 		function(res, err)
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+new file mode 100644
+index 0000000..78b5214
+--- /dev/null
++++ b/lua/tai/tools.lua
+@@ -0,0 +1,31 @@
++local M = {}
++
++local log = require('tai.log')
++
++function M.run(cmds)
++	log.debug("Running tools")
++	local output = ""
++
++	for _, cmd in ipairs(cmds) do
++		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
++		local args = vim.json.decode(cmd["function"].arguments)
++		local file = io.open(args.file_path, "r")
++		if file then
++			local content = file:read("*all")
++			file:close()
++
++			local numbered_lines = {}
++			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
++				table.insert(numbered_lines, string.format("%d: %s", i, line))
++			end
++			local numbered_content = table.concat(numbered_lines, "\n")
++			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
++		else
++			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
++		end
++	end
++
++	return output
++end
++
++return M
+</pre>

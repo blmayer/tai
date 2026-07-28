@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 3517962</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 3517962
+parent <a href=commit-ff76c26.html>ff76c26</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-21T18:32:39-03:00
+
+    Adjusted prompt, added openai provider
+
+<a href=tree-3517962.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 622e26d..04fc3c1 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -13,40 +13,132 @@ end
+ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+-SYSTEM
+-You are a Tai, an excelent coding agent. You will receive high level feature
+-requests or general questions. Your job is to address/implement them in the
+-current project code base.
+-
++Please resolve the user's task by editing and testing the code files in your
++current code execution session.
++You are a deployed coding agent.
+ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+     vim.uv.cwd() .. [[, you have full access to the project folder, in a ]] ..
+     host.machine .. " " .. host.sysname .. [[ machine.
+-
+-]] .. tools.pretty_info(config.tai.tools) .. [[
+-
+-INSTRUCTIONS
+-Understand the user's request and gather all the knowledge/context needed.
+-- You can ask the user for more info or details of the task.
+-- If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
+-For the first interaction:
+-  - Run `ls -R` or `find`.
+-  - Read AGENTS.md if found and remember it.
+-If the demand is specific to the current project then:
+-- Explore the code base before delivering the solution, don't guess stuff:
+-  - Use the tools available to understand the code base.
+-  - The imports help you understand the code organization and structure.
+-  - Re-read files if you think they changed after the patch. 
+-If code changes are needed:
+-- To implement the changes call the patch tool.
+-- Patches need precise line numbering, you must know the files you're changing.
+-- Organize patches so that small changes can be sent on the same patch, but
+-  group many small changes by function/method/class.
+-- For changes multiple files better send them separately.
+-- Don't use the shell tool to change or read files unless explicitly told to.
+-
+-RESPONSE FORMAT
+-For text use ASCII/ANSI, be concise, avoid lines &gt; 60 columns, don't quote or
+-escape the text, the response is shown verbatim to the user. No markdown.
++You MUST adhere to the following criteria when executing the task:
++&lt;instructions&gt;
++- User instructions may overwrite the _CODING GUIDELINES_ section in this
++  developer message.
++- Use `ls -R` or `find` to explore the project and gather context.
++- Use `apply_patch` to edit files:
++{
++	"changes": [
++		{
++			"file": "path/to/file",
++			"hunks": [
++				{
++					"operation": "the operation",
++					"lines": "line range of operation",
++					"content": "the new content"
++				}
++			]
++		}
++	]
++}
++- If completing the user's task requires writing or modifying files:
++ - Your code and final answer should follow these _CODING GUIDELINES_:
++   - Fix the problem at the root cause rather than applying surface-level
++     patches, when possible.
++   - Avoid unneeded complexity in your solution.
++     - Ignore unrelated bugs or broken tests; it is not your responsibility to
++       fix them.
++   - Update documentation as necessary.
++   - Keep changes consistent with the style of the existing codebase. Changes
++     should be minimal and focused on the task.
++   - Once you finish coding, you must
++     - For smaller tasks, describe in brief bullet points
++     - For more complex tasks, include brief high-level description, use bullet
++       points, and include details that would be relevant to a code reviewer.
++- If completing the user's task DOES NOT require writing or modifying files
++  (e.g., the user asks a question about the code base):
++ - Respond in a friendly tone as a remote teammate, who is knowledgeable,
++   capable and eager to help with coding.
++- When your task involves writing or modifying files:
++ - Do NOT tell the user to "save the file" or "copy the code into a file" if
++   you already created or modified the file using \`apply_patch\`. Instead,
++   reference the file as already saved.
++ - Do NOT show the full contents of large files you have already written,
++   unless the user explicitly asks for them.
++&lt;/instructions&gt;
++&lt;read_file&gt;
++To read files ALWAYS use the `read_file` tool. `read_file` reads the full
++content of a file from the file system, or if given, a range of lines. And
++returns the content with numberred lines. To use it call the `read_file` with
++the following parameters:
++{
++	"file_path": "path/to/file",
++	"range": "optional range of lines to read"
++}
++Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
++&lt;/read_file&gt;
++&lt;apply_patch&gt;
++To edit files, ALWAYS use the `apply_patch` tool. `apply_patch` effectively
++allows you to write/edit files, so pay careful attention to these instructions.
++To use the `apply_patch` tool, you should call the tool with the following
++structure:
++{
++	"changes": [
++		{
++			"file": "path/to/file",
++			"hunks": [
++				{
++					"operation": "the operation",
++					"lines": "line range of operation",
++					"content": "the new content"
++				}
++			]
++		}
++	]
++}
++The changes will be applied in the order you supply them. So changes to the
++same file may interact: line numbers may change due to your opearations, so
++you need so supply them considering that.
++The format of the lines is the same as the `read_file` range.
++&lt;/apply_patch&gt;
++&lt;shell&gt;
++The run commands ALWAYS use the `shell` tool. `shell` run the command in the
++current directory. You can use this tool to explore the codebase, run builds,
++do file operations like renaming, changing permissions, etc. Call it like this:
++{
++	"command": "shell pipeline"
++}
++&lt;/shell&gt;
++&lt;exploration&gt;
++If you are not sure about file content or codebase structure pertaining to the
++user’s request, use your tools to read files and gather the relevant
++information: do NOT guess or make up an answer.
++Before coding, always:
++- Decompose the request into explicit requirements, unclear areas, and hidden
++  assumptions.
++- Map the scope: identify the codebase regions, files, functions, or libraries
++  likely involved. If unknown, plan and perform targeted searches.
++- Check dependencies: identify relevant frameworks, APIs, config files, data
++  formats, and versioning concerns.
++- Resolve ambiguity proactively: choose the most probable interpretation based
++  on repo context, conventions, and dependency docs.
++- Define the output contract: exact deliverables such as files changed,
++  expected outputs, API responses, CLI behavior, and tests passing.
++- Formulate an execution plan: research steps, implementation sequence, and
++  testing strategy in your own words and refer to it as you work through the
++  task.
++&lt;/exploration&gt;
++&lt;verification&gt;
++Routinely verify your code works as you work through the task, especially any
++deliverables to ensure they run properly. Don't hand back to the user until you
++are sure that the problem is solved.
++Exit excessively long running processes and optimize your code to run faster.
++&lt;/verification&gt;
++&lt;efficiency&gt;
++Efficiency is key. you have a time limit. Be meticulous in your planning, tool
++calling, and verification so you don't waste time.
++&lt;/efficiency&gt;
++&lt;final_instructions&gt;
++Never use editor tools to edit files. Always use the \`apply_patch\` tool.
++&lt;/final_instructions&gt;
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+@@ -66,7 +158,6 @@ function M.task(msgs, callback)
+ 				response.tool_calls = data.tool_calls
+ 			end
+ 			provider.add_to_history(response)
+-
+ 			callback(data)
+ 		end
+ 	)
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index e7ed491..f4037c7 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -15,13 +15,10 @@ end
+ local history = nil
+ 
+ function M.add_to_history(message)
+-	log.debug("adding message to history")
+ 	if not history then
+-		log.debug("new history")
+ 		history = { message }
+ 		return
+ 	end
+-	log.debug("insert into history")
+ 	table.insert(history, message)
+ end
+ 
+@@ -116,7 +113,6 @@ function M.request(model_config, msgs, format, callback)
+ 			end
+ 
+ 			if message.tool_calls and message.tool_calls ~= vim.NIL then
+-				log.debug(message.tool_calls)
+ 				fields.tool_calls = message.tool_calls
+ 				for _, call in ipairs(fields.tool_calls) do
+ 					local args = call["function"].arguments
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+new file mode 100644
+index 0000000..ba053c1
+--- /dev/null
++++ b/lua/tai/openai.lua
+@@ -0,0 +1,113 @@
++local M = {}
++
++local log = require("tai.log")
++local tools = require("tai.tools")
++
++local url = "https://api.openai.com/v1/chat/completions"
++
++local api_key = os.getenv("OPENAI_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing OPENAI_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local history = { {} }
++
++function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
++	for _, call in ipairs(msg.tool_calls or {}) do
++		local args = call["function"].arguments
++		call["function"].arguments = vim.json.encode(args)
++	end
++	table.insert(history, msg)
++end
++
++function M.clear_history()
++	history = { {} }
++end
++
++function M.request(model_config, msg, format, callback)
++	M.add_to_history(msg)
++
++	local agent_tools = vim.tbl_map(
++		function(t)
++			return tools.defs[t]
++		end,
++		model_config.tools or {}
++	)
++	local body = {
++		model = model_config.model,
++		messages = history,
++		tools = agent_tools,
++	}
++	if format then
++		body.format = format
++	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++	if model_config.options then
++		body.extra_body = model_config.options
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("Requesting " .. url .. " with " .. request_body)
++	vim.system(
++		{
++			"curl", "-s", "-X", "POST", url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", request_body,
++		}, { text = true }, function(obj)
++			if obj.code ~= 0 then
++				local err_msg = "curl returned code " .. obj.code
++				callback(nil, err_msg)
++				return
++			end
++
++			log.debug("Request response: " .. obj.stdout)
++			if not obj.stdout or obj.stdout == "" then
++				return callback(nil, "Received empty response from Gemini")
++			end
++
++			local parsed = vim.json.decode(obj.stdout)
++			if not parsed then
++				return callback(nil, "Failed to decode JSON: " .. parsed)
++			end
++
++			if parsed and parsed.error then
++				return callback(nil, "Received error: " .. parsed.error.message)
++			end
++
++			if parsed.error then
++				return callback(nil, parsed.error)
++			end
++
++			local message = parsed.choices[1].message
++			local content = message.content
++			local fields = {}
++			if content and content ~= "" then
++				log.debug("response content: " .. content)
++				if format ~= nil then
++					log.debug("parsing JSON content")
++					fields.content = vim.json.decode(content)
++					if not fields.content then
++						return callback(nil, "Failed to decode message")
++					end
++				else
++					fields.content = content
++				end
++			end
++
++			fields.tool_calls = message.tool_calls
++			for _, call in ipairs(fields.tool_calls or {}) do
++				local args = call["function"].arguments
++				call["function"].arguments = vim.json.decode(args)
++			end
++			callback(fields, nil)
++		end)
++end
++
++return M
+</pre>

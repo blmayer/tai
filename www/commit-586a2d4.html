@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 586a2d4</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 586a2d4
+parent <a href=commit-ed3fa2a.html>ed3fa2a</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-08T20:26:14-03:00
+
+    nvim: improved prompts
+
+<a href=tree-586a2d4.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 9ed65d1..97eb14b 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -64,6 +64,7 @@ function M.task(task, callback)
+ 	log.info("Coder executing task: " .. task)
+ 	provider.request(
+ 		config.coder_model,
++		config.coder_thinks,
+ 		M.system_prompt,
+ 		task,
+ 		"json",
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+index 699d9d5..24e414b 100644
+--- a/lua/tai/agents/patcher.lua
++++ b/lua/tai/agents/patcher.lua
+@@ -125,6 +125,7 @@ function M.create_patch(changes, callback)
+ 
+ 	provider.request(
+ 	    config.patcher_model,
++	    config.patcher_thinks,
+ 	    M.system_prompt,
+ 	    changes,
+ 	    nil,
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index 090d4b9..da8d41f 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -67,6 +67,7 @@ function M.plan(prompt, callback)
+ 	log.info("Planner received prompt: " .. prompt)
+ 	provider.request(
+ 		config.planner_model,
++		config.planner_thinks,
+ 		M.system_prompt,
+ 		prompt, 
+ 		"json",
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index 883eb65..ab33fd7 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -37,20 +37,21 @@ Supply concise user-facing text in the `text` field.
+ - Format the commands and plan as lists on the respective fields.
+ 
+ RESPONSE FORMAT
+-**ALWAYS** return a JSON object with the following format:
++Return only a JSON object, no code fences(```), no markdown, with the format:
+ {
+        "text": string,
+        "plan": []string,
+-       "patch": string,
+        "commands": []string
+ }
+-The only required field is text.
++The only required field is text. Don't add fields if they are empty. Don't
++send plans with only 1 step.
+ ]]
+ 
+ function M.write(text, callback)
+     log.info("Writer received prompt: " .. text)
+ 	provider.request(
+ 		config.writer_model,
++		config.writer_thinks,
+ 		M.system_prompt,
+ 		text,
+ 		"json",
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 3113ec7..4d28a64 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -53,6 +53,11 @@ if file then
+ 			M.coder_model = data.coder_model
+ 			M.patcher_model = data.patcher_model
+ 			M.writer_model = data.writer_model
++
++			M.planner_thinks = data.planner_thinks or false
++			M.coder_thinks = data.coder_thinks or false
++			M.patcher_thinks = data.patcher_thinks or false
++			M.writer_thinks = data.writer_thinks or false
+ 		end
+ 		if data.allowed_commands then
+ 			M.allowed_commands = {}
+diff --git a/lua/tai/providers/local.lua b/lua/tai/providers/local.lua
+index a61fa0b..e5adef7 100644
+--- a/lua/tai/providers/local.lua
++++ b/lua/tai/providers/local.lua
+@@ -49,7 +49,7 @@ local planner_response_format = {
+ 
+ local history = { }
+ 
+-function M.request(model, system, prompt, format, callback)
++function M.request(model, think, system, prompt, format, callback)
+ 	local url = url .. "/chat"
+ 	local msg = { role = "user", content = prompt }
+ 	table.insert(history, msg)
+@@ -61,12 +61,14 @@ function M.request(model, system, prompt, format, callback)
+ 			unpack(history),
+ 		},
+ 		stream = false,
+-		think = true,
+ 		-- tools = agents.tools,
+ 	}
+ 	if format then
+ 		body.response_format = format
+ 	end
++	if think ~= nil then
++		body.think = think
++	end
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. url .. " with " .. request_body)
+@@ -96,8 +98,14 @@ function M.request(model, system, prompt, format, callback)
+ 			return { error = "[tai] Received error: " .. parsed[1].error.message }
+ 			end
+ 
++		if parsed.error then
++			table.insert(history, { role = "assistant", content = parsed.error })
++			return { error = parsed.error }
++		end
++
+ 		local message = parsed.message.content
+ 		if not format then
++			table.insert(history, { role = "assistant", content = message })
+ 			return message
+ 		end
+ 
+@@ -109,8 +117,8 @@ function M.request(model, system, prompt, format, callback)
+ 				vim.notify("[tai] Failed to decode message: " .. message, vim.log.levels.ERROR)
+ 				return { error = "[tai] Failed to decode message: " .. message }
+ 			end
++			table.insert(history, { role = "assistant", content = fields[1] })
+ 		end
+-		table.insert(history, { role = "assistant", content = message })
+ 		callback(fields, nil)
+ 	end)
+ end
+</pre>

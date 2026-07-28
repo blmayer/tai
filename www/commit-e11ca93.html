@@ -1,0 +1,1688 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai e11ca93</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit e11ca93
+parent <a href=commit-5c721a2.html>5c721a2</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-06-12T11:21:32-03:00
+
+    added testing framework, tools and fixes
+
+    - added a better way to test the project, this includes mocks and test files
+    - added notes and todos tools for better support for long tasks
+    - fixed throttling
+    - updated readme and www pages
+
+<a href=tree-e11ca93.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..b655c70
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,31 @@
++# Makefile for Tai project test framework
++
++# Default target
++all: test lint
++
++# Install test dependencies via LuaRocks
++install_deps:
++	@echo "Installing Busted and Luacheck..."
++	luarocks install busted
++	luarocks install luacheck
++
++# Run Busted tests
++.PHONY: test
++
++test:
++	@echo "Running Busted tests..."
++	busted lua/tai/spec
++
++# Run Luacheck linting
++.PHONY: lint
++
++lint:
++	@echo "Running Luacheck..."
++	luacheck lua/tai
++
++# Clean test artifacts
++.PHONY: clean
++
++clean:
++	@echo "Cleaning test artifacts..."
++	rm -rf lua/tai/spec/__busted_output
+diff --git a/README.md b/README.md
+index 4091ccf..1e1cd95 100644
+--- a/README.md
++++ b/README.md
+@@ -10,37 +10,38 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StepFun, Local (Ollama) and Minimax APIs for processing requests. Make sure to set the correct environment variable:
+-
+-       GROQ_API_KEY=your_api_key_here
+-
+-for Groq, or:
+-
+-       GEMINI_API_KEY=your_api_key_here
+-
+-for Gemini, or:
+-
+-       ZAI_API_KEY=your_api_key_here
+-
+-for Z.AI, or:
+-
+-       OPENAI_API_KEY=your_api_key_here
+-
+-for OpenAI, or:
+-
+-       MINIMAX_API_KEY=your_api_key_here
+-
+-for Minimax, or configure a local Ollama server (localhost:11434).
+-
+-
+-## Integrated workflow
+-
+-Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
+-
+-- Opens a side panel to display input and responses
+-- Minimal, dependency-free Lua code for Neovim
+-- Can run commands with safety validation
+-- Follows plans for complex tasks
++Tai supports the following providers. Set the corresponding environment variable for your chosen provider:
++
++| Provider | Config value | Environment variable |
++|---|---|---|
++| Gemini | `gemini` | `GEMINI_API_KEY` |
++| Groq | `groq` | `GROQ_API_KEY` |
++| Minimax | `minimax` | `MINIMAX_API_KEY` |
++| Mistral | `mistral` | `MISTRAL_API_KEY` |
++| Ollama (local) | `ollama` | — |
++| llama.cpp (local) | `llama_cpp` | — |
++| OpenAI | `openai_responses` | `OPENAI_API_KEY` |
++| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
++| StepFun | `stepfun` | `STEPFUN_API_KEY` |
++| xAI | `xai` | `XAI_API_KEY` |
++| Z.AI | `z_ai` | `ZAI_API_KEY` |
++| Custom | `custom` | — |
++
++Local providers (Ollama, llama.cpp) don't need an API key. The custom provider uses the URL from `options.url` in your `.tai` file.
++
++
++## Features
++
++- **Side panel UI** — responses display in a split buffer with code folding
++- **Planner + Coder agents** — an architect agent plans tasks, a coder agent implements them
++- **Tool use** — agents can read/write files, run shell commands, and send images
++- **In-memory todos &amp; notes** — agents track progress and record discoveries during long tasks
++- **Rate limiting** — configurable requests-per-minute (`rpm`) and tokens-per-minute (`tpm`)
++- **Streaming** — optional streaming responses for real-time output
++- **Extended thinking** — reasoning/thinking support for compatible models
++- **Provider tools** — server-side tools like `web_search` (provider-dependent)
++- **Safety validation** — shell commands go through an allow-list before execution
++- **Minimal, dependency-free** Lua code for Neovim
+ 
+ 
+ ## Installation
+@@ -117,39 +118,66 @@ and load it in your `init.lua`:
+ 
+ ## Project Configuration
+ 
+-tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
+-
+-- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
+-- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
+-- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
+-- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
+-- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
+-- `think`: Enable extended thinking/reasoning for models that support it.
+-- `system_prompt`: Custom system prompt to override the default agent instructions.
+-- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
+-- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
++Tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
++
++| Option | Type | Default | Description |
++|---|---|---|---|
++| `model` | string | — | Model used for chat completions (e.g., `"grok-4.3"`, `"gemini-2.0-flash"`) |
++| `provider` | string | — | API provider (see Providers table above) |
++| `options` | object | `{}` | Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`) |
++| `provider_tools` | array | `nil` | Provider-side tools (e.g., `["web_search"]`) |
++| `use_tools` | boolean | `true` | Enable/disable agent tools (read, write, edit, shell, todos, notes) |
++| `think` | string | `nil` | Enable extended thinking/reasoning (`"low"`, `"medium"`, `"high"`) |
++| `stream` | boolean | `false` | Enable streaming responses for real-time output |
++| `rpm` | number | `60` | Rate limit: max requests per minute |
++| `tpm` | number | `nil` | Rate limit: max tokens per minute |
++| `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
++| `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
++| `allowed_commands` | object | (see below) | Override allowed shell commands |
++
++Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+ 
+ Example `.tai` file:
+ 
+ ```json
+ {
+-	"provider": "groq",
+-	"model": "llama-3.1-70b-versatile",
++	"provider": "xai",
++	"model": "grok-4.3",
+ 	"options": {
+ 		"temperature": 0.7,
+ 		"max_tokens": 4096
+ 	},
++	"stream": true,
+ 	"use_tools": true,
+-	"system_prompt": "You are a senior python programmer. Always write tests.",
+-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
++	"rpm": 30,
++	"custom_prompt": "Prefer using rust over python for performance-critical code.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+-        "make": true
+-    }
++		"make": true
++	}
+ }
+ ```
+ 
++## Agent Tools
++
++Tai agents have access to the following tools:
++
++| Tool | Available to | Description |
++|---|---|---|
++| `read` | Planner, Coder | Read file contents with optional line range |
++| `shell` | Planner, Coder | Run shell commands (allow-listed) |
++| `edit` | Coder | Edit existing files via old/new text replacement |
++| `write` | Coder | Create new files |
++| `send_image` | Planner, Coder | Send images for visual analysis |
++| `coder_agent` | Planner | Delegate implementation to the coder agent |
++| `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
++| `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
++
++The **todos** tool supports actions: `add`, `update`, `list`. Items have statuses: `pending`, `in_progress`, `done`, `cancelled`.
++
++The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
++
+ ## Screenshots
+ 
+ - ![tai.nvim in action](www/screenshot.png)
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index d5d99e5..856d635 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -27,6 +27,34 @@ You can use tools to help on your task.
+   calls.
+ - Be EXTREMELY CAREFULL with git commands, e.g. `git restore` can destroy work
+   previous to yours.
++
++### Progress Tracking (todos &amp; notes)
++
++For any task with **3 or more steps**, you MUST use the `todos` and `notes`
++tools to stay organized. Follow this strategy:
++
++1. **At the start**: Use `todos` (action: "add") to break the task into steps.
++   Use `notes` (action: "write") to record the overall goal and any context.
++
++2. **Before starting a step**: Use `todos` (action: "update") to mark it
++   "in_progress". Only one item should be in_progress at a time.
++
++3. **After completing a step**: Use `todos` (action: "update") to mark it
++   "done" immediately — never batch completions.
++
++4. **After a discovery**: When you learn something important from a tool call
++   (e.g. file structure, error output, a key decision), use `notes`
++   (action: "append") to record it. This prevents losing context.
++
++5. **Periodically**: Use `todos` (action: "list") to review remaining work
++   after completing a step or before deciding what to do next.
++
++6. **On new findings**: If you discover additional work is needed, use `todos`
++   (action: "add") to add new items rather than forgetting them.
++
++The `notes` tool is your scratchpad — use it to record: key file paths found,
++decisions made, patterns observed, error messages, and anything you'd want to
++remember later in a long task.
+ ]]
+ 
+ M.planner_system_prompt = [[
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index da0833b..8b7edb0 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -19,6 +19,8 @@ log.debug("Root is " .. M.root)
+ 
+ -- Provider-side tools (e.g., web_browser for OpenAI)
+ M.provider_tools = nil
++M.rpm = 60
++M.tpm = nil
+ 
+ -- Default allowed shell commands
+ M.default_allowed_commands = {
+@@ -73,7 +75,8 @@ function M.reload()
+ 	M.provider_tools = data.provider_tools
+ 	M.system_prompt = data.system_prompt or nil
+ 	M.custom_prompt = data.custom_prompt or nil
+-	M.rpm = data.rpm or 60  -- Default to 60 if not provided
++	M.rpm = data.rpm or 60
++	M.tpm = data.tpm
+ 
+ 	return true
+ end
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 69e0e59..121c585 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -20,6 +20,7 @@ function M.reload(opts)
+ 		return
+ 	end
+ 	ui.update_chat_name()
++	ui.update_input_name()
+ 	vim.notify("tai: config reloaded", vim.log.levels.INFO)
+ end
+ 
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index 3d5c6ae..ea37b4a 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -5,34 +5,192 @@ local common = require("tai.provider_common")
+ local config = require("tai.config")
+ 
+ -- Rate limiting variables
+-local request_tokens = {}  -- Queue of {timestamp, tokens_used} pairs
++local request_tokens = {}  -- Queue of {timestamp, tokens_used} pairs (one entry per request attempt)
++local pending_timers = {}
+ 
+--- Helper function to clean old timestamps
++-- Helper function to clean old timestamps outside the 1-min window
+ local function cleanup_old_timestamps()
+-    local current_time = os.time()
+-    local window_seconds = 60  -- 1-minute window
+-    while #request_tokens &gt; 0 and (current_time - request_tokens[1][1] &gt; window_seconds) do
+-        table.remove(request_tokens, 1)  -- Remove old entries
+-    end
++	local current_time = os.time()
++	local window_seconds = 60
++	while #request_tokens &gt; 0 and (current_time - request_tokens[1][1] &gt; window_seconds) do
++		table.remove(request_tokens, 1)
++	end
+ end
+ 
+-    -- Function to check and enforce rate limiting
+-    local function check_rate_limit(max_tokens)
+-        cleanup_old_timestamps()  -- Remove old timestamps
+-        local total_tokens = 0
+-        local total_requests = 0
+-        for _, entry in ipairs(request_tokens) do
+-            total_tokens = total_tokens + entry[2]  -- Sum tokens in the current window
+-            total_requests = total_requests + 1
+-        end
+-        if config.rpm and total_requests &gt;= config.rpm then
+-            return false, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
+-        end
+-        if max_tokens and total_tokens &gt;= max_tokens then
+-            return false, "Token rate limit exceeded: " .. max_tokens .. " tokens per minute allowed"
+-        end
+-        return true
+-    end
++-- Rough token estimator for provisional cost of an outgoing request (based on the
++-- messages being sent). This lets us count the "ongoing" request in the tpm window
++-- immediately at dispatch time. We correct it with the real usage when the response
++-- arrives.
++local function estimate_tokens_from_messages(msgs)
++	if not msgs then return 1500 end
++	local chars = 0
++	for _, msg in ipairs(msgs) do
++		local c = msg.content
++		if type(c) == "string" then
++			chars = chars + #c
++		elseif type(c) == "table" then
++			for _, part in ipairs(c) do
++				if type(part) == "table" and part.text then
++					chars = chars + #part.text
++				elseif type(part) == "string" then
++					chars = chars + #part
++				end
++			end
++		end
++	end
++	-- Over-estimate (smaller divisor + headroom) + fixed overhead for tool schemas
++	-- (which are sent on every call when use_tools) to be safer against 429s on
++	-- large contexts (e.g. "read" injecting big file for the next call).
++	-- The provisional is used in the tpm decision *for this call itself*.
++	-- Real usage from provider corrects the entry.
++	local prompt_est = math.ceil(chars / 3) + 1200
++	local tools_overhead = (config.use_tools ~= false) and 2500 or 0
++	return math.max(2000, prompt_est + tools_overhead)
++end
++
++-- When we have a response (success or error) for a dispatched call, commit the
++-- real usage if known, or on rate-limit errors bump the recorded cost so that
++-- subsequent decisions are more conservative (we under-estimated or the provider
++-- was stricter than our client tpm).
++local function commit_call_cost(entry, usage, err_msg)
++	if not entry then return end
++	if usage and usage &gt; 0 then
++		entry[2] = usage
++		return
++	end
++	if err_msg and type(err_msg) == "string" then
++		local lower = err_msg:lower()
++		if lower:find("rate") or lower:find("429") or lower:find("too many") or lower:find("limit") then
++			entry[2] = math.max(entry[2] or 0, 10000)
++		end
++	end
++end
++
++-- Compute how many ms we need to wait (if any) before the next request can be sent
++-- without exceeding rpm or the given max_tokens (tpm). Returns 0 if safe now.
++-- additional_cost: provisional estimate for the call we're *about to* make (so we
++-- account for the ongoing request's own tokens in this decision).
++local function get_required_wait_ms(max_tokens, additional_cost)
++	cleanup_old_timestamps()
++	local total_tokens = 0
++	local total_requests = #request_tokens
++	for _, entry in ipairs(request_tokens) do
++		total_tokens = total_tokens + (entry[2] or 0)
++	end
++	if additional_cost then
++		total_tokens = total_tokens + additional_cost
++	end
++	local now = os.time()
++	local wait_s = 0
++
++	if config.rpm and total_requests &gt;= config.rpm then
++		local to_drop = total_requests - config.rpm + 1
++		if to_drop &gt; 0 and request_tokens[to_drop] then
++			wait_s = math.max(wait_s, (request_tokens[to_drop][1] + 60 - now) + 1)
++		end
++	end
++
++	if max_tokens and total_tokens &gt;= max_tokens then
++		local excess = total_tokens - max_tokens + 1
++		local acc = 0
++		for _, entry in ipairs(request_tokens) do
++			acc = acc + (entry[2] or 0)
++			if acc &gt;= excess then
++				wait_s = math.max(wait_s, (entry[1] + 60 - now) + 1)
++				break
++			end
++		end
++	end
++
++	if wait_s &lt;= 0 then return 0 end
++	return math.max(0, math.ceil(wait_s * 1000))
++end
++
++-- Check limits and record attempt *only if safe right now*.
++-- On success returns the specific rate entry table for this request (so its response
++-- handler can precisely fill in the token count, even if responses arrive out-of-order).
++-- Returns nil, err if a limit is hit.
++local function check_and_record_request(max_tokens, initial_tokens)
++	cleanup_old_timestamps()
++	local total_tokens = 0
++	local total_requests = #request_tokens
++	for _, entry in ipairs(request_tokens) do
++		total_tokens = total_tokens + (entry[2] or 0)
++	end
++	if initial_tokens then
++		total_tokens = total_tokens + initial_tokens
++	end
++	if config.rpm and total_requests &gt;= config.rpm then
++		return nil, "Rate limit exceeded: " .. config.rpm .. " requests per minute allowed"
++	end
++	if max_tokens and total_tokens &gt;= max_tokens then
++		return nil, "Token rate limit exceeded: " .. max_tokens .. " tokens per minute allowed"
++	end
++	local entry = { os.time(), initial_tokens or 0 }
++	table.insert(request_tokens, entry)
++	return entry
++end
++
++-- Return current observed rate in the sliding window (after cleanup).
++function M.get_rate_limits()
++	cleanup_old_timestamps()
++	local total_tokens = 0
++	local total_requests = #request_tokens
++	for _, entry in ipairs(request_tokens) do
++		total_tokens = total_tokens + (entry[2] or 0)
++	end
++	return {
++		requests = total_requests,
++		tokens = total_tokens,
++	}
++end
++
++-- Cancel any pending auto-throttle timers (e.g. on user stop).
++function M.cancel_pending_waits()
++	for _, timer in ipairs(pending_timers) do
++		pcall(function()
++			timer:stop()
++			timer:close()
++		end)
++	end
++	pending_timers = {}
++end
++
++-- Helper: if we must wait for the rate window, schedule a re-dispatch via timer and return false.
++-- Otherwise record the attempt and return true (caller may then proceed).
++-- retry_fn is a 0-arg function that will re-invoke the original request with captured args.
++local function ensure_rate_limit_or_wait(max_tokens, retry_fn, initial_tokens)
++	local wait_ms = get_required_wait_ms(max_tokens, initial_tokens)
++	if wait_ms &gt; 0 then
++		local timer = vim.uv.new_timer()
++		table.insert(pending_timers, timer)
++		timer:start(wait_ms, 0, function()
++			-- remove this timer from the list
++			for i = #pending_timers, 1, -1 do
++				if pending_timers[i] == timer then
++					table.remove(pending_timers, i)
++					break
++				end
++			end
++			timer:close()
++			-- The timer callback is a "fast event" context. vim.fn.* (tempname, writefile, jobstart etc.)
++			-- are not allowed directly here. Schedule the actual request resume so it runs in a
++			-- normal main-loop context (same as how send_input already wraps user sends).
++			vim.schedule(retry_fn)
++		end)
++		return nil
++	end
++
++	-- Safe: record and proceed. Return the per-request entry so the response
++	-- handler can update *this* entry's token count (no more blind "last" updates).
++	-- initial_tokens (provisional estimate from the messages) is passed so the cost
++	-- of this ongoing request is counted in the tpm window right at dispatch.
++	local entry, err = check_and_record_request(max_tokens, initial_tokens)
++	if not entry then
++		return nil, err
++	end
++	return entry
++end
+ 
+ -- Provider configurations
+ 
+@@ -77,6 +235,11 @@ local providers_config = {
+ 		api_key_env = "Z_AI_API_KEY",
+ 		api_format = "chat_completions",
+ 	},
++	xai = {
++		url = "https://api.x.ai/v1/chat/completions",
++		api_key_env = "XAI_API_KEY",
++		api_format = "chat_completions",
++	},
+ 	-- Generic/custom provider
+ 	custom = {
+ 		url = config.options.url,
+@@ -210,6 +373,27 @@ local function create_provider_module(provider_name)
+ 		end
+ 
+ 		function M_module.request(model_config, msgs, callback)
++			local function retry()
++				M_module.request(model_config, msgs, callback)
++			end
++			-- Estimate cost of this request so the ongoing request's tokens are
++			-- counted in tpm immediately (real usage will correct the entry later).
++			local provisional = estimate_tokens_from_messages(msgs)
++			-- Add conservative output headroom (we pay for completion tokens too).
++			-- Use max_tokens from options if present (capped for safety).
++			do
++				local max_out = 2048
++				if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
++					max_out = math.min(model_config.options.max_tokens, 4096)
++				end
++				provisional = provisional + max_out
++			end
++			local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
++			if not entry then
++				if err then callback(nil, err) end
++				return
++			end
++
+ 			for _, msg in ipairs(msgs) do
+ 				add_history_message(vim.deepcopy(msg))
+ 			end
+@@ -261,6 +445,7 @@ local function create_provider_module(provider_name)
+ 				log.debug("Request response: " .. vim.inspect(parsed))
+ 
+ 				if parsed and parsed.error ~= vim.NIL then
++					commit_call_cost(entry, nil, parsed.error.message)
+ 					return callback(nil, "Received error: " .. parsed.error.message)
+ 				end
+ 
+@@ -310,12 +495,36 @@ local function create_provider_module(provider_name)
+ 					end
+ 				end
+ 
++				-- Best-effort token usage for tpm tracking (Responses API) - precise to this request's entry
++				local u = (parsed and parsed.usage and parsed.usage.total_tokens) or nil
++				commit_call_cost(entry, u, nil)
+ 				callback(fields, nil)
+ 			end)
+ 		end
+ 
+ 		-- Streaming request for OpenAI Responses API
+ 		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
++			local function retry()
++				M_module.request_stream(model_config, msgs, on_chunk, on_complete)
++			end
++			-- Estimate cost of this request so the ongoing request's tokens are
++			-- counted in tpm immediately (real usage will correct the entry later).
++			local provisional = estimate_tokens_from_messages(msgs)
++			-- Add conservative output headroom (we pay for completion tokens too).
++			-- Use max_tokens from options if present (capped for safety).
++			do
++				local max_out = 2048
++				if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
++					max_out = math.min(model_config.options.max_tokens, 4096)
++				end
++				provisional = provisional + max_out
++			end
++			local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
++			if not entry then
++				if err then on_complete(nil, err) end
++				return
++			end
++
+ 			for _, msg in ipairs(msgs) do
+ 				add_history_message(vim.deepcopy(msg))
+ 			end
+@@ -374,6 +583,8 @@ local function create_provider_module(provider_name)
+ 					if fields.tool_calls then
+ 						fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+ 					end
++					-- precise per-request entry (Responses stream may report usage in final events)
++					commit_call_cost(entry, fields.token_usage, nil)
+ 					on_complete(fields, nil)
+ 					return
+ 				end
+@@ -451,25 +662,45 @@ local function create_provider_module(provider_name)
+ 						table.insert(fields.reasoning_details, reason)
+ 					end
+ 				end
++
++				-- Capture usage if the stream event includes it (for tpm tracking)
++				if parsed.usage and parsed.usage.total_tokens then
++					fields.token_usage = parsed.usage.total_tokens
++				end
+ 			end, function(err)
+ 				if err then
++					commit_call_cost(entry, nil, err)
+ 					on_complete(nil, err)
+ 				end
++				-- success path: [DONE] inside on_chunk already called on_complete
+ 			end)
+ 		end
+ 	else
+ 		-- Standard cloud provider logic
+ 		local api_key = os.getenv(provider_config.api_key_env) or ""
+-function M_module.request(model_config, msgs, callback)
+-    -- Check rate limit before making the request
+-    local ok, err = check_rate_limit(config.tpm)
+-    if not ok then
+-        callback(nil, err)
+-        return
+-    end
+-    table.insert(request_tokens, {os.time(), 0})
+-
+-        local body = {
++		function M_module.request(model_config, msgs, callback)
++	local function retry()
++		M_module.request(model_config, msgs, callback)
++	end
++	-- Estimate cost of this request (including full context being sent) so the
++	-- ongoing request's tokens are counted in tpm immediately.
++	local provisional = estimate_tokens_from_messages(msgs)
++	-- Add conservative output headroom (we pay for completion tokens too).
++	-- Use max_tokens from options if present (capped for safety).
++	do
++		local max_out = 2048
++		if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
++			max_out = math.min(model_config.options.max_tokens, 4096)
++		end
++		provisional = provisional + max_out
++	end
++	local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
++	if not entry then
++		if err then callback(nil, err) end
++		return
++	end
++
++		local body = {
+             model = model_config.model,
+             messages = {},
+         }
+@@ -501,27 +732,46 @@ function M_module.request(model_config, msgs, callback)
+             log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+             if parsed.error then
++                commit_call_cost(entry, nil, parsed.error.message or "provider error")
+                 return callback(nil, parsed.error.message)
+             end
+ 
+             local fields, err = common.parse_response(parsed)
+-            -- Track token usage after receiving a successful response
+-            table.insert(request_tokens, {os.time(), parsed.usage.total_tokens or 0})
++            -- Update *this* request's rate entry with actual tokens (precise, not "last")
++            local usage = parsed and parsed.usage and parsed.usage.total_tokens or nil
++            commit_call_cost(entry, usage, err)
+             callback(fields, err)
+         end)
+ 		end
+ 
+ 		-- Streaming request
+-function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+-    -- Check rate limit before making the request
+-    local ok, err = check_rate_limit(config.tpm)
+-    if not ok then
+-        return on_complete(nil, err)
+-    end
+-    table.insert(request_tokens, {os.time(), 0})
+-
+-        local body = build_body(model_config, msgs)
++		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
++	local function retry()
++		M_module.request_stream(model_config, msgs, on_chunk, on_complete)
++	end
++	-- Estimate cost of this request (including full context being sent) so the
++	-- ongoing request's tokens are counted in tpm immediately.
++	local provisional = estimate_tokens_from_messages(msgs)
++	-- Add conservative output headroom (we pay for completion tokens too).
++	-- Use max_tokens from options if present (capped for safety).
++	do
++		local max_out = 2048
++		if model_config and model_config.options and type(model_config.options.max_tokens) == "number" then
++			max_out = math.min(model_config.options.max_tokens, 4096)
++		end
++		provisional = provisional + max_out
++	end
++	local entry, err = ensure_rate_limit_or_wait(config.tpm, retry, provisional)
++	if not entry then
++		if err then on_complete(nil, err) end
++		return
++	end
++
++		local body = build_body(model_config, msgs)
+         body.stream = true
++        -- Ask for usage in the final stream chunk so our tpm counter sees real token counts
++        -- (many OpenAI-compatible providers, including Mistral, require/include this).
++        body.stream_options = { include_usage = true }
+ 
+         log.debug("[API] requesting stream " .. provider_config.url .. " with " .. vim.inspect(body))
+         local request_body = vim.json.encode(body)
+@@ -540,16 +790,16 @@ function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+             on_chunk(chunk_data, nil)
+         end, function(_, err)
+             if err then
++                commit_call_cost(entry, nil, err)
+                 on_complete(nil, err)
+                 return
+             end
+ 
+-            -- Track token usage after receiving a successful response
+-            -- Note: Token tracking may not be possible in streaming mode without parsed data
+-            -- This is a limitation and should be addressed if parsed data is available
+             if fields.tool_calls then
+                 fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+             end
++            -- Update *this* request's rate entry with actual tokens (precise ownership)
++            commit_call_cost(entry, fields.token_usage, nil)
+             on_complete(fields, nil)
+         end)
+ 		end
+diff --git a/lua/tai/spec/config_spec.lua b/lua/tai/spec/config_spec.lua
+new file mode 100644
+index 0000000..c01abd0
+--- /dev/null
++++ b/lua/tai/spec/config_spec.lua
+@@ -0,0 +1,125 @@
++local config = require("tai.config")
++
++-- Mock vim.fn for testing
++vim.fn = {
++  getcwd = function() return "/tmp/test_project" end,
++  filereadable = function(path) return path == "/tmp/test_project/.tai" and 1 or 0 end,
++  fnamemodify = function(path, mod) return path end,
++}
++
++-- Mock log module
++package.loaded["tai.log"] = {
++  debug = function() end,
++}
++
++describe("config module", function()
++  before_each(function()
++    -- Reset config state before each test
++    config.root = "/tmp/test_project"
++    config.provider_tools = nil
++    config.rpm = 60
++    config.tpm = nil
++    config.default_allowed_commands = {
++      cat = true,
++      grep = true,
++      ag = true,
++      rg = true,
++      ls = true,
++      head = true,
++      tail = true,
++      wc = true,
++      diff = true,
++      sort = true,
++      uniq = true,
++      find = true,
++      file = true,
++      stat = true,
++      date = true,
++      echo = true,
++      tree = true,
++      pwd = true,
++      which = true,
++      type = true,
++    }
++  end)
++
++  describe("reload", function()
++    it("should reload config from .tai file", function()
++      -- Mock .tai file content
++      local mock_file = {
++        model = "test-model",
++        provider = "test-provider",
++        use_tools = false,
++        options = { test = true },
++        stream = true,
++        allowed_commands = { ls = false },
++        think = true,
++        provider_tools = { web_browser = true },
++        system_prompt = "test prompt",
++        custom_prompt = "custom",
++        rpm = 120,
++        tpm = 1000,
++      }
++      
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "/tmp/test_project/.tai" and mode == "r" then
++          return {
++            read = function() return vim.fn.json_encode(mock_file) end,
++            close = function() end,
++          }
++        end
++        return original_open(path, mode)
++      end
++
++      local ok, err = config.reload()
++      assert.is_true(ok)
++      assert.is_nil(err)
++      assert.are.equal("test-model", config.model)
++      assert.are.equal("test-provider", config.provider)
++      assert.is_false(config.use_tools)
++      assert.are.same({ test = true }, config.options)
++      assert.is_true(config.stream)
++      assert.are.same({ ls = false }, config.allowed_commands)
++      assert.is_true(config.think)
++      assert.are.same({ web_browser = true }, config.provider_tools)
++      assert.are.equal("test prompt", config.system_prompt)
++      assert.are.equal("custom", config.custom_prompt)
++      assert.are.equal(120, config.rpm)
++      assert.are.equal(1000, config.tpm)
++
++      -- Restore io.open
++      io.open = original_open
++    end)
++
++    it("should use defaults when .tai file is missing", function()
++      -- Mock io.open to return nil (file not found)
++      local original_open = io.open
++      io.open = function(path, mode)
++        return nil
++      end
++
++      local ok, err = config.reload()
++      assert.is_false(ok)
++      assert.are.equal("failed to open .tai", err)
++
++      -- Restore io.open
++      io.open = original_open
++    end)
++  end)
++
++  describe("get_allowed_commands", function()
++    it("should return default allowed commands when none are set", function()
++      config.allowed_commands = nil
++      local allowed = config.get_allowed_commands()
++      assert.are.same(config.default_allowed_commands, allowed)
++    end)
++
++    it("should return custom allowed commands when set", function()
++      config.allowed_commands = { ls = false, cat = true }
++      local allowed = config.get_allowed_commands()
++      assert.are.same({ ls = false, cat = true }, allowed)
++    end)
++  end)
++end)
+diff --git a/lua/tai/spec/tools_spec.lua b/lua/tai/spec/tools_spec.lua
+new file mode 100644
+index 0000000..3a488ca
+--- /dev/null
++++ b/lua/tai/spec/tools_spec.lua
+@@ -0,0 +1,300 @@
++local tools = require("tai.tools")
++local config = require("tai.config")
++
++-- Mock vim.fn for testing
++vim.fn = {
++  filereadable = function(path) return path == "test.txt" and 1 or 0 end,
++  fnamemodify = function(path, mod) return path end,
++  isdirectory = function(path) return path == "/tmp" and 1 or 0 end,
++}
++
++-- Mock vim.api for testing
++vim.api = {
++  nvim_get_current_buf = function() return 1 end,
++  nvim_buf_get_lines = function(buf, start, end_, strict) return { "line1", "line2", "line3" } end,
++  nvim_buf_set_lines = function(buf, start, end_, strict, lines) end,
++  nvim_buf_call = function(buf, func) func() end,
++}
++
++-- Mock vim.cmd for testing
++vim.cmd = function(cmd) end
++
++-- Mock log module
++package.loaded["tai.log"] = {
++  debug = function() end,
++}
++
++-- Mock os.getenv for testing
++os.getenv = function(name) return name == "PATH" and "/usr/bin" or nil end
++
++-- Mock io.popen for testing
++local mock_popen = {
++  read = function() return "output" end,
++  close = function() end,
++}
++
++-- Mock io.open for testing
++local mock_io_open = {
++  read = function() return "content" end,
++  close = function() end,
++}
++
++describe("tools module", function()
++  before_each(function()
++    -- Reset tools state before each test
++    tools.todos_store = {}
++    tools.todos_next_id = 1
++    tools.notes_store = ""
++    
++    -- Reset config state
++    config.allowed_commands = nil
++  end)
++
++  describe("read_file", function()
++    it("should return error for root paths", function()
++      local result = tools.read_file("/test.txt")
++      assert.are.equal("Paths cannot start from root (/). Use relative.", result)
++    end)
++
++    it("should return error for non-existent files", function()
++      local result = tools.read_file("nonexistent.txt")
++      assert.are.match("File `nonexistent.txt` not found", result)
++    end)
++
++    it("should return numbered content for existing files", function()
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "test.txt" and mode == "r" then
++          return mock_io_open
++        end
++        return original_open(path, mode)
++      end
++
++      -- Mock vim.split to return lines
++      local original_split = vim.split
++      vim.split = function(content, sep, opts)
++        return { "line1", "line2", "line3" }
++      end
++
++      local result = tools.read_file("test.txt")
++      assert.are.equal("1: line1\n2: line2\n3: line3", result)
++
++      -- Restore functions
++      io.open = original_open
++      vim.split = original_split
++    end)
++
++    it("should return numbered content for specific range", function()
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "test.txt" and mode == "r" then
++          return mock_io_open
++        end
++        return original_open(path, mode)
++      end
++
++      -- Mock vim.split to return lines
++      local original_split = vim.split
++      vim.split = function(content, sep, opts)
++        return { "line1", "line2", "line3", "line4", "line5" }
++      end
++
++      local result = tools.read_file("test.txt", "2:4")
++      assert.are.equal("2: line2\n3: line3\n4: line4", result)
++
++      -- Restore functions
++      io.open = original_open
++      vim.split = original_split
++    end)
++  end)
++
++  describe("unsafe_command", function()
++    it("should allow allowed commands", function()
++      config.allowed_commands = { ls = true, cat = true }
++      local result = tools.unsafe_command("ls -la")
++      assert.is_false(result)
++    end)
++
++    it("should disallow disallowed commands", function()
++      config.allowed_commands = { ls = true, cat = false }
++      local result = tools.unsafe_command("cat file.txt")
++      assert.are.equal("Command cat is not allowed.", result)
++    end)
++
++    it("should disallow commands with redirects", function()
++      local result = tools.unsafe_command("ls &gt; file.txt")
++      assert.are.equal("[sys] Redirects (&gt;, &lt;, &gt;&gt;, &lt;&lt;, etc.) are not allowed.", result)
++    end)
++  end)
++
++  describe("exec_command", function()
++    it("should execute allowed commands", function()
++      -- Mock io.popen to return our mock popen
++      local original_popen = io.popen
++      io.popen = function(cmd, mode)
++        return mock_popen
++      end
++
++      local output, err = tools.exec_command("ls -la")
++      assert.is_nil(err)
++      assert.are.equal("output", output)
++
++      -- Restore io.popen
++      io.popen = original_popen
++    end)
++
++    it("should return error for failed commands", function()
++      -- Mock io.popen to return nil
++      local original_popen = io.popen
++      io.popen = function(cmd, mode)
++        return nil
++      end
++
++      local output, err = tools.exec_command("invalid_command")
++      assert.is_nil(output)
++      assert.are.equal("Failed to run command", err)
++
++      -- Restore io.popen
++      io.popen = original_popen
++    end)
++  end)
++
++  describe("write", function()
++    it("should return error for root paths", function()
++      local result = tools.write("/test.txt", "content")
++      assert.are.equal("Paths cannot start from root (/). Use relative.", result)
++    end)
++
++    it("should create file in existing directory", function()
++      -- Mock vim.fn.mkdir to return 1 (success)
++      local original_mkdir = vim.fn.mkdir
++      vim.fn.mkdir = function(dir, flags) return 1 end
++
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "test.txt" and mode == "w" then
++          return {
++            write = function() end,
++            close = function() end,
++          }
++        end
++        return original_open(path, mode)
++      end
++
++      local result = tools.write("test.txt", "content")
++      assert.are.equal("File created: test.txt", result)
++
++      -- Restore functions
++      vim.fn.mkdir = original_mkdir
++      io.open = original_open
++    end)
++
++    it("should create parent directory if needed", function()
++      -- Mock vim.fn.mkdir to return 1 (success)
++      local original_mkdir = vim.fn.mkdir
++      vim.fn.mkdir = function(dir, flags) return 1 end
++
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "subdir/test.txt" and mode == "w" then
++          return {
++            write = function() end,
++            close = function() end,
++          }
++        end
++        return original_open(path, mode)
++      end
++
++      local result = tools.write("subdir/test.txt", "content")
++      assert.are.equal("File created: subdir/test.txt", result)
++
++      -- Restore functions
++      vim.fn.mkdir = original_mkdir
++      io.open = original_open
++    end)
++  end)
++
++  describe("edit", function()
++    it("should return error for root paths", function()
++      local result = tools.edit("/test.txt", "old", "new")
++      assert.are.equal("Paths cannot start from root (/). Use relative.", result)
++    end)
++
++    it("should return error for non-existent files", function()
++      local result = tools.edit("nonexistent.txt", "old", "new")
++      assert.are.match("File not found: nonexistent.txt", result)
++    end)
++
++    it("should edit file with old_text and new_text", function()
++      -- Mock vim.fn.filereadable to return 1 (file exists)
++      local original_filereadable = vim.fn.filereadable
++      vim.fn.filereadable = function(path) return 1 end
++
++      -- Mock io.open to return our mock file
++      local original_open = io.open
++      io.open = function(path, mode)
++        if path == "test.txt" and mode == "r" then
++          return mock_io_open
++        end
++        return original_open(path, mode)
++      end
++
++      local result = tools.edit("test.txt", "line1", "new line")
++      assert.are.equal("Patched test.txt", result)
++
++      -- Restore functions
++      vim.fn.filereadable = original_filereadable
++      io.open = original_open
++    end)
++  end)
++
++  describe("run_todos", function()
++    it("should add todo items", function()
++      local result = tools.run_todos({ action = "add", text = "Test todo" })
++      assert.are.match("Added todo #%d+: %[pending%] Test todo", result)
++    end)
++
++    it("should update todo items", function()
++      -- Add a todo first
++      tools.run_todos({ action = "add", text = "Test todo" })
++      
++      -- Update it
++      local result = tools.run_todos({ action = "update", id = 1, status = "done" })
++      assert.are.match("Updated todo #1: %[done%] Test todo", result)
++    end)
++
++    it("should list todo items", function()
++      -- Add a todo first
++      tools.run_todos({ action = "add", text = "Test todo" })
++      
++      -- List it
++      local result = tools.run_todos({ action = "list" })
++      assert.are.match("#1 %[pending%] Test todo", result)
++    end)
++  end)
++
++  describe("run_notes", function()
++    it("should write notes", function()
++      local result = tools.run_notes({ action = "write", content = "Test note" })
++      assert.are.equal("Notes updated.", result)
++      assert.are.equal("Test note", tools.notes_store)
++    end)
++
++    it("should append notes", function()
++      tools.notes_store = "Initial note"
++      local result = tools.run_notes({ action = "append", content = "Appended note" })
++      assert.are.equal("Notes appended.", result)
++      assert.are.equal("Initial note\nAppended note", tools.notes_store)
++    end)
++
++    it("should read notes", function()
++      tools.notes_store = "Test note"
++      local result = tools.run_notes({ action = "read" })
++      assert.are.equal("Test note", result)
++    end)
++  end)
++end)
+diff --git a/lua/tai/spec/tools_test.lua b/lua/tai/spec/tools_test.lua
+new file mode 100644
+index 0000000..e69de29
+diff --git a/lua/tai/tests/README.md b/lua/tai/tests/README.md
+new file mode 100644
+index 0000000..e4c9841
+--- /dev/null
++++ b/lua/tai/tests/README.md
+@@ -0,0 +1,58 @@
++# Tai Test Framework
++
++This directory contains tests for the Tai Neovim plugin.
++
++## Test Structure
++
++- Tests are written using the **Busted** framework.
++- Test files are located in `lua/tai/spec/` and mirror the structure of `lua/tai/`.
++- Example: `lua/tai/spec/config_spec.lua` tests `lua/tai/config.lua`.
++
++## Running Tests
++
++### Prerequisites
++- [LuaRocks](https://luarocks.org/) (for installing Busted and Luacheck)
++- [Busted](https://olivinelabs.com/busted/) (Lua testing framework)
++- [Luacheck](https://github.com/lunarmodules/luacheck) (Lua linter)
++
++### Install Dependencies
++```sh
++make install_deps
++```
++
++### Run Tests
++```sh
++make test
++```
++
++### Run Linting
++```sh
++make lint
++```
++
++### Run All Checks
++```sh
++make all
++```
++
++## Writing New Tests
++
++1. Create a new file in `lua/tai/spec/` (e.g., `new_module_spec.lua`).
++2. Use the Busted syntax:
++   ```lua
++   describe("module name", function()
++     it("should do something", function()
++       assert.is_true(true)
++     end)
++   end)
++   ```
++3. Mock Neovim globals (e.g., `vim.fn`, `vim.api`) as needed.
++4. Add your test file to version control.
++
++## Mocking Neovim APIs
++
++Common mocks are already provided in test files. For advanced mocking, see the [Busted documentation](https://olivinelabs.com/busted/#documentation).
++
++## Example Test
++
++See `lua/tai/spec/config_spec.lua` and `lua/tai/spec/tools_spec.lua` for examples.
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index b23c357..72ee757 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -2,6 +2,11 @@ local M = {}
+ local log = require('tai.log')
+ local config = require("tai.config")
+ 
++-- In-memory stores for agent tools
++M.todos_store = {}  -- list of {id, text, status}
++M.todos_next_id = 1
++M.notes_store = ""  -- single string notepad
++
+ M.defs = {
+ 	read = {
+ 		type = "function",
+@@ -143,6 +148,63 @@ M.defs = {
+ 			}
+ 		}
+ 	},
++	todos = {
++		type = "function",
++		["function"] = {
++			name = "todos",
++			description =
++			"In-memory todo list to track progress on multi-step tasks. Use for tasks with 3+ steps. Actions: 'add' creates a new item, 'update' changes status/text of an existing item, 'list' returns all items.",
++			parameters = {
++				type = "object",
++				properties = {
++					action = {
++						type = "string",
++						description = "The action to perform: 'add', 'update', or 'list'.",
++						enum = { "add", "update", "list" }
++					},
++					text = {
++						type = "string",
++						description = "Description of the todo item. Required for 'add', optional for 'update' (to change text)."
++					},
++					id = {
++						type = "number",
++						description = "ID of the todo item. Required for 'update'."
++					},
++					status = {
++						type = "string",
++						description = "Status of the item. For 'add' defaults to 'pending'. For 'update' changes the status.",
++						enum = { "pending", "in_progress", "done", "cancelled" }
++					}
++				},
++				additionalProperties = false,
++				required = { "action" }
++			}
++		}
++	},
++	notes = {
++		type = "function",
++		["function"] = {
++			name = "notes",
++			description =
++			"In-memory scratchpad for registering discoveries, important thoughts, decisions, and context gathered during the task. Use this to persist insights across tool calls so you don't lose track. Actions: 'read' returns current notes, 'write' overwrites with new content, 'append' adds to existing notes.",
++			parameters = {
++				type = "object",
++				properties = {
++					action = {
++						type = "string",
++						description = "The action: 'read', 'write', or 'append'.",
++						enum = { "read", "write", "append" }
++					},
++					content = {
++						type = "string",
++						description = "The content to write or append. Required for 'write' and 'append'."
++					}
++				},
++				additionalProperties = false,
++				required = { "action" }
++			}
++		}
++	},
+ }
+ 
+ -- indexes are 1 based
+@@ -466,4 +528,72 @@ function M.edit(file, old_text, new_text)
+ 	return "Patched " .. file
+ end
+ 
++function M.run_todos(args)
++	local action = args.action
++	if action == "add" then
++		if not args.text or args.text == "" then
++			return "Error: 'text' is required for 'add'"
++		end
++		local item = {
++			id = M.todos_next_id,
++			text = args.text,
++			status = args.status or "pending",
++		}
++		table.insert(M.todos_store, item)
++		M.todos_next_id = M.todos_next_id + 1
++		return string.format("Added todo #%d: [%s] %s", item.id, item.status, item.text)
++	elseif action == "update" then
++		if not args.id then
++			return "Error: 'id' is required for 'update'"
++		end
++		for _, item in ipairs(M.todos_store) do
++			if item.id == args.id then
++				if args.status then item.status = args.status end
++				if args.text then item.text = args.text end
++				return string.format("Updated todo #%d: [%s] %s", item.id, item.status, item.text)
++			end
++		end
++		return "Error: todo #" .. tostring(args.id) .. " not found"
++	elseif action == "list" then
++		if #M.todos_store == 0 then
++			return "No todos yet."
++		end
++		local lines = {}
++		for _, item in ipairs(M.todos_store) do
++			table.insert(lines, string.format("#%d [%s] %s", item.id, item.status, item.text))
++		end
++		return table.concat(lines, "\n")
++	else
++		return "Error: unknown action '" .. tostring(action) .. "'"
++	end
++end
++
++function M.run_notes(args)
++	local action = args.action
++	if action == "read" then
++		if M.notes_store == "" then
++			return "(empty)"
++		end
++		return M.notes_store
++	elseif action == "write" then
++		if not args.content then
++			return "Error: 'content' is required for 'write'"
++		end
++		M.notes_store = args.content
++		return "Notes updated."
++	elseif action == "append" then
++		if not args.content then
++			return "Error: 'content' is required for 'append'"
++		end
++		if M.notes_store == "" then
++			M.notes_store = args.content
++		else
++			M.notes_store = M.notes_store .. "\n" .. args.content
++		end
++		return "Notes appended."
++	else
++		return "Error: unknown action '" .. tostring(action) .. "'"
++	end
++end
++
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 05b60b4..416f38b 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -22,13 +22,31 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
+ 
+ local planner_config = vim.deepcopy(config)
+ local coder_config = vim.deepcopy(config)
+-planner_config.tools = { "read", "shell", "send_image", "coder_agent" }
+-coder_config.tools = { "read", "shell", "send_image", "edit", "write" }
++planner_config.tools = { "read", "shell", "send_image", "coder_agent", "todos", "notes" }
++coder_config.tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes" }
+ -- Global stop flag for hard stop command
+ local hard_stop = false
+ local pending_tools = nil
+ local coder_call = nil
+ local current_agent = "planner"  -- Default to planner
++local last_ctx = nil  -- last reported token usage for ctx display in input name
++
++local function update_input_name(token_count)
++	if token_count then
++		last_ctx = token_count
++	end
++	local name = input_bufname
++	local stats = providers_factory.get_rate_limits()
++	local rate_part = string.format("%d req/min, %d tokens/min", stats.requests or 0, stats.tokens or 0)
++	if last_ctx then
++		name = string.format("%s (ctx: %u | %s)", input_bufname, last_ctx, rate_part)
++	else
++		name = string.format("%s (%s)", input_bufname, rate_part)
++	end
++	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
++		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
++	end
++end
+ 
+ function M.init()
+ 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+@@ -79,6 +97,7 @@ function M.init()
+ 	})
+ 	M.clear()
+ 	M.update_chat_name()
++	update_input_name()
+ end
+ 
+ function M.append(content)
+@@ -107,16 +126,6 @@ function M.append(content)
+ 	end
+ end
+ 
+-local function update_token_display(token_count)
+-	local name = input_bufname
+-	if token_count then
+-		name = string.format("%s (ctx: %u)", input_bufname, token_count)
+-	end
+-	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
+-		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
+-	end
+-end
+-
+ function M.update_chat_name()
+ 	local name = bufname_prefix
+ 	if config and config.provider and config.model then
+@@ -129,6 +138,10 @@ function M.update_chat_name()
+ 	end
+ end
+ 
++function M.update_input_name()
++	update_input_name()
++end
++
+ function M.switch_agent()
+ 	if current_agent == "planner" then
+ 		current_agent = "coder"
+@@ -289,6 +302,14 @@ local function run_tools(tool_calls, history)
+ 
+ 			M.code()
+ 			goto next
++		elseif name == "todos" then
++			local out = tools.run_todos(args)
++			res.content = out
++			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
++		elseif name == "notes" then
++			local out = tools.run_notes(args)
++			res.content = out
++			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+ 		elseif name == "send_image" then
+ 			if not args.file then
+ 				M.append("{{{ Addind image failed: no file field.\n}}}")
+@@ -412,11 +433,15 @@ local function send_input()
+ 			add_sep("___ PLANNER AGENT ")
+ 			M.task()
+ 		end
++		update_input_name()
+ 	end)
+ end
+ 
+ function M.stop()
+ 	hard_stop = true
++	pcall(function()
++		providers_factory.cancel_pending_waits()
++	end)
+ 	M.append("\n[tai] Stopped by user\n")
+ end
+ 
+@@ -480,7 +505,12 @@ function M.clear()
+ 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
+ 	coder_history = { { role = "system", content = agent.coder_system_prompt } }
+ 	current_agent = "planner"
++	last_ctx = nil
++	pcall(function()
++		providers_factory.cancel_pending_waits()
++	end)
+ 	M.update_chat_name()
++	update_input_name()
+ end
+ 
+ function M.task()
+@@ -536,7 +566,7 @@ function M.task()
+ 					M.append("\n}}}\n")
+ 				end
+ 				if data.token_usage then
+-					update_token_display(data.token_usage)
++					update_input_name(data.token_usage)
+ 				end
+ 				if data.error then
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+@@ -575,7 +605,7 @@ function M.task()
+ 				M.open()
+ 
+ 				if fields.token_usage then
+-					update_token_display(fields.token_usage)
++					update_input_name(fields.token_usage)
+ 				end
+ 				if fields.error then
+ 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+@@ -662,7 +692,7 @@ function M.code()
+ 					M.append("\n}}}\n")
+ 				end
+ 				if data.token_usage then
+-					update_token_display(data.token_usage)
++					update_input_name(data.token_usage)
+ 				end
+ 				if data.error then
+ 					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+@@ -710,7 +740,7 @@ function M.code()
+ 				M.open()
+ 
+ 				if fields.token_usage then
+-					update_token_display(fields.token_usage)
++					update_input_name(fields.token_usage)
+ 				end
+ 				if fields.error then
+ 					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+diff --git a/www/index.html b/www/index.html
+index bc811cd..b8394b5 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -18,11 +18,15 @@ agents directly to your editor.
+ 
+ &lt;b&gt;features&lt;/b&gt;
+ 
+-- agents can read files and run commands
+-- responses show up in a split buffer in Neovim
+-- apply patches or run commands
+-- agents create plans for big code changes
+-- code folding in the chat
++- planner + coder agents for complex tasks
++- read/write files and run shell commands
++- in-memory todos &amp;amp; notes for tracking progress
++- rate limiting (rpm/tpm)
++- streaming responses
++- extended thinking/reasoning support
++- provider-side tools (e.g. web_search)
++- safety validation for shell commands
++- code folding in the chat buffer
+ 
+ 
+ &lt;i&gt;providers&lt;/i&gt;
+@@ -31,12 +35,13 @@ agents directly to your editor.
+ - groq
+ - minimax
+ - mistral
+-- local
+-- ollama
++- ollama / llama.cpp (local)
+ - openai
+ - openrouter
+ - stepfun
++- xai
+ - z.ai
++- custom
+ 
+ 
+ &lt;b&gt;keybindings&lt;/b&gt;
+@@ -83,42 +88,53 @@ tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file
+ in your project root. the following options are
+ supported:
+ 
+-- &lt;i&gt;model&lt;/i&gt;: the model used for chat completions
+-- &lt;i&gt;provider&lt;/i&gt;: one of: groq, gemini, mistral,
+-  z_ai, openai, openrouter, stepfun, local, minimax.
++- &lt;i&gt;model&lt;/i&gt;: the model for chat completions
++- &lt;i&gt;provider&lt;/i&gt;: see providers list above
+ - &lt;i&gt;options&lt;/i&gt;: provider-specific options passed
+-  to the API (e.g., temperature, max_tokens). See
+-  the provider's API docs.
++  to the API (e.g., temperature, max_tokens)
+ - &lt;i&gt;provider_tools&lt;/i&gt;: array of provider-side
+-  tools (e.g., ["web_browser"] for OpenAI).
+-- &lt;i&gt;use_tools&lt;/i&gt;: boolean to enable/disable agent
+-  tools. default is true. if false, the agent won't
+-  have access to file read/write or the shell tool.
+-- &lt;i&gt;think&lt;/i&gt;: enable extended thinking/reasoning
+-  for models that support it.
+-- &lt;i&gt;system_prompt&lt;/i&gt;: custom system prompt to
+-  override the default agent instructions.
+-- &lt;i&gt;custom_prompt&lt;/i&gt;: additional prompt text
+-  appended to the system prompt. useful for adding
+-  extra instructions without replacing the default.
+-- &lt;i&gt;allowed_commands&lt;/i&gt;: override the default
+-  list of allowed shell commands. by default, tai
+-  allows: cat, grep, ag, rg, ls, head, tail, wc,
+-  diff, sort, uniq, find, file, stat, date, echo,
+-  tree, pwd, which, type.
++  tools (e.g., ["web_search"])
++- &lt;i&gt;use_tools&lt;/i&gt;: enable/disable agent tools
++  (default: true)
++- &lt;i&gt;stream&lt;/i&gt;: enable streaming responses
++  (default: false)
++- &lt;i&gt;think&lt;/i&gt;: extended thinking/reasoning level
++  ("low", "medium", "high")
++- &lt;i&gt;rpm&lt;/i&gt;: max requests per minute (default: 60)
++- &lt;i&gt;tpm&lt;/i&gt;: max tokens per minute
++- &lt;i&gt;system_prompt&lt;/i&gt;: replace default agent prompt
++- &lt;i&gt;custom_prompt&lt;/i&gt;: append to default prompt
++- &lt;i&gt;allowed_commands&lt;/i&gt;: override allowed shell
++  commands
++
++
++&lt;b&gt;agent tools&lt;/b&gt;
++
++- &lt;i&gt;read&lt;/i&gt;: read files with optional line range
++- &lt;i&gt;shell&lt;/i&gt;: run allow-listed shell commands
++- &lt;i&gt;edit&lt;/i&gt;: edit files via old/new replacement
++- &lt;i&gt;write&lt;/i&gt;: create new files
++- &lt;i&gt;send_image&lt;/i&gt;: send images for analysis
++- &lt;i&gt;coder_agent&lt;/i&gt;: delegate to coder agent
++- &lt;i&gt;todos&lt;/i&gt;: in-memory todo list (add/update/list)
++  with statuses: pending, in_progress, done, cancelled
++- &lt;i&gt;notes&lt;/i&gt;: in-memory scratchpad (read/write/append)
++  for tracking discoveries and context
++
+ 
+ example .tai file:
+ 
+ {
+-	"provider": "groq",
+-	"model": "llama-3.1-70b-versatile",
++	"provider": "xai",
++	"model": "grok-4.3",
+ 	"options": {
+ 		"temperature": 0.7,
+ 		"max_tokens": 4096
+ 	},
++	"stream": true,
+ 	"use_tools": true,
+-	"system_prompt": "You are a senior python programmer. Always write tests.",
+-	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
++	"rpm": 30,
++	"custom_prompt": "Prefer rust for performance.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+@@ -131,8 +147,8 @@ example .tai file:
+ 
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+-make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
+-for Groq or &lt;i&gt;GEMINI_API_KEY&lt;/i&gt; for Gemini etc.
++make sure the correct env var is set for your provider:
++&lt;i&gt;XAI_API_KEY&lt;/i&gt;, &lt;i&gt;GROQ_API_KEY&lt;/i&gt;, &lt;i&gt;GEMINI_API_KEY&lt;/i&gt;, etc.
+ create a .tai file at the root or your project.
+ editting any file in that project should start tai.
+ then just use the keybindings above.
+</pre>

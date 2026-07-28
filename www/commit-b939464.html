@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai b939464</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit b939464
+parent <a href=commit-ec33371.html>ec33371</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-17T18:00:00-03:00
+
+    adjusted system prompt, added custom provider
+
+<a href=tree-b939464.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index cd09574..abf9669 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -15,20 +15,18 @@ project's codebase in the current folder: ]] .. config.root .. [[
+ Your goal is to complete the tasks requested by the user with high precision
+ and reliability.
+ 
+-## Core Principles
++## Guidelines
+ 
+-- **The Tao of programming:** You follow the Tao and the programs you make are
+-  its own Heaven. 
+-- **Context Awareness:** Always understand the context (imports, dependencies,
+-  existing logic) before proposing changes.
+-- **Accuracy &amp; Precision:** Ensure all code changes and commands are correct
+-  and fulfill the user's request.
+-- **Verification:** Whenever possible, verify changes using tests, linters,
+-  or shell commands.
+-- **Transparency:** Keep the user informed of your choices and the progress as
+-  it progresses. No markdown, use ASCII/ANSI.
+-- **Iteration:** At each step analyze if your actions are taking you towards
+-  the solution and self-correct if needed.
++- For general questions answer right away.
++- For questions about the current project: explore the project for the answer
++- If coding is needed: explore the project to understand the requirements and
++  break down the task in smaller tasks. Create an implementation plan that is
++  complete and concise, solving each smaller task that builds up the solution.
++  Show it to the user and ask if you can start working on it. Then use the
++  `patch` tool to create/edit needed files. Use one call for each change, so
++  each smaller task can be done in a round of patches.
++- Avoid reading unnecessary files for the task or running shell commands that
++  give you partial results.
+ 
+ ## Guidelines for Patch Creation
+ 
+@@ -43,7 +41,9 @@ to ensure patches are correct and minimal:
+   include surrounding lines. Emit multiple calls if needed.
+ - **Verify line numbers and content:** When using tools to edit files, ensure
+   you are targeting the correct lines and that the content you are
+-  replacing/adding is consistent with the file's current state.
++  replacing/adding is consistent with the file's current state. Beware that
++  a patch is affected by previous ones, so account for line number changes and
++  adjust the numbers.
+ - **Respect existing style:** Follow the existing coding style, indentation,
+   and naming conventions of the file.
+ - **Valid path verification:** Ensure needed folders exist before creating a
+@@ -53,8 +53,6 @@ to ensure patches are correct and minimal:
+ 
+ - Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
+   file in sequence is useless.
+-- **Always explore the directory structure before accessing files. ** Use `ls`,
+-  `find`, or similar commands to discover file locations first.
+ - Do NOT guess file paths — verify they exist with directory listing or `find`
+   commands before trying to read or edit them.
+ - The shell tool already starts at the project's root folder. **Do NOT prepend
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 57dd130..bbfc283 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -69,7 +69,6 @@ function M.reload()
+ 	M.options = data.options
+ 	M.stream = data.stream or false
+ 	M.allowed_commands = data.allowed_commands
+-	M.options = data.options
+ 	M.think = data.think or nil
+ 	M.provider_tools = data.provider_tools
+ 	M.system_prompt = data.system_prompt or nil
+diff --git a/lua/tai/custom.lua b/lua/tai/custom.lua
+new file mode 100644
+index 0000000..8c1cc1a
+--- /dev/null
++++ b/lua/tai/custom.lua
+@@ -0,0 +1,148 @@
++local M = {}
++
++local log = require("tai.log")
++local common = require("tai.provider_common")
++local tools = require("tai.tools")
++local config = require("tai.config")
++local url = config.options.url
++
++local history = nil
++
++function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
++	if not history then
++		history = { msg }
++		return
++	end
++	table.insert(history, msg)
++end
++
++function M.clear_history()
++	history = nil
++end
++
++local function build_body(model_config, msgs, format)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local agent_tools = common.build_request_tools("chat_completions")
++
++	local body = {
++		model = model_config.model,
++		messages = common.filter_messages(history),
++	}
++
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
++	end
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	return body
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	-- Keep connected files up to date in history before sending.
++	tools.refresh_connected_files(history)
++
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++
++	if config.use_tools ~= false then
++		body.tools = common.build_request_tools("chat_completions")
++	end
++	body.messages = common.filter_messages(history)
++
++	if format == "json_object" then
++		body.response_format = { type = "json_object" }
++	end
++
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("[API] requesting " .. url .. " with " .. vim.inspect(body))
++
++	common.make_http_call(url, "", request_body, function(parsed, err)
++		if err then
++			callback(nil, err)
++			return
++		end
++
++		log.debug("[API] request response: " .. vim.inspect(parsed))
++
++		if parsed.error then
++			return callback(nil, parsed.error.message)
++		end
++
++		local fields, err = common.parse_response(parsed, format)
++		callback(fields, err)
++	end)
++end
++
++-- Streaming request function
++function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	local body = build_body(model_config, msgs, format)
++	body.stream = true
++
++	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
++	local request_body = vim.json.encode(body)
++
++	local fields = {}
++
++	common.make_streaming_http_call(url, "", request_body, function(chunk)
++		local chunk_data, err = common.parse_chunk(chunk)
++		if err then
++			on_chunk(chunk_data, err)
++			return
++		end
++
++		-- accumulate
++		fields = common.update_fields(fields, chunk_data)
++
++		on_chunk(chunk_data, nil)
++	end, function(_, err)
++		-- on_complete: flatten tool_calls map to array and decode arguments
++		if err then
++			on_complete(nil, err)
++			return
++		end
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
++		on_complete(fields, nil)
++	end)
++end
++
++return M
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 6dc76ac..bb43694 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -33,7 +33,7 @@ M.defs = {
+ 					range = {
+ 						type = "string",
+ 						description =
+-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
++						"Optional range of lines to read, starts at 1, colon separated. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -69,7 +69,7 @@ M.defs = {
+ 					range = {
+ 						type = "string",
+ 						description =
+-						"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
++						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+ 					},
+ 					content = {
+ 						type = "string",
+@@ -145,13 +145,13 @@ M.defs = {
+ local function parse_lines(range)
+ 	-- Handle "$" (last line)
+ 	if range == "$" then
+-		return -1, -1
++		return {-1, -1}, true
+ 	end
+ 
+ 	-- Handle negative ranges (e.g., -5:$ for last 5 lines)
+ 	local start, end_line = range:match("^(-%d+):%$")
+ 	if start and end_line then
+-		return tonumber(start), -1
++		return {tonumber(start), -1}, true
+ 	end
+ 
+ 	-- Handle positive-to-$ ranges (e.g., 10:$ for tenth to last line)
+@@ -159,26 +159,26 @@ local function parse_lines(range)
+ 	if dollar_pos and dollar_pos &gt; 1 then
+ 		local start_num = tonumber(range:sub(1, dollar_pos - 1))
+ 		if start_num then
+-			return start_num - 1, -1
++			return {start_num - 1, -1}, true
+ 		end
+ 	end
+ 
+ 	-- Handle range (e.g., "2:5")
+ 	start, end_line = range:match("^(%d+):(%d+)$")
+ 	if start and end_line then
+-		return tonumber(start) - 1, tonumber(end_line) - 1
++		return {tonumber(start) - 1, tonumber(end_line) - 1}, true
+ 	end
+ 
+ 	-- Handle single line (e.g., "3")
+ 	local line = tonumber(range)
+ 	if line == 0 then
+-		return 0, 0
++		return {0, 0}, true
+ 	end
+ 	if line then
+-		return line - 1, line - 1
++		return {line - 1, line - 1}, true
+ 	end
+ 
+-	return 0, 0
++	return {}, false
+ end
+ 
+ function M.read_file(file_path, range)
+@@ -210,7 +210,13 @@ function M.read_file(file_path, range)
+ 	end
+ 
+ 	-- Parse the range (parse_lines returns 0-based indexes for patch usage)
+-	local start0, end0 = parse_lines(range)
++	local int, ok = parse_lines(range)
++	if not ok then
++		return "[sys] Error: Invalid range " .. range
++	end
++
++	local start0 = int[1]
++	local end0 = int[2]
+ 	local nlines = #lines
+ 
+ 	-- Convert negative indexes (relative to end) to 0-based absolute indexes
+@@ -231,7 +237,7 @@ function M.read_file(file_path, range)
+ 	end
+ 
+ 	if start1 &lt; 1 or end1 &lt; 0 or start1 &gt; nlines or start1 &gt; end1 then
+-		return "[sys] Invalid range: " .. range
++		return "[sys] Error: Invalid range " .. range
+ 	end
+ 
+ 	for i = start1, end1 do
+@@ -341,7 +347,13 @@ function M.apply_patch(name, file, operation, lines, content)
+ 	local total_lines = #current_lines
+ 
+ 	-- Parse line range
+-	local start, end_line = parse_lines(lines)
++	local int, ok = parse_lines(lines)
++	if not ok then
++		return "[sys] Error: Invalid range " .. lines
++	end
++
++	local start = int[1]
++	local end_line = int[2]
+ 
+ 	-- Convert negative indexes (relative to end) to 0-based absolute indexes
+ 	if start &lt; 0 then
+</pre>

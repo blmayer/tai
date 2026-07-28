@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai e064f9f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit e064f9f
+parent <a href=commit-842d264.html>842d264</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-11T17:18:04-03:00
+
+    improved tool calls
+
+<a href=tree-e064f9f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+deleted file mode 100644
+index 7b8d8a2..0000000
+--- a/lua/tai/agents/all_rounder.lua
++++ /dev/null
+@@ -1,123 +0,0 @@
+--- all_rounder.lua: Coder agent for Tai
+-
+-local M = {}
+-
+--- Import necessary modules
+-local config = require('tai.config')
+-local log = require('tai.log')
+-local tools = require('tai.agents.tools')
+-
+-if not config.root then
+-	return M
+-end
+-
+-local provider
+-if config.provider == 'groq' then
+-	provider = require('tai.providers.groq')
+-elseif config.provider == 'gemini' then
+-	provider = require('tai.providers.gemini')
+-elseif config.provider == 'local' then
+-	provider = require('tai.providers.local')
+-elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+-	-- do nothing
+-else
+-	error('Unknown chat provider: ' .. config.provider)
+-end
+-
+-local host = vim.uv.os_uname()
+-
+-M.system_prompt = [[
+-SYSTEM
+-You are a Tai, an excelent coding and system admin agent. You are in charge of
+-implementing the tasks requested in the current project. You will receive high
+-level feature requests or general questions. Your job is to address them.
+-
+-The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+-vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
+-host.machine .. " " .. host.sysname .. [[ machine.
+-
+-]] .. tools.pretty_info(config.all_rounder.tools) .. [[
+-
+-INSTRUCTIONS
+-- Understand the user's request and gather all the knowledge/context needed.
+-- For general questions/chat you can use the steps bellow to help to answer them.
+-- If the task needs multiple steps add a plan to guide you and the user.
+-  - Use `[ ]` and `[X]` to indicate the progress, keep it updated.
+-  - Send the plan right in the beginning.
+-- Explore the code base before delivering the solution:
+-  - Don't suppose anything about the files or the system.
+-  - Use the imports to understand the code organization and structure.
+-  - Use tools if you have access to explore the code base and options.
+-  - You can ask the user for more info or details of the task.
+-  - If you don't know something search for it.
+-- Implement the task considering the constraints given.
+-  - Be consistent with the code base's style.
+-  - Before finishing ask yourself if you correctly addressed the input.
+-- Don't use commands to change files unless explicitly told to.
+-- To actually implement the changes you must call the patch tool.
+-- Normally the task ends with the patch, also respond with notes or instructions.
+-- Only final answers.
+-- Don't return xml formated text, use plain text
+-]]
+-
+-local history = { { role = "system", content = M.system_prompt } }
+-
+-function M.task(task, callback)
+-	log.info("Agent executing task: " .. task)
+-	local msg = { role = "user", content = task }
+-	table.insert(history, msg)
+-	provider.request(
+-		config.all_rounder,
+-		history,
+-		nil,
+-		function(data, err)
+-			local response = { role = "assistant" }
+-			if err then
+-				response.content = err
+-			else
+-				response.content = vim.json.encode(data.content)
+-				response.tool_calls = data.tool_calls
+-			end
+-			table.insert(history, response)
+-
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+-function M.run_tools(tool_calls, callback)
+-	log.info("Agent running tools")
+-
+-	for _, cmd in ipairs(tool_calls) do
+-		local name = cmd["function"]["name"]
+-		local out = tools.run(cmd)
+-		local msg = { role = "tool", content = out, tool_name = name }
+-		table.insert(history, msg)
+-	end
+-
+-	provider.request(
+-		config.all_rounder,
+-		history,
+-		nil,
+-		function(data, err)
+-			local response = { role = "assistant" }
+-			if err then
+-				response.content = err
+-			else
+-				response.content = vim.json.encode(data.content)
+-				response.tool_calls = data.tool_calls
+-			end
+-			table.insert(history, response)
+-
+-			callback(data, err)
+-		end
+-	)
+-end
+-
+-function M.clear_history()
+-	history = { { role = "system", content = M.system_prompt } }
+-end
+-
+-return M
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agents/tai.lua
+new file mode 100644
+index 0000000..0fe5e26
+--- /dev/null
++++ b/lua/tai/agents/tai.lua
+@@ -0,0 +1,93 @@
++-- all_rounder.lua: Coder agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local config = require('tai.config')
++local log = require('tai.log')
++local tools = require('tai.agents.tools')
++
++if not config.root then
++	return M
++end
++
++local provider
++if config.provider == 'groq' then
++	provider = require('tai.providers.groq')
++elseif config.provider == 'gemini' then
++	provider = require('tai.providers.gemini')
++elseif config.provider == 'local' then
++	provider = require('tai.providers.local')
++elseif config.provider == "mistral" then
++	return M
++elseif config.provider == nil then
++	-- do nothing
++else
++	error('Unknown chat provider: ' .. config.provider)
++end
++
++local host = vim.uv.os_uname()
++
++M.system_prompt = [[
++SYSTEM
++You are a Tai, an excelent coding and system admin agent. You are in charge of
++implementing the tasks requested in the current project. You will receive high
++level feature requests or general questions. Your job is to address them.
++
++The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
++    vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
++    host.machine .. " " .. host.sysname .. [[ machine.
++
++]] .. tools.pretty_info(config.tai.tools) .. [[
++
++INSTRUCTIONS
++Understand the user's request and gather all the knowledge/context needed.
++- You can ask the user for more info or details of the task.
++- Don't return xml tags for plain text. Don't use markdown, only ASCII/ANSI.
++- If the task needs multiple steps use `[ ]` and `[X]` to indicate the progress.
++If the demand is specific to the current project then:
++- Explore the code base before delivering the solution:
++  - Use the tools available to understand the code base.
++  - A good starter is `ls -R` or `find`. Reading AGENTS.md can help too.
++  - The imports help you understand the code organization and structure.
++If code changes are needed:
++- Implement the task considering the constraints given.
++  - Be consistent with the code base's style.
++- You must know the contents before changing a file.
++- Don't use the run tool to change files unless explicitly told to.
++- Call the patch tool to implement the changes you want.
++]]
++
++provider.add_to_history({ role = "system", content = M.system_prompt })
++
++function M.task(task, callback)
++	log.info("Agent executing task: " .. task)
++	provider.request(
++		config.tai,
++		{ role = "user", content = task },
++		nil,
++		function(data, err)
++			local response = { role = "assistant" }
++			if err then
++				response.content = err
++			else
++				response.content = vim.json.encode(data.content)
++				response.tool_calls = data.tool_calls
++			end
++			provider.add_to_history(response)
++
++			callback(data, err)
++		end
++	)
++end
++
++function M.add_to_history(msg)
++	provider.add_to_history(msg)
++end
++
++function M.clear_history()
++	provider.clear_history()
++	provider.add_to_history({ role = "system", content = M.system_prompt })
++end
++
++return M
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index dfafd71..a0688c3 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -320,12 +320,9 @@ local function apply_patch(name, changes)
+ end
+ 
+ -- TODO: there must be an enum for tool names
+-function M.run(cmd)
++function M.run(tool, args)
+ 	log.debug("Running tool call")
+ 
+-	local tool = cmd["function"]["name"]
+-	local args = cmd["function"].arguments
+-
+ 	if tool == "read_file" then
+ 		if not args.file_path then
+ 			return "[sys] missing read_file argument"
+@@ -344,7 +341,7 @@ function M.run(cmd)
+ 		return "[sys] patch received and submitted for user approval"
+ 	end
+ 
+-	return "[tai] Unknown tool `" .. tool .. "`"
++	return "[sys] Unknown tool `" .. tool .. "`"
+ end
+ 
+ return M
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index b16fed5..317ba0c 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -78,11 +78,11 @@ if file then
+ 			tools = data.writer.tools,
+ 			think = data.writer.think or nil
+ 		}
+-		M.all_rounder = {
+-			model = data.all_rounder.model,
+-			options = data.all_rounder.options,
+-			tools = data.all_rounder.tools,
+-			think = data.all_rounder.think or nil
++		M.tai = {
++			model = data.tai.model,
++			options = data.tai.options,
++			tools = data.tai.tools,
++			think = data.tai.think or nil
+ 		}
+ 		if data.allowed_commands then
+ 			M.allowed_commands = data.allowed_commands
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 3fa63e7..8eb9f4e 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -7,7 +7,8 @@ local planner = require("tai.agents.planner")
+ local coder = require("tai.agents.coder")
+ local patcher = require("tai.agents.patcher")
+ local writer = require("tai.agents.writer")
+-local all_rounder = require("tai.agents.all_rounder")
++local tai = require("tai.agents.tai")
++local tools = require("tai.agents.tools")
+ local ui = require("tai.ui")
+ 
+ local completion_prompt =
+@@ -22,139 +23,172 @@ function M.init()
+ 	agents.init()
+ end
+ 
+-local function handle_coder_req(req, cb)
+-	log.debug("handling coder request: " .. req)
+-	coder.task(
+-		req,
+-		function(reply, err)
+-			if reply.tool_calls then
+-				ui.show_tool_calls(reply.tool_calls)
+-				coder.run_tools(
+-					reply.tool_calls,
+-					function(data, err)
+-						if err then
+-							ui.show_response({ error = err })
+-							return
+-						end
+-						return handle_coder_req(data.content.coder, cb)
+-					end
+-				)
+-				return
+-			end
+-			if reply.content.patcher then
+-				log.debug("coder reply to patcher: " .. reply.content.patcher)
+-				patcher.create_patch(
+-					reply.content.patcher,
+-					function(out, err)
+-						log.debug("patcher reply: " .. out.content)
+-						cb({ content = { writer = reply.content.writer, patcher = out.content } }, nil)
+-					end
+-				)
+-				return
+-			end
+-			cb({ content = { writer = reply.content.writer } }, nil)
+-		end
+-	)
+-end
++-- local function handle_coder_req(req, cb)
++-- 	log.debug("handling coder request: " .. req)
++-- 	coder.task(
++-- 		req,
++-- 		function(reply, err)
++-- 			if reply.tool_calls then
++-- 				ui.show_tool_calls(reply.tool_calls)
++-- 				coder.run_tools(
++-- 					reply.tool_calls,
++-- 					function(data, err)
++-- 						if err then
++-- 							ui.show_response({ error = err })
++-- 							return
++-- 						end
++-- 						return handle_coder_req(data.content.coder, cb)
++-- 					end
++-- 				)
++-- 				return
++-- 			end
++-- 			if reply.content.patcher then
++-- 				log.debug("coder reply to patcher: " .. reply.content.patcher)
++-- 				patcher.create_patch(
++-- 					reply.content.patcher,
++-- 					function(out, err)
++-- 						log.debug("patcher reply: " .. out.content)
++-- 						cb(
++-- 							{ content = { writer = reply.content.writer, patcher = out.content } },
++-- 							nil)
++-- 					end
++-- 				)
++-- 				return
++-- 			end
++-- 			cb({ content = { writer = reply.content.writer } }, nil)
++-- 		end
++-- 	)
++-- end
++-- 
++-- local function handle_planner_reply(reply)
++-- 	log.info("handling reply")
++-- 
++-- 	if reply.tool_calls then
++-- 		ui.show_tool_calls(reply.tool_calls)
++-- 		planner.run_tools(
++-- 			reply.tool_calls,
++-- 			function(data, err)
++-- 				if err then
++-- 					ui.show_response({ error = err })
++-- 					return
++-- 				end
++-- 				return handle_planner_reply(data)
++-- 			end
++-- 		)
++-- 		return
++-- 	end
++-- 
++-- 	if not reply.content.coder then
++-- 		if not reply.content.writer then
++-- 			log.error("planner did not sent writer field")
++-- 			ui.show_response({ error = "Planner did not sent writer field" })
++-- 			return
++-- 		end
++-- 
++-- 		log.debug("calling writer after planner: " .. reply.content.writer)
++-- 		writer.write(
++-- 			reply.content.writer,
++-- 			function(data, err)
++-- 				if err then
++-- 					log.error("writer gave error: " .. err)
++-- 					ui.show_response({ error = err })
++-- 					return
++-- 				end
++-- 				ui.show_response(data.content)
++-- 			end
++-- 		)
++-- 		return
++-- 	end
++-- 
++-- 	-- planner called coder
++-- 	handle_coder_req(
++-- 		reply.content.coder,
++-- 		function(res, err)
++-- 			local text = res.content.writer or ""
++-- 			if reply.content.writer then
++-- 				text = reply.content.writer .. "\n\n" .. text
++-- 			end
++-- 			log.debug("calling writer after coder/patcher: " .. text)
++-- 			writer.write(
++-- 				text,
++-- 				function(data, err)
++-- 					ui.show_response(
++-- 						{
++-- 							plan = data.content.plan,
++-- 							text = data.content.text,
++-- 							patch = res.content.patcher
++-- 						}
++-- 					)
++-- 				end
++-- 			)
++-- 		end
++-- 	)
++-- end
++-- 
++-- function M.process_request(prompt)
++-- 	log.debug("Processing request " .. prompt)
++-- 
++-- 	planner.plan(
++-- 		prompt,
++-- 		function(reply, err)
++-- 			if err then
++-- 				log.error("received error from planner: " .. err)
++-- 				ui.show_response({ error = err })
++-- 				return
++-- 			end
++-- 
++-- 			vim.schedule(function() handle_planner_reply(reply) end)
++-- 		end
++-- 	)
++-- end
++
++-- function(data, err)
++-- 	if err then
++-- 		ui.show_response({ error = err })
++-- 		return
++-- 	end
++-- 	return handle_chat_reply(data)
++-- end
+ 
+-local function handle_planner_reply(reply)
+-	log.info("handling reply")
++local function handle_chat_reply(reply)
++	log.info("handling chat reply")
+ 
++	ui.show_response(reply)
+ 	if reply.tool_calls then
+-		ui.show_tool_calls(reply.tool_calls)
+-		planner.run_tools(
+-			reply.tool_calls,
+-			function(data, err)
+-				if err then
+-					ui.show_response({ error = err })
+-					return
++		for _, call in ipairs(reply.tool_calls) do
++			local name = call["function"].name
++			local args = call["function"].arguments
++
++			local out
++			if name == "run" then
++				log.debug("Asking for confirmation")
++				local input = vim.fn.confirm("Proceed? [y/N]", "&amp;y\n&amp;N", 2)
++				if input == 1 then
++					log.debug("Confirmed")
++					out = tools.run(name, args)
++				else
++					log.debug("Declined")
++					out = "[sys] User declined"
+ 				end
+-				return handle_planner_reply(data)
++			else
++				out = tools.run(name, args)
+ 			end
+-		)
+-		return
+-	end
+-
+-	if not reply.content.coder then
+-		if not reply.content.writer then
+-			log.error("planner did not sent writer field")
+-			ui.show_response({ error = "Planner did not sent writer field" })
+-			return
+-		end
+ 
+-		log.debug("calling writer after planner: " .. reply.content.writer)
+-		writer.write(
+-			reply.content.writer,
+-			function(data, err)
+-				if err then
+-					log.error("writer gave error: " .. err)
+-					ui.show_response({ error = err })
+-					return
+-				end
+-				ui.show_response(data.content)
+-			end
+-		)
+-		return
+-	end
+-
+-	-- planner called coder
+-	handle_coder_req(
+-		reply.content.coder,
+-		function(res, err)
+-			local text = res.content.writer or ""
+-			if reply.content.writer then
+-				text = reply.content.writer .. "\n\n" .. text
+-			end
+-			log.debug("calling writer after coder/patcher: " .. text)
+-			writer.write(
+-				text,
+-				function(data, err)
+-					ui.show_response(
+-						{
+-							plan = data.content.plan,
+-							text = data.content.text,
+-							patch = res.content.patcher
+-						}
+-					)
+-				end
++			tai.add_to_history(
++				{
++					role = "tool",
++					content = out,
++					tool_call_id = call.id
++				}
+ 			)
+ 		end
+-	)
+-end
+-
+-function M.process_request(prompt)
+-	log.debug("Processing request " .. prompt)
+-
+-	planner.plan(
+-		prompt,
+-		function(reply, err)
+-			if err then
+-				log.error("received error from planner: " .. err)
+-				ui.show_response({ error = err })
+-				return
+-			end
+-
+-			vim.schedule(function() handle_planner_reply(reply) end)
+-		end
+-	)
+-end
+ 
+-local function handle_chat_reply(reply)
+-	log.info("handling chat reply")
+-
+-	ui.show_response(reply)
+-	if reply.tool_calls then
+-		all_rounder.run_tools(
+-			reply.tool_calls,
+-			function(data, err)
+-				if err then
+-					ui.show_response({ error = err })
+-					return
+-				end
+-				return handle_chat_reply(data)
++		tai.task(
++			"I added the tool calls outputs, continue with the task.",
++			function(reply, err) vim.schedule(function()
++				handle_chat_reply(reply) end)
+ 			end
+ 		)
+-		return
+ 	end
+ end
+ 
+@@ -162,11 +196,11 @@ function M.chat(prompt)
+ 	log.debug("Processing chat request " .. prompt)
+ 
+ 	ui.append_to_buffer("--------------------------\n&gt; " .. prompt .. "\n")
+-	all_rounder.task(
++	tai.task(
+ 		prompt,
+ 		function(reply, err)
+ 			if err then
+-				log.error("received error from planner: " .. err)
++				log.error("received error from agent: " .. err)
+ 				ui.show_response({ error = err })
+ 				return
+ 			end
+@@ -177,7 +211,7 @@ function M.chat(prompt)
+ end
+ 
+ function M.clear_history()
+-	all_rounder.clear_history()
++	tai.clear_history()
+ 	ui.clear()
+ end
+ 
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 6f13be3..7d0e459 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -12,7 +12,24 @@ if not api_key then
+ 	end)
+ end
+ 
+-function M.request(model_config, messages, format, callback)
++local history = { {} }
++
++function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
++	for _, call in ipairs(msg.tool_calls or {}) do
++		local args = call["function"].arguments
++		call["function"].arguments = vim.json.encode(args)
++	end
++	table.insert(history, msg)
++end
++
++function M.clear_history()
++	history = { {} }
++end
++
++function M.request(model_config, msg, format, callback)
++	M.add_to_history(msg)
++
+ 	local agent_tools = vim.tbl_map(
+ 		function(t)
+ 			return tools.defs[t]
+@@ -21,7 +38,7 @@ function M.request(model_config, messages, format, callback)
+ 	)
+ 	local body = {
+ 		model = model_config.model,
+-		messages = messages,
++		messages = history,
+ 		tools = agent_tools,
+ 	}
+ 	if format then
+@@ -85,9 +102,12 @@ function M.request(model_config, messages, format, callback)
+ 			end
+ 
+ 			fields.tool_calls = message.tool_calls
++			for _, call in ipairs(fields.tool_calls) do
++				local args = call["function"].arguments
++				call["function"].arguments = vim.json.decode(args)
++			end
+ 			callback(fields, nil)
+ 		end)
+ end
+ 
+ return M
+-
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 6c55e0f..66216ff 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -62,13 +62,13 @@ end
+ 
+ function M.show_response(fields)
+ 	log.debug("Showing response")
++	M.open()
+ 
+ 	local content = ""
+ 	if fields.error then
+-		content = content .. "[tai] " .. fields.error
+-	end
+-	if fields.content and fields.content ~= "" then
+-		content = content .. fields.content .. "\n"
++		content = content .. "[tai] " .. fields.error .. "\n"
++		M.append_to_buffer(content)
++		return
+ 	end
+ 	if fields.tool_calls then
+ 		for _, call in ipairs(fields.tool_calls) do
+@@ -83,9 +83,15 @@ function M.show_response(fields)
+ 			end
+ 		end
+ 	end
++	if fields.content and fields.content ~= "" then
++		content = content .. fields.content .. "\n"
++	end
++
++	if not fields.tool_calls and not fields.content then
++		content = content .. "[tai] Received empty reply."
++	end
+ 
+ 	M.append_to_buffer(content)
+-	M.open()
+ end
+ 
+ function M.clear()
+@@ -154,4 +160,32 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
++-- Prompt user for simple input
++function M.ask(callback)
++	local bufnr = vim.api.nvim_create_buf(false, true)
++	local width = math.min(80, vim.o.columns - 10)
++	local height = math.min(10, vim.o.lines - 10)
++
++	local winnr = vim.api.nvim_open_win(bufnr, true, {
++		relative = 'editor',
++		width = width,
++		height = height,
++		col = (vim.o.columns - width) / 2,
++		row = (vim.o.lines - height) / 2,
++		style = 'minimal',
++		border = 'rounded'
++	})
++
++	vim.bo[bufnr].buftype = 'nofile'
++	vim.bo[bufnr].bufhidden = 'wipe'
++	vim.bo[bufnr].swapfile = false
++	vim.bo[bufnr].filetype = 'text'
++
++	vim.keymap.set('n', '&lt;CR&gt;', function()
++		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++		local text = table.concat(lines, '\n')
++		vim.api.nvim_win_close(winnr, false)
++		callback(text)
++	end, { buffer = bufnr })
++end
+ return M
+</pre>

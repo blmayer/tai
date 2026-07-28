@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 89f7d20</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 89f7d20
+parent <a href=commit-525fc71.html>525fc71</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-15T22:48:43-03:00
+
+    Improved code duplication for providers
+
+<a href=tree-89f7d20.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index f2cef8e..5709dd4 100644
+--- a/README.md
++++ b/README.md
+@@ -4,7 +4,7 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
++This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, Openrouter, StpeFun and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+ 
+        GROQ_API_KEY=your_api_key_here
+ 
+diff --git a/lua/tai/gemini.lua b/lua/tai/gemini.lua
+index 57a432b..7edfba6 100644
+--- a/lua/tai/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -1,6 +1,7 @@
+ local M = {}
+ 
+ local log = require("tai.log")
++local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
+ local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+@@ -27,8 +28,12 @@ function M.clear_history()
+ 	history = { {} }
+ end
+ 
+-function M.request(model_config, msg, format, callback)
+-	M.add_to_history(msg)
++function M.request(model_config, msgs, format, callback)
++	-- Add messages to history
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++	tools.refresh_connected_files(history)
+ 
+ 	local body = {
+ 		model = model_config.model,
+@@ -36,16 +41,12 @@ function M.request(model_config, msg, format, callback)
+ 	}
+ 
+ 	if config.use_tools ~= false then
+-		local agent_tools = vim.tbl_map(
+-			function(t)
+-				return tools.defs[t]
+-			end,
+-			model_config.tools or {}
+-		)
++		local agent_tools = provider_common.build_agent_tools(model_config)
+ 		body.tools = agent_tools
+ 	end
++
+ 	if format then
+-		body.format = format
++		body.response_format = { type = format }
+ 	end
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+@@ -57,60 +58,45 @@ function M.request(model_config, msg, format, callback)
+ 	local request_body = vim.json.encode(body)
+ 
+ 	log.debug("Requesting " .. url .. " with " .. request_body)
+-	vim.system(
+-		{
+-			"curl", "-s", "-X", "POST", url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", request_body,
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
+-
+-			log.debug("Request response: " .. obj.stdout)
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Gemini")
+-			end
+-
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. parsed)
+-			end
+-
+-			if #parsed &gt; 0 and parsed[1].error then
+-				return callback(nil, "Received error: " .. parsed[1].error.message)
+-			end
+-
+-			if parsed.error then
+-				return callback(nil, parsed.error)
+-			end
+-
+-			local message = parsed.choices[1].message
+-			local content = message.content
+-			local fields = {}
+-			if content and content ~= "" then
+-				log.debug("response content: " .. content)
+-				if format ~= nil then
+-					log.debug("parsing JSON content")
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message")
+-					end
+-				else
+-					fields.content = content
++	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++		if err then
++			return callback(nil, err)
++		end
++
++		log.debug("Request response: " .. vim.inspect(parsed))
++
++		-- Gemini can return errors as array
++		if #parsed &gt; 0 and parsed[1].error then
++			return callback(nil, "Received error: " .. parsed[1].error.message)
++		end
++		if parsed.error then
++			return callback(nil, parsed.error)
++		end
++
++		if not parsed.choices or #parsed.choices == 0 then
++			return callback(nil, "No choices received from Gemini")
++		end
++
++		local message = parsed.choices[1].message
++		local fields = {}
++
++		if message.content and message.content ~= "" then
++			if format ~= nil then
++				local decoded = vim.json.decode(message.content)
++				if not decoded then
++					return callback(nil, "Failed to decode message")
+ 				end
++				fields.content = decoded
++			else
++				fields.content = message.content
+ 			end
++		end
+ 
+-			fields.tool_calls = message.tool_calls
+-			for _, call in ipairs(fields.tool_calls or {}) do
+-				local args = call["function"].arguments
+-				call["function"].arguments = vim.json.decode(args)
+-			end
+-			callback(fields, nil)
+-		end)
++		fields.tool_calls = message.tool_calls
++		provider_common.decode_tool_call_arguments(fields.tool_calls)
++
++		callback(fields, nil)
++	end)
+ end
+ 
+ return M
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index de4a2f1..80f6a2a 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -1,8 +1,9 @@
+ local M = {}
+ 
+ local log = require("tai.log")
++local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+-
++local config = require("tai.config")
+ local url = 'http://localhost:11434/v1/chat/completions'
+ 
+ local history = nil
+@@ -29,86 +30,76 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+-	local agent_tools = vim.tbl_map(
+-		function(t)
+-			return tools.defs[t]
+-		end,
+-		model_config.tools or {}
+-	)
+-	local body = {
+-		model = model_config.model,
+-		messages = history,
+-		stream = false,
+-		tools = agent_tools,
+-	}
+-	if format then
+-		body.format = format
+-	end
+-	if model_config.think ~= nil then
+-		body.think = model_config.think
+-	end
+-	if model_config.options then
+-		body.options = model_config.options
+-	end
+-
+-	local request_body = vim.json.encode(body)
+-
+-	log.debug("Requesting " .. url .. " with " .. request_body)
+-	vim.system(
+-		{
+-			'curl', '-s', '-X', "POST", url,
+-			'-H', 'Content-Type: application/json',
+-			'-d', request_body
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
+-
+-			log.debug("Request response: " .. obj.stdout)
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from server")
+-			end
+-
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. parsed)
+-			end
+-
+-			if parsed.error then
+-				return callback(nil, "Received error: " .. parsed.error.message)
+-			end
+-
+-			local content = parsed.choices[1].message.content
+-			local fields = {}
+-			if content and content ~= "" then
+-				log.debug("response content: " .. content)
+-				if format ~= nil then
+-					log.debug("parsing JSON content")
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message")
+-					end
+-				else
+-					fields.content = content
+-				end
+-			end
+-
+-			local tool_calls = parsed.choices[1].message.tool_calls
+-			if tool_calls and tool_calls ~= vim.NIL then
+-				fields.tool_calls = tool_calls
+-				for _, call in ipairs(fields.tool_calls) do
+-					local args = call["function"].arguments
+-					call["function"].arguments = vim.json.decode(args)
+-				end
+-			end
+-			callback(fields, nil)
+-		end)
++    for _, msg in ipairs(msgs) do
++        M.add_to_history(msg)
++    end
++
++    local agent_tools = provider_common.build_agent_tools(model_config)
++    local body = {
++        model = model_config.model,
++        messages = history,
++        stream = false,
++        tools = agent_tools,
++    }
++    if format then
++        body.format = format
++    end
++    if model_config.think ~= nil then
++        body.think = model_config.think
++    end
++    if model_config.options then
++        body.options = model_config.options
++    end
++
++    local request_body = vim.json.encode(body)
++
++    log.debug("Requesting " .. url .. " with " .. request_body)
++    vim.system(
++        {
++            'curl', '-s', '-X', "POST", url,
++            '-H', 'Content-Type: application/json',
++            '-d', request_body
++        }, { text = true }, function(obj)
++            if obj.code ~= 0 then
++                local err_msg = "curl returned code " .. obj.code
++                callback(nil, err_msg)
++                return
++            end
++
++            log.debug("Request response: " .. obj.stdout)
++            if not obj.stdout or obj.stdout == "" then
++                return callback(nil, "Received empty response from server")
++            end
++
++            local parsed = vim.json.decode(obj.stdout)
++            if not parsed then
++                return callback(nil, "Failed to decode JSON: " .. tostring(obj.stdout))
++            end
++
++            if parsed.error then
++                return callback(nil, "Received error: " .. parsed.error.message)
++            end
++
++            local message = parsed.choices[1].message
++            local fields = {}
++            if message.content and message.content ~= "" then
++                log.debug("response content: " .. message.content)
++                if format ~= nil then
++                    log.debug("parsing JSON content")
++                    fields.content = vim.json.decode(message.content)
++                    if not fields.content then
++                        return callback(nil, "Failed to decode message")
++                    end
++                else
++                    fields.content = message.content
++                end
++            end
++
++            fields.tool_calls = message.tool_calls
++            provider_common.decode_tool_call_arguments(fields.tool_calls)
++
++            callback(fields, nil)
++        end)
+ end
+ 
+ return M
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 568a6f5..1ec3a54 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -1,8 +1,9 @@
+ local M = {}
+ 
+-local log = require("tai.log")
++local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
++local log = require("tai.log")
+ local url = "https://api.mistral.ai/v1/chat/completions"
+ 
+ local api_key = os.getenv("MISTRAL_API_KEY")
+@@ -27,116 +28,56 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+-	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
+-
+-	local agent_tools = vim.tbl_map(
+-		function(t)
+-			return tools.defs[t]
+-		end,
+-		model_config.tools or {}
+-	)
+-	local body = {
+-		model = model_config.model,
+-		messages = {},
+-	}
+-	for _, message in ipairs(history) do
+-		local new_message = {}
+-		for key, value in pairs(message) do
+-			if key ~= "file_path" and key ~= "file_range" then
+-				new_message[key] = value
+-			end
+-		end
+-		table.insert(body.messages, new_message)
+-	end
+-
+-	if config.use_tools ~= false and #agent_tools &gt; 0 then
+-		body.tools = agent_tools
+-	end
+-
+-	-- Mistral API does not directly support 'format', 'reasoning_effort' or 'extra_body' at the top level
+-	-- in the same way Gemini does.
+-	-- If a specific format (e.g., JSON) is needed, it's usually via 'response_format'.
+-	-- For now, I'll omit these or adapt if user specifies.
+-	if format == "json_object" then -- Assuming 'json_object' as a possible format for Mistral
+-		body.response_format = { type = "json_object" }
+-	end
+-
+-	-- Add other model options if provided in model_config.options, assuming they are valid Mistral API parameters
+-	if model_config.options then
+-		for k, v in pairs(model_config.options) do
+-			body[k] = v
+-		end
+-	end
+-
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-
+-	local request_body = vim.json.encode(body)
+-	vim.system(
+-		{
+-			"curl", "-s", "-X", "POST", url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", request_body,
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
+-
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Mistral")
+-			end
+-
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+-			end
+-			log.debug("Request response: " .. vim.inspect(parsed))
+-
+-			-- Mistral errors are usually at the root level, e.g., parsed.error
+-			if parsed.object == "error" then
+-				return callback(nil, parsed.message or "Unknown Mistral API error")
+-			end
+-
+-			if not parsed.choices or #parsed.choices == 0 then
+-				return callback(nil, "No choices received from Mistral")
+-			end
+-
+-			local message = parsed.choices[1].message
+-			local content = message.content
+-			local fields = {}
+-			if content and content ~= "" then
+-				if format == "json_object" then
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message content as JSON")
+-					end
+-				else
+-					fields.content = content
+-				end
+-			end
+-
+-			if message.tool_calls and message.tool_calls ~= vim.NIL then
+-				fields.tool_calls = message.tool_calls
+-				for _, call in ipairs(fields.tool_calls) do
+-					local args = call["function"].arguments
+-					call["function"].arguments = vim.json.decode(args)
+-				end
+-			end
+-
+-			-- Mistral tool call arguments are already JSON objects, no need to decode
+-			-- Extract token usage if available
+-			if parsed.usage and parsed.usage.total_tokens then
+-				fields.token_usage = parsed.usage.total_tokens
+-			end
+-			callback(fields, nil)
+-		end)
++    for _, msg in ipairs(msgs) do
++        M.add_to_history(msg)
++    end
++
++    -- Keep connected files up to date in history before sending.
++    tools.refresh_connected_files(history)
++
++    local agent_tools = provider_common.build_agent_tools(model_config)
++
++    local body = {
++        model = model_config.model,
++        messages = provider_common.filter_messages(history),
++    }
++
++    if config.use_tools ~= false and #agent_tools &gt; 0 then
++        body.tools = agent_tools
++    end
++
++    if format == "json_object" then
++        body.response_format = { type = "json_object" }
++    end
++
++    if model_config.options then
++        for k, v in pairs(model_config.options) do
++            body[k] = v
++        end
++    end
++
++    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++    local request_body = vim.json.encode(body)
++
++    provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++        if err then
++            return callback(nil, err)
++        end
++
++        if parsed.object == "error" then
++            return callback(nil, parsed.message or "Unknown Mistral API error")
++        end
++
++        local fields, extract_err = provider_common.extract_fields(parsed, format)
++        if extract_err then
++            return callback(nil, extract_err)
++        end
++
++        -- Extract token usage if available
++        if parsed.usage and parsed.usage.total_tokens then
++            fields.token_usage = parsed.usage.total_tokens
++        end
++        callback(fields, nil)
++    end)
+ end
+-
+ return M
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index cff58ca..dd98519 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -1,8 +1,9 @@
+ local M = {}
+ 
+-local log = require("tai.log")
+ local tools = require("tai.tools")
++local provider_common = require("tai.provider_common")
+ local config = require("tai.config")
++local log = require("tai.log")
+ local url = "https://openrouter.ai/api/v1/chat/completions"
+ 
+ local api_key = os.getenv("OPENROUTER_API_KEY")
+@@ -32,115 +33,96 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+-	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
+-
+-	local body = {
+-		model = model_config.model,
+-		messages = {},
+-	}
+-
+-	if config.use_tools ~= false then
+-		body.tools = {
+-			tools.defs["read_file"],
+-			tools.defs["shell"],
+-			tools.defs["patch"],
+-			tools.defs["summarize"],
+-			tools.defs["connect_file"],
+-
+-		}
+-	end
+-	for _, message in ipairs(history) do
+-		local new_message = {}
+-		for key, value in pairs(message) do
+-			if key ~= "file_path" and key ~= "file_range" then
+-				new_message[key] = value
+-			end
+-		end
+-		table.insert(body.messages, new_message)
+-	end
+-
+-	-- Mistral API does not directly support 'format', 'reasoning_effort' or 'extra_body' at the top level
+-	-- in the same way Gemini does.
+-	-- If a specific format (e.g., JSON) is needed, it's usually via 'response_format'.
+-	-- For now, I'll omit these or adapt if user specifies.
+-	if format == "json_object" then -- Assuming 'json_object' as a possible format for Mistral
+-		body.response_format = { type = "json_object" }
+-	end
+-
+-	-- Add other model options if provided in model_config.options, assuming they are valid Mistral API parameters
+-	if model_config.options then
+-		for k, v in pairs(model_config.options) do
+-			body[k] = v
+-		end
+-	end
+-
+-	local request_body = vim.json.encode(body)
+-
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-	vim.system(
+-		{
+-			"curl", "-s", "-X", "POST", url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", request_body,
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
+-
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Mistral")
+-			end
+-
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
+-			end
+-			log.debug("Request response: " .. vim.inspect(parsed))
+-
+-			-- Mistral errors are usually at the root level, e.g., parsed.error
+-			if parsed.error then
+-				return callback(nil, parsed.error.message)
+-			end
+-
+-			if not parsed.choices or #parsed.choices == 0 then
+-				return callback(nil, "No choices received from Openrouter")
+-			end
+-
+-			local message = parsed.choices[1].message
+-			local content = message.content
+-			local fields = {}
+-			if content and content ~= "" then
+-				log.debug("response content: " .. content)
+-				if format == "json_object" then
+-					log.debug("parsing JSON content")
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message content as JSON")
+-					end
+-				else
+-					fields.content = content
+-				end
+-			end
+-
+-			if message.tool_calls and message.tool_calls ~= vim.NIL then
+-				fields.tool_calls = message.tool_calls
+-				for _, call in ipairs(fields.tool_calls) do
+-					local args = call["function"].arguments
+-					call["function"].arguments = vim.json.decode(args)
+-				end
+-			end
+-
+-			-- Mistral tool call arguments are already JSON objects, no need to decode
+-			callback(fields, nil)
+-		end)
++    for _, msg in ipairs(msgs) do
++        M.add_to_history(msg)
++    end
++
++    -- Keep connected files up to date in history before sending.
++    tools.refresh_connected_files(history)
++
++    local body = {
++        model = model_config.model,
++        messages = {},
++    }
++
++    if config.use_tools ~= false then
++        body.tools = {
++            tools.defs["read_file"],
++            tools.defs["shell"],
++            tools.defs["patch"],
++            tools.defs["summarize"],
++            tools.defs["connect_file"],
++        }
++    end
++    for _, message in ipairs(history) do
++        local new_message = provider_common.filter_message(message)
++        table.insert(body.messages, new_message)
++    end
++
++    if format == "json_object" then
++        body.response_format = { type = "json_object" }
++    end
++
++    if model_config.options then
++        for k, v in pairs(model_config.options) do
++            body[k] = v
++        end
++    end
++
++    local request_body = vim.json.encode(body)
++
++    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++    vim.system(
++        {
++            "curl", "-s", "-X", "POST", url,
++            "-H", "Authorization: Bearer " .. api_key,
++            "-H", "Content-Type: application/json",
++            "-d", request_body,
++        }, { text = true }, function(obj)
++            if obj.code ~= 0 then
++                local err_msg = "curl returned code " .. obj.code
++                callback(nil, err_msg)
++                return
++            end
++
++            if not obj.stdout or obj.stdout == "" then
++                return callback(nil, "Received empty response from Openrouter")
++            end
++
++            local parsed = vim.json.decode(obj.stdout)
++            if not parsed then
++                return callback(nil, "Failed to decode JSON: " .. obj.stdout)
++            end
++            log.debug("Request response: " .. vim.inspect(parsed))
++
++            if parsed.error then
++                return callback(nil, parsed.error.message)
++            end
++
++            if not parsed.choices or #parsed.choices == 0 then
++                return callback(nil, "No choices received from Openrouter")
++            end
++
++            local message = parsed.choices[1].message
++            local fields = {}
++            if message.content and message.content ~= "" then
++                log.debug("response content: " .. message.content)
++                if format == "json_object" then
++                    log.debug("parsing JSON content")
++                    fields.content = vim.json.decode(message.content)
++                    if not fields.content then
++                        return callback(nil, "Failed to decode message content as JSON")
++                    end
++                else
++                    fields.content = message.content
++                end
++            end
++
++            fields.tool_calls = message.tool_calls
++            provider_common.decode_tool_call_arguments(fields.tool_calls)
++
++            callback(fields, nil)
++        end)
+ end
+ 
+ return M
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+new file mode 100644
+index 0000000..bd9a2ac
+--- /dev/null
++++ b/lua/tai/provider_common.lua
+@@ -0,0 +1,154 @@
++local M = {}
++
++local log = require("tai.log")
++local tools = require("tai.tools")
++
++-- Build agent tools from model_config
++function M.build_agent_tools(model_config)
++	return vim.tbl_map(
++		function(t) return tools.defs[t] end,
++		model_config.tools or {}
++	)
++end
++
++-- Filter a single message to remove internal fields
++function M.filter_message(msg)
++	local new_msg = {}
++	for k, v in pairs(msg) do
++		if k ~= "file_path" and k ~= "file_range" then
++			new_msg[k] = v
++		end
++	end
++	return new_msg
++end
++
++-- Filter a list of messages
++function M.filter_messages(messages)
++	local filtered = {}
++	for _, msg in ipairs(messages) do
++		table.insert(filtered, M.filter_message(msg))
++	end
++	return filtered
++end
++
++-- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
++-- callback receives (parsed, error)
++function M.make_http_call(url, api_key, body_json, use_temp_file, callback)
++	if use_temp_file then
++		local tmp = vim.fn.tempname()
++		local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
++		if not ok_write then
++			return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
++		end
++		local function cleanup()
++			pcall(vim.fn.delete, tmp)
++		end
++		local ok_system, system_err = pcall(vim.system, {
++			"curl", "-s", "-X", "POST", url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "HTTP-Referer: https://terminal.pink/tai/index.html",
++			"-H", "X-Title: tai.nvim",
++			"-H", "Content-Type: application/json",
++			"--data-binary", "@" .. tmp,
++		}, { text = true }, function(obj)
++			cleanup()
++			if obj.code ~= 0 then
++				callback(nil, "curl returned code " .. obj.code)
++				return
++			end
++			if not obj.stdout or obj.stdout == "" then
++				callback(nil, "Received empty response")
++				return
++			end
++			local parsed = vim.json.decode(obj.stdout)
++			if not parsed then
++				callback(nil, "Failed to decode JSON response")
++				return
++			end
++			callback(parsed, nil)
++		end)
++		if not ok_system then
++			cleanup()
++			callback(nil, tostring(system_err))
++		end
++	else
++		local ok_system, system_err = pcall(vim.system, {
++			"curl", "-s", "-X", "POST", url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", body_json,
++		}, { text = true }, function(obj)
++			if obj.code ~= 0 then
++				callback(nil, "curl returned code " .. obj.code)
++				return
++			end
++			if not obj.stdout or obj.stdout == "" then
++				callback(nil, "Received empty response")
++				return
++			end
++			local parsed = vim.json.decode(obj.stdout)
++			if not parsed then
++				callback(nil, "Failed to decode JSON response")
++				return
++			end
++			callback(parsed, nil)
++		end)
++		if not ok_system then
++			callback(nil, tostring(system_err))
++		end
++	end
++end
++
++-- Extract fields (content, tool_calls) from a standard OpenAI-style response
++-- format is the requested format (e.g., "json_object")
++function M.extract_fields(parsed, format)
++	local fields = {}
++	if not parsed.choices or #parsed.choices == 0 then
++		return nil, "No choices received"
++	end
++	local message = parsed.choices[1].message
++	if not message then
++		return nil, "No message in response"
++	end
++	local content = message.content
++	if content and content ~= "" then
++		if format ~= nil then
++			local decoded = vim.json.decode(content)
++			if not decoded then
++				return nil, "Failed to decode message content as JSON"
++			end
++			fields.content = decoded
++		else
++			fields.content = content
++		end
++	end
++	if message.tool_calls and message.tool_calls ~= vim.NIL then
++		fields.tool_calls = message.tool_calls
++		for _, call in ipairs(fields.tool_calls) do
++			local args = call["function"].arguments
++			if type(args) == "string" then
++				local decoded = vim.json.decode(args)
++				if decoded then
++					call["function"].arguments = decoded
++				end
++			end
++		end
++	end
++	return fields, nil
++end
++
++-- Decode tool call arguments if they are JSON strings
++function M.decode_tool_call_arguments(calls)
++	if not calls then return end
++	for _, call in ipairs(calls) do
++		local args = call["function"].arguments
++		if type(args) == "string" then
++			local decoded = vim.json.decode(args)
++			if decoded then
++				call["function"].arguments = decoded
++			end
++		end
++	end
++end
++
++return M
+diff --git a/lua/tai/stepfun.lua b/lua/tai/stepfun.lua
+index 3df5f2c..629125a 100644
+--- a/lua/tai/stepfun.lua
++++ b/lua/tai/stepfun.lua
+@@ -1,9 +1,8 @@
+-
+ local M = {}
+-
+-local log = require("tai.log")
++local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
++local log = require("tai.log")
+ local url = "https://api.stepfun.ai/v1/chat/completions"
+ 
+ local api_key = os.getenv("STEPFUN_API_KEY")
+@@ -35,25 +34,12 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = vim.tbl_map(
+-		function(t)
+-			return tools.defs[t]
+-		end,
+-		model_config.tools or {}
+-	)
++	local agent_tools = provider_common.build_agent_tools(model_config)
++
+ 	local body = {
+ 		model = model_config.model,
+-		messages = {},
++		messages = provider_common.filter_messages(history),
+ 	}
+-	for _, message in ipairs(history) do
+-		local new_message = {}
+-		for key, value in pairs(message) do
+-			if key ~= "file_path" and key ~= "file_range" then
+-				new_message[key] = value
+-			end
+-		end
+-		table.insert(body.messages, new_message)
+-	end
+ 
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+ 		body.tools = agent_tools
+@@ -70,39 +56,11 @@ function M.request(model_config, msgs, format, callback)
+ 	end
+ 
+ 	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-
+ 	local request_body = vim.json.encode(body)
+-	-- Use a temporary file to avoid E2BIG (argument list too long) with curl
+-	local tmp = vim.fn.tempname()
+-	local ok_write, write_err = pcall(vim.fn.writefile, { request_body }, tmp)
+-	if not ok_write then
+-		return callback(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+-	end
+-
+-	local function cleanup()
+-		pcall(vim.fn.delete, tmp)
+-	end
+ 
+-	local ok_system, system_err = pcall(vim.system, {
+-		"curl", "-s", "-X", "POST", url,
+-		"-H", "Authorization: Bearer " .. api_key,
+-		"-H", "Content-Type: application/json",
+-		"--data-binary", "@" .. tmp,
+-	}, { text = true }, function(obj)
+-		cleanup()
+-		if obj.code ~= 0 then
+-			local err_msg = "curl returned code " .. obj.code
+-			callback(nil, err_msg)
+-			return
+-		end
+-
+-		if not obj.stdout or obj.stdout == "" then
+-			return callback(nil, "Received empty response from StepFun")
+-		end
+-
+-		local parsed = vim.json.decode(obj.stdout)
+-		if not parsed then
+-			return callback(nil, "Failed to decode JSON: " .. obj.stdout)
++	provider_common.make_http_call(url, api_key, request_body, false, function(parsed, err)
++		if err then
++			return callback(nil, err)
+ 		end
+ 
+ 		log.debug("Request response: " .. vim.inspect(parsed))
+@@ -111,30 +69,9 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, parsed.message or "Unknown StepFun API error")
+ 		end
+ 
+-		if not parsed.choices or #parsed.choices == 0 then
+-			return callback(nil, "No choices received from StepFun")
+-		end
+-
+-		local message = parsed.choices[1].message
+-		local content = message.content
+-		local fields = {}
+-		if content and content ~= "" then
+-			if format == "json_object" then
+-				fields.content = vim.json.decode(content)
+-				if not fields.content then
+-					return callback(nil, "Failed to decode message content as JSON")
+-				end
+-			else
+-				fields.content = content
+-			end
+-		end
+-
+-		if message.tool_calls and message.tool_calls ~= vim.NIL then
+-			fields.tool_calls = message.tool_calls
+-			for _, call in ipairs(fields.tool_calls) do
+-				local args = call["function"].arguments
+-				call["function"].arguments = vim.json.decode(args)
+-			end
++		local fields, extract_err = provider_common.extract_fields(parsed, format)
++		if extract_err then
++			return callback(nil, extract_err)
+ 		end
+ 
+ 		-- Extract token usage if available
+@@ -143,11 +80,6 @@ function M.request(model_config, msgs, format, callback)
+ 		end
+ 		callback(fields, nil)
+ 	end)
+-
+-	if not ok_system then
+-		cleanup()
+-		return callback(nil, tostring(system_err))
+-	end
+ end
+ 
+ return M
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+index ccc5aa1..d24c399 100644
+--- a/lua/tai/z_ai.lua
++++ b/lua/tai/z_ai.lua
+@@ -1,8 +1,9 @@
+ local M = {}
+ 
+-local log = require("tai.log")
++local provider_common = require("tai.provider_common")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
++local config = require("tai.config")
+ 
+ local url = "https://api.z.ai/api/paas/v4/chat/completions"
+ 
+@@ -35,22 +36,17 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = vim.tbl_map(
+-		function(t)
+-			return tools.defs[t]
+-		end,
+-		model_config.tools or {}
+-	)
++    local agent_tools = provider_common.build_agent_tools(model_config)
+ 	local body = {
+ 		model = model_config.model,
+-		messages = history,
++        messages = provider_common.filter_message(history) or {},
+ 		tools = agent_tools,
+ 	}
+ 	if format then
+ 		body.format = format
+ 	end
+-	if config.use_tools ~= false and #agent_tools &gt; 0 then
+-		body.tools = agent_tools
++    if config.use_tools ~= false and #agent_tools &gt; 0 then
++        body.tools = agent_tools
+ 	end
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+@@ -109,11 +105,8 @@ function M.request(model_config, msgs, format, callback)
+ 				end
+ 			end
+ 
+-			fields.tool_calls = message.tool_calls
+-			for _, call in ipairs(fields.tool_calls or {}) do
+-				local args = call["function"].arguments
+-				call["function"].arguments = vim.json.decode(args)
+-			end
++            fields.tool_calls = message.tool_calls
++            provider_common.decode_tool_call_arguments(fields.tool_calls)
+ 			callback(fields, nil)
+ 		end)
+ end
+</pre>

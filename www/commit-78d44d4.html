@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 78d44d4</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 78d44d4
+parent <a href=commit-89477af.html>89477af</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-22T21:29:06-03:00
+
+    nvim: improved tool ui
+
+    patch tool: changed format (WIP)
+
+<a href=tree-78d44d4.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+index 4c84bb8..854388e 100644
+--- a/lua/tai/agents/all_rounder.lua
++++ b/lua/tai/agents/all_rounder.lua
+@@ -28,9 +28,9 @@ end
+ 
+ M.system_prompt = [[
+ SYSTEM
+-You are a Tai, an excelent coding agent. You are in charge of implementing
+-the tasks requested in the current project. You will receive high level
+-feature requests or general questions. Your job is to address them.
++You are a Tai, an excelent coding and system admin agent. You are in charge of
++implementing the tasks requested in the current project. You will receive high
++level feature requests or general questions. Your job is to address them.
+ 
+ You have full access to the code base, and a shell at the project's root.
+ 
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index 5b8813b..b5c8851 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -8,7 +8,7 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "read_file",
+-			description = "Reads the content of a file from the file system.",
++			description = "Reads the content of a file from the file system. And returns the content with numberred lines.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -25,15 +25,35 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "patch",
+-			description =
+-			"Creates a patch from the given changes, please separate them by file, use line numbers and show the new content.",
++			description = "Creates a patch from the given changes, please separate them by file and operation, use line numbers and show the new content. This will ask for user approval.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					changes = {
+-						type = "string",
+-						description =
+-						"Changes to be made. Please separate them by file, use line numbers and show the new content."
++						type = "array",
++						description = "List of changes to be made. Each change is applied independently on the original file, i.e. the order matters, but line numbers are not updated.",
++						items = {
++							type = "object",
++							properties = {
++								file = {
++									type = "string",
++									description = "File name of this change."
++								},
++								operation = {
++									type = "string",
++									description = "Operation of this change.",
++									enum = { "add" , "change", "delete" }
++								},
++								lines = {
++									type = "string",
++									description = "Range of lines that the operation is on. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
++								},
++								content = {
++									type = "string",
++									description = "New content. Not used for delete operation.",
++								},
++							},
++						}
+ 					}
+ 				},
+ 				required = { "changes" }
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 4f301ed..13e52dc 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -4,16 +4,17 @@ local log = require("tai.log")
+ 
+ M.allowed_commands = {
+ 	"cat",
+-	"echo",
++	"cut",
+ 	"date",
+-	"tail",
+-	"head",
++	"echo",
++	"find",
+ 	"grep",
+-	"cut",
++	"head",
+ 	"ls",
+-	"wc",
+ 	"make",
+-	"sort"
++	"sort",
++	"tail",
++	"wc"
+ }
+ 
+ local function find_tai_root()
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 543388a..28dc32b 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -63,7 +63,7 @@ end
+ function M.show_response(fields)
+ 	log.debug("Showing response")
+ 
+-	local content = "\n---------------------------------\n"
++	local content = "\n------\n"
+ 	if fields.error then
+ 		content = content .. "[tai] " .. fields.error
+ 	end
+@@ -89,14 +89,13 @@ end
+ function M.show_tool_calls(calls)
+ 	log.debug("Showing tool calls")
+ 
+-	local content = "\n--- Tool calls ------------------------\n"
++	local content = "\n"
+ 	for _, call in ipairs(calls) do
+ 		content = content .. "&gt; Calling " .. call["function"].name .. "\n"
+ 		for k, v in pairs(call["function"].arguments) do
+ 			content = content .. "\t" .. k .. ": " .. v .. "\n"
+ 		end
+ 	end
+-	content = content .. "_______________________________________\n"
+ 
+ 	M.append_to_buffer(content)
+ 	M.open()
+</pre>

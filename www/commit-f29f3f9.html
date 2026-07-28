@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f29f3f9</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f29f3f9
+parent <a href=commit-6e2a275.html>6e2a275</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-30T21:57:53-03:00
+
+    fixed init without config
+
+<a href=tree-f29f3f9.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/provider.lua b/lua/tai/provider.lua
+index 0ffe1a9..52db208 100644
+--- a/lua/tai/provider.lua
++++ b/lua/tai/provider.lua
+@@ -1,4 +1,5 @@
+ local config = require('tai.config')
+ 
++if not config.provider then return nil end
+ return require('tai.' .. config.provider)
+ 
+</pre>

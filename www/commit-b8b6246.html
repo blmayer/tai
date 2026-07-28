@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai b8b6246</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit b8b6246
+parent <a href=commit-d1ae96b.html>d1ae96b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-11T23:09:53-03:00
+
+    added error response to history
+
+<a href=tree-b8b6246.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 56be5d0..be64c9a 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -466,6 +466,8 @@ function M.task(msgs)
+ 		function(fields, err)
+ 			if err then
+ 				M.append_to_buffer("{{{ Error\n" .. err .. "\n}}}")
++				provider.add_to_history({ role = "assistant", content = err })
++				return
+ 			end
+ 			local response = { role = "assistant" }
+ 			for k, v in pairs(fields) do
+</pre>

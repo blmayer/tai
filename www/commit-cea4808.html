@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai cea4808</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit cea4808
+parent <a href=commit-c52f430.html>c52f430</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-21T18:25:59-03:00
+
+    removed go files
+
+<a href=tree-cea4808.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/go.mod b/go.mod
+deleted file mode 100644
+index 6bdc95c..0000000
+--- a/go.mod
++++ /dev/null
+@@ -1,7 +0,0 @@
+-module tai
+-
+-go 1.24.4
+-
+-require golang.org/x/term v0.33.0
+-
+-require golang.org/x/sys v0.34.0 // indirect
+diff --git a/go.sum b/go.sum
+deleted file mode 100644
+index 5720d35..0000000
+--- a/go.sum
++++ /dev/null
+@@ -1,4 +0,0 @@
+-golang.org/x/sys v0.34.0 h1:H5Y5sJ2L2JRdyv7ROF1he/lPdvFsd0mJHFw2ThKHxLA=
+-golang.org/x/sys v0.34.0/go.mod h1:BJP2sWEmIv4KK5OTEluFJCKSidICx8ciO85XgH3Ak8k=
+-golang.org/x/term v0.33.0 h1:NuFncQrRcaRvVmgRkvM3j/F00gWIAlcmlB8ACEKmGIg=
+-golang.org/x/term v0.33.0/go.mod h1:s18+ql9tYWp1IfpV9DmCtQDDSRBUjKaw9M1eAv5UeF0=
+diff --git a/groq.go b/groq.go
+deleted file mode 100644
+index 7f10348..0000000
+--- a/groq.go
++++ /dev/null
+@@ -1,86 +0,0 @@
+-package main
+-
+-import (
+-	"bytes"
+-	"encoding/json"
+-	"fmt"
+-	"io"
+-	"net/http"
+-	"os"
+-	"time"
+-)
+-
+-const groqAPIBase = "https://api.groq.com/openai/v1"
+-const model = "meta-llama/llama-4-scout-17b-16e-instruct"
+-
+-var (
+-	groqKey    string
+-	httpClient *http.Client
+-)
+-
+-func init() {
+-	groqKey = os.Getenv("GROQ_API_KEY")
+-	if groqKey == "" {
+-		fmt.Fprintln(os.Stderr, "❌ Missing GROQ_API_KEY environment variable.")
+-		os.Exit(1)
+-	}
+-
+-	httpClient = &amp;http.Client{Timeout: 15 * time.Second}
+-}
+-
+-type ChatMessage struct {
+-	Role    string `json:"role"`
+-	Content string `json:"content"`
+-}
+-
+-type ChatRequest struct {
+-	Model    string        `json:"model"`
+-	Messages []ChatMessage `json:"messages"`
+-}
+-
+-type ChatResponse struct {
+-	Choices []struct {
+-		Message ChatMessage `json:"message"`
+-	} `json:"choices"`
+-}
+-
+-func SendChat(messages []ChatMessage) (string, error) {
+-	reqBody := ChatRequest{
+-		Model:    model,
+-		Messages: messages,
+-	}
+-	body, err := json.Marshal(reqBody)
+-	if err != nil {
+-		return "", err
+-	}
+-
+-	req, err := http.NewRequest("POST", groqAPIBase+"/chat/completions", bytes.NewBuffer(body))
+-	if err != nil {
+-		return "", err
+-	}
+-	req.Header.Set("Authorization", "Bearer "+groqKey)
+-	req.Header.Set("Content-Type", "application/json")
+-
+-	resp, err := httpClient.Do(req)
+-	if err != nil {
+-		return "", err
+-	}
+-	defer resp.Body.Close()
+-
+-	respBody, _ := io.ReadAll(resp.Body)
+-	if resp.StatusCode != 200 {
+-		return "", fmt.Errorf("Groq API error: %s", string(respBody))
+-	}
+-
+-	var chatResp ChatResponse
+-	if err := json.Unmarshal(respBody, &amp;chatResp); err != nil {
+-		return "", fmt.Errorf("JSON decode error: %v\nRaw: %s", err, string(respBody))
+-	}
+-
+-	if len(chatResp.Choices) == 0 {
+-		return "", fmt.Errorf("No response from Groq")
+-	}
+-
+-	return chatResp.Choices[0].Message.Content, nil
+-}
+-
+diff --git a/main.go b/main.go
+deleted file mode 100644
+index 1807f2f..0000000
+--- a/main.go
++++ /dev/null
+@@ -1,130 +0,0 @@
+-package main
+-
+-import (
+-	"golang.org/x/term"
+-
+-	"fmt"
+-	"io"
+-	"log"
+-	"os"
+-	"strings"
+-)
+-
+-func readLineRaw() (string, error) {
+-	fd := int(os.Stdin.Fd())
+-	oldState, err := term.MakeRaw(fd)
+-	if err != nil {
+-		return "", err
+-	}
+-	defer term.Restore(fd, oldState)
+-
+-	var buf []byte
+-	b := make([]byte, 1)
+-
+-	for {
+-		_, err := os.Stdin.Read(b)
+-		if err != nil {
+-			return "", err
+-		}
+-		ch := b[0]
+-
+-		switch ch {
+-		case '\r', '\n':
+-			fmt.Print("\r\n")
+-			return string(buf), nil
+-		case 127, 8: // Backspace
+-			if len(buf) &gt; 0 {
+-				buf = buf[:len(buf)-1]
+-				fmt.Print("\b \b")
+-			}
+-		default:
+-			if ch &gt;= 32 &amp;&amp; ch &lt; 127 {
+-				buf = append(buf, ch)
+-				fmt.Printf("%c", ch)
+-			}
+-		}
+-	}
+-}
+-
+-func pipelineMode(prompt string) {
+-	input, _ := io.ReadAll(os.Stdin)
+-	messages := []ChatMessage{
+-		{Role: "system", Content: `### System
+-			You are 'tai', a command-line AI assistant running on a shell pipeline.
+-
+-			### Instructions
+-			You are part of a UNIX style pipeline, so the user will give you the output from other commands such as ls, cat, grep etc; and your output will probably be used for other commands or the terminal. So:
+-			- Format your responses in a line oriented way or whatever the user instructs you.
+-			- You can use ANSI escapes and other terminal formating sequences for prettier output.
+-			- Be concise and tune your output so other programs can easily read your output.
+-			- Output **ONLY** what was requested for you, do not add comments or metadata.
+-
+-			### Input Format
+-			You will receive the input in two optional parts:
+-			1. The user prompt with instructions and
+-			2. The standard input from the pipeline.
+-
+-			#### Example
+-			Prompt:
+-			Return a funny name for each file name
+-
+-			Input:
+-			file1.txt
+-			avatar.png
+-			notes.md
+-
+-			Your example output:
+-			garbage.txt
+-			my-ugly-photo.png
+-			things-i-keep-forgeting.md
+-			`},
+-		{Role: "user", Content: fmt.Sprintf("Prompt:\n%s\n\nInput:\n%s", prompt, string(input))},
+-	}
+-	resp, err := SendChat(messages)
+-	if err != nil {
+-		fmt.Fprintln(os.Stderr, "error:", err)
+-		os.Exit(1)
+-	}
+-	fmt.Println(resp)
+-}
+-
+-func interactiveMode() {
+-	log.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
+-	messages := []ChatMessage{
+-		{Role: "system", Content: "You are 'tai', a command-line AI assistant running in interactive mode."},
+-	}
+-	for {
+-		fmt.Print("&gt; ")
+-		line, err := readLineRaw()
+-		if err != nil {
+-			break
+-		}
+-		line = strings.TrimSpace(line)
+-		if line == "exit" {
+-			break
+-		}
+-		messages = append(messages, ChatMessage{Role: "user", Content: line})
+-		resp, err := SendChat(messages)
+-		if err != nil {
+-			fmt.Fprintln(os.Stderr, "error:", err)
+-			break
+-		}
+-		fmt.Println(resp)
+-		messages = append(messages, ChatMessage{Role: "assistant", Content: resp})
+-	}
+-}
+-
+-// tai This is a go package that ... continue this comment
+-func main() {
+-	prompt := ""
+-	if len(os.Args) &gt; 1 {
+-		prompt = strings.Join(os.Args[1:], " ")
+-	}
+-
+-	fi, _ := os.Stdin.Stat()
+-	if (fi.Mode() &amp; os.ModeCharDevice) == 0 || prompt != "" {
+-		pipelineMode(prompt)
+-	} else {
+-		interactiveMode()
+-	}
+-}
+</pre>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 524b63f</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 524b63f
+parent <a href=commit-1a47e22.html>1a47e22</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-23T12:31:26-03:00
+
+    fixed patch tool return
+
+<a href=tree-524b63f.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index ca67a6e..286198c 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -387,6 +387,8 @@ function M.apply_patch(name, file, changes)
+ 			line_shift = line_shift - old_line_count
+ 		end
+ 	end
++	log.debug("Patch applied")
++	return "[sys] patch applied"
+ end
+ 
+ function M.refresh_connected_files(history)
+</pre>

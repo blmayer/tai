@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 3a13358</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 3a13358
+parent <a href=commit-f5b07fc.html>f5b07fc</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-07-16T19:01:33-03:00
+
+    improve shell tool prompt
+
+<a href=tree-3a13358.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 7a3e55d..77bf400 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -17,7 +17,9 @@ You can use tools to help on your task.
+   are not supported; for images use `send_image`.
+ - Avoid repeating tool calls (e.g. reading the same file again is useless).
+ - Do NOT guess file paths — verify they exist before reading or editing.
+-- The shell tool starts at the project root. ALWAYS use relative paths.
++- The shell tool already runs in the project root. ALWAYS use relative paths.
++  Do NOT prefix commands with `cd` to the project (or any absolute path to it) —
++  that is unnecessary and wasteful.
+ - Be EXTREMELY careful with destructive git commands (e.g. `git restore`).
+ 
+ ### Progress Tracking (todos &amp; notes)
+@@ -52,7 +54,7 @@ codebase in the current folder: ]] .. config.root .. [[
+ 
+ ## Guidelines
+ 
+-- For general questions answer right away.
++- For general questions answer right away, else YOU ORQUESTRATE with subtasks.
+ - For questions about the current project: explore the project for the answer.
+ - NEVER send empty messages — say what you are doing so the user knows what to expect.
+ - NEVER add time estimates to your responses.
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 2c2987e..db2fea7 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -57,14 +57,14 @@ M.defs = {
+ 		["function"] = {
+ 			name = "shell",
+ 		description =
+-			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;), and chaining (;) are allowed. Redirects (&gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
++			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Do NOT prefix with `cd` to the project root — the shell already starts there. Arguments, pipes (|), conditionals (||, &amp;&amp;), and chaining (;) are allowed. Redirects (&gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the project's folder. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc. 2&gt;&amp;1 is added to the end of the command."
++						"The pipeline to be interpreted by the shell in the project's folder. Already cwd is the project root — do not `cd` there first. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc. 2&gt;&amp;1 is added to the end of the command."
+ 					}
+ 				},
+ 				additionalProperties = false,
+</pre>

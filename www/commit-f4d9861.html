@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f4d9861</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f4d9861
+parent <a href=commit-83270e1.html>83270e1</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-08-05T17:10:46-03:00
+
+    nvim: improved file patching
+
+<a href=tree-f4d9861.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/chat.lua b/nvim-tai/chat.lua
+index 5d9f75c..d58e4ef 100644
+--- a/nvim-tai/chat.lua
++++ b/nvim-tai/chat.lua
+@@ -11,7 +11,8 @@ if not api_key then
+ end
+ 
+ local groq_url = "https://api.groq.com/openai/v1/chat/completions"
+-local model = "llama3-70b-8192"
++local model = "moonshotai/kimi-k2-instruct"
++--local model = "llama3-70b-8192"
+ 
+ function M.send_chat(messages)
+ 	local req_body = {
+@@ -20,14 +21,12 @@ function M.send_chat(messages)
+ 	}
+ 
+ 	local json_data = json.encode(req_body)
+-
+ 	local stdout = uv.new_pipe(false)
+ 	local stderr = uv.new_pipe(false)
+-
+ 	local result = {}
+ 	local err_data = {}
+-
+ 	local handle
++
+ 	handle = uv.spawn("curl", {
+ 		args = {
+ 			"-s", "-X", "POST",
+@@ -48,6 +47,7 @@ function M.send_chat(messages)
+ 		end
+ 	end)
+ 
++	vim.notify("[tai] Waiting for response", vim.log.levels.TRACE)
+ 	uv.read_start(stdout, function(_, chunk)
+ 		if chunk then
+ 			table.insert(result, chunk)
+@@ -60,7 +60,7 @@ function M.send_chat(messages)
+ 		end
+ 	end)
+ 
+-	vim.wait(10000, function()
++	vim.wait(60000, function()
+ 		return not uv.is_active(handle)
+ 	end, 10)
+ 
+@@ -71,7 +71,7 @@ function M.send_chat(messages)
+ 		end)
+ 		return nil
+ 	end
+-	--vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
++	vim.notify("[tai] Got response", vim.log.levels.TRACE)
+ 
+ 	local ok, parsed = pcall(json.decode, response)
+ 	if not ok then
+@@ -86,7 +86,7 @@ function M.send_chat(messages)
+ 
+ 	local fields, err = mime.parse(parsed.choices[1].message.content)
+ 	if err then
+-		vim.notify("[tai] Failed to decode MIME message: " .. err, vim.log.levels.ERROR)
++		vim.notify("[tai] Failed to decode MIME message: " .. response, vim.log.levels.ERROR)
+ 		return nil
+ 	end
+ 
+diff --git a/nvim-tai/init.lua b/nvim-tai/init.lua
+index 488c1f7..4d8221b 100644
+--- a/nvim-tai/init.lua
++++ b/nvim-tai/init.lua
+@@ -2,27 +2,25 @@ local M = {}
+ 
+ local ui = require("tai.ui")
+ local project = require("tai.project")
+-local chat = require("tai.chat")
+ 
+ function M.setup(opts)
+ 	require("tai.project").init_project_prompt()
+ end
+ 
+ function M.prompt_input()
+-	ui.input("Tai Input: ", function(input)
+-		if input and input ~= "" then
+-			local result = project.process_request(input)
+-			ui.show_response(result)
+-		end
++	ui.input(function(input)
++		if not input or input == "" then return end
++		local result = project.process_request(input)
++		ui.show_response(result)
+ 	end)
+ end
+ 
+ function M.prompt_full_file()
+-	local path = vim.fn.expand("%:p")
++	local path = vim.fn.expand("%")
+ 
+-	ui.input("Tai Input (Context): ", function(user_input)
+-		if not user_input or user_input == "" then return end
+-		local result = project.request_file_prompt(path, user_input)
++	ui.input(function(input)
++		if not input or input == "" then return end
++		local result = project.request_file_prompt(path, input)
+ 		ui.show_response(result)
+ 	end)
+ end
+@@ -43,8 +41,8 @@ function M.operator_send_with_prompt(type)
+ 	local text = vim.fn.getreg("z")
+ 	vim.fn.setreg('"', old_reg)
+ 
+-	ui.input("Tai Input: ", function(prompt)
+-		local full = prompt .. "\n\n" .. text
++	ui.input(function(input)
++		local full = input .. "\n\nSelected code:\n" .. text
+ 		local result = project.process_request(full)
+ 		ui.show_response(result)
+ 	end)
+@@ -54,7 +52,7 @@ function M.insert_response()
+ 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+ 	local line = vim.api.nvim_get_current_line()
+ 
+-	local filename = vim.fn.expand("%:p")
++	local filename = vim.fn.expand("%")
+ 
+ 	local location = string.format("line %d, column %d", row, col)
+ 	local payload = string.format(
+@@ -62,13 +60,13 @@ function M.insert_response()
+ 		filename, location, line)
+ 
+ 	local result = project.process_request(payload)
+-	print(result.text)
+ 	ui.insert_response(result)
+ end
+ 
+ function M.replace_visual()
+-	ui.input("Tai Replace: ", function(input)
+-		local result = project.process_request(input)
++	ui.input(function(input)
++		local payload = string.format("I'm replacing text, your response will the pasted as is. Prompt:\n", input)
++		local result = project.process_request(payload)
+ 		ui.replace_visual_selection(result)
+ 	end)
+ end
+diff --git a/nvim-tai/mime.lua b/nvim-tai/mime.lua
+index 9efb81c..93997ed 100644
+--- a/nvim-tai/mime.lua
++++ b/nvim-tai/mime.lua
+@@ -12,7 +12,7 @@ end
+ 
+ 
+ local function parse_mime_header_name(header)
+-  local name = header:match('name="([^"]+)"')
++  local name = header:match('filename="([^"]+)"')
+   if name then
+     return name
+   else
+diff --git a/nvim-tai/project.lua b/nvim-tai/project.lua
+index 2560870..b53a692 100644
+--- a/nvim-tai/project.lua
++++ b/nvim-tai/project.lua
+@@ -7,41 +7,56 @@ local history = {
+ 		role = "system",
+ 		content = [[
+ ### System
+-You are Tai, a coding assistant for nvim that can return code changes, execute commands and give general code advice.
+-Return **ONLY** valid multipart MIME message with named parts, do NOT add anything outside of the MIME message.
++You are Tai, a Neovim coding assistant.
++Return **EXACTLY** one valid multipart MIME message with no extra text before or after.
++
++### Format Enforcement
++- Every response must start with the exact headers `MIME-Version: 1.0` and `Content-Type: multipart/mixed; boundary="&lt;boundary&gt;"`.
++- Boundaries must be 8–32 alphanumeric characters only.
++- All multipart boundaries must be closed with `--&lt;boundary&gt;--`.
+ 
+ ### Instructions
+-Do not include any extraneous data outside of the MIME message like a preamble, notes or backticks.
+-The response must start with MIME-version and boundary headers, vary it and use **ONLY** alphanumeric characters for the boundary.
+-- Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
+-- Always use \r\n (CRLF) for line endings.
+-- For user-facing text, use a plain/text part named 'text'.
+-- For code changes, include a text/x-diff in a part named 'patch'.
+-- If you need to execute commands, include them in a part named 'commands'.
+-- If your response involves multiple steps, include them in a part named 'plan'.
+-- Do not nest MIME messages.
+-- Do not add blank lines or other separators before the boundary.
+-- Do not send a part with no content, i.e. an empty patch
++1. **No extraneous data**: Do not add a preamble, backticks, or explanatory text outside the MIME envelope.
++2. **File naming**: Each part must contain `Content-Disposition: attachment; filename="&lt;filename&gt;"`.
++3. **Line endings**: Always use single Unix line-feed (`\n`) characters.
++4. **Diffs**:
++   - Use `text/x-diff` with part name `patch`.
++   - Diffs must be generated in unified format (aka patch).
++   - Each hunk must begin with `@@ -&lt;o&gt;,&lt;o&gt; +&lt;n&gt;,&lt;n&gt; @@`.
++   - Never include CRLF line endings.
++   - Validate the patch so it can be applied with `patch -p0`.
++   - Use relative file paths.
++5. **Commands**: Supply an executable list with part name `commands`.
++6. **Plans**: If multi-step, include a numbered or bulleted plan in part name `plan`.
++7. **Empty parts**: Never emit a part with zero bytes.
++8. **Text**: Supply concise user-facing text in a part named `text`.
++
++### Example Response
++All examples must match this format verbatim except boundary strings and content.
+ 
+-### Example output
+ MIME-Version: 1.0
+ Content-Type: multipart/mixed; boundary="asdf"
+ 
+ --asdf
+ Content-Type: text/plain; charset="utf-8"
+-Content-Disposition: form-data; name="text"
++Content-Disposition: attachment; filename="text"
+ 
+ I'm considering you want a doc string.
+ --asdf
+ Content-Type: text/x-patch; charset="utf-8"
+-Content-Disposition: form-data; name="patch"
+-
+-diff --git a/abc.py b/abc.py
+---- a/abc.py
+-+++ b/abc.py
+-@@ -0,0 +1,5 @@
+-+# Comment here
++Content-Disposition: attachment; filename="patch"
++
++--- file.txt	2025-08-05 14:30:00
+++++ file.txt	2025-08-05 14:31:00
++@@ -1,4 +1,4 @@
++-Hello world
+++Hello universe
++ This is a test.
++ Another line.
++ Final line.
+ --asdf--
++
++### Example output
+     ]]
+ 	}
+ }
+@@ -52,11 +67,9 @@ function M.init_project_prompt()
+ 	local dir = vim.fn.getcwd()
+ 	preamble = "You are managing a project at " .. dir .. ", which contains the following files and structure:\n"
+ 
+-	local files = 0
+ 	for _, path in ipairs(vim.fn.glob("**", true, true)) do
+ 		if not path:match("^%.") and not vim.fn.isdirectory(path) then
+ 			preamble = preamble .. "- " .. path .. "\n"
+-			files = files + 1
+ 		end
+ 	end
+ 
+diff --git a/nvim-tai/ui.lua b/nvim-tai/ui.lua
+index c7f58e9..c78d7ea 100644
+--- a/nvim-tai/ui.lua
++++ b/nvim-tai/ui.lua
+@@ -1,22 +1,18 @@
+ local M = {}
+ 
+-
+ function M.show_response(fields)
+ 	local content = ""
++	local bufname = "tai-output"
+ 	if fields.text then
+ 		content = fields.text
+ 	end
+ 
+-	if fields.patch then
+-		M.apply_patch(fields.patch)
+-	end
+-	local lines = vim.split(content, "\n", { trimempty = true })
+-
+-	vim.schedule(function()
++	local bufnr = vim.fn.bufnr(bufname)
++	if bufnr == -1 then
+ 		vim.cmd("vnew")
+ 		local new_win = vim.api.nvim_get_current_win()
+-		vim.api.nvim_win_set_width(new_win, 80)		-- this is THE number
+-		local bufnr = vim.api.nvim_get_current_buf()
++		bufnr = vim.api.nvim_get_current_buf()
++		vim.api.nvim_win_set_width(new_win, 80) -- this is THE number
+ 
+ 		-- Set buffer options to make it a scratch window
+ 		vim.bo[bufnr].buftype = "nofile"
+@@ -24,13 +20,22 @@ function M.show_response(fields)
+ 		vim.bo[bufnr].swapfile = false
+ 		vim.bo[bufnr].modifiable = true
+ 		vim.bo[bufnr].filetype = "tai-output"
++		vim.api.nvim_buf_set_name(bufnr, bufname)
++	end
+ 
+-		-- Insert content
+-		vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++	if fields.patch then
++		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
++		vim.schedule(function()
++			local patch = fields.patch
++			vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch', function() M.apply_patch(patch) end,
++				{})
++		end)
++	end
++
++	local lines = vim.split(content, "\n", { trimempty = true })
+ 
+-		-- Optional: prevent accidental edits
+-		vim.bo[bufnr].modifiable = false
+-	end)
++	-- Insert content
++	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+ end
+ 
+ -- Insert the content at the cursor (insert mode)
+@@ -68,18 +73,45 @@ function M.replace_visual_selection(content)
+ 	vim.api.nvim_buf_set_lines(bufnr, csrow - 1, cerow, false, replacement)
+ end
+ 
+--- Prompt user for input
+-function M.input(prompt, callback)
+-	vim.ui.input({ prompt = prompt or "Input:" }, function(text)
+-		if text then callback(text) end
+-	end)
++-- Prompt user for multi-line input with Shift+Enter support
++function M.input(callback)
++	local bufnr = vim.api.nvim_create_buf(false, true)
++	local width = math.min(80, vim.o.columns - 10)
++	local height = math.min(10, vim.o.lines - 10)
++
++	local winnr = vim.api.nvim_open_win(bufnr, true, {
++		relative = 'editor',
++		width = width,
++		height = height,
++		col = (vim.o.columns - width) / 2,
++		row = (vim.o.lines - height) / 2,
++		style = 'minimal',
++		border = 'rounded'
++	})
++
++	vim.bo[bufnr].buftype = 'nofile'
++	vim.bo[bufnr].bufhidden = 'wipe'
++	vim.bo[bufnr].swapfile = false
++	vim.bo[bufnr].filetype = 'tai-input'
++
++	--vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {prompt or "Enter your message:"})
++
++	vim.keymap.set('n', '&lt;CR&gt;', function()
++		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++		local text = table.concat(lines, '\n')
++		vim.api.nvim_win_close(winnr, false)
++		vim.schedule(function()
++			vim.notify("[tai] Got prompt", vim.log.levels.TRACE)
++		end)
++		callback(text)
++	end, { buffer = bufnr })
+ end
+ 
+ function M.apply_patch(patch)
+-    local f = io.popen("git apply -", "w")
+-    f:write(patch)
+-    f:close()
+-    vim.api.nvim_command("checktime!")
++	local f = io.popen("patch -p0", "w")
++	f:write(patch)
++	f:close()
++	vim.api.nvim_command("checktime")
+ end
+ 
+ return M
+</pre>

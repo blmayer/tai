@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f9ba4ff</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f9ba4ff
+parent <a href=commit-619c2ae.html>619c2ae</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-21T13:54:58-03:00
+
+    nvim: added new agent
+
+    - improved tool calls
+
+<a href=tree-f9ba4ff.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/TODO.md b/TODO.md
+new file mode 100644
+index 0000000..3073810
+--- /dev/null
++++ b/TODO.md
+@@ -0,0 +1,3 @@
++# TODO
++
++- make tool output into a separate message
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+new file mode 100644
+index 0000000..47c847c
+--- /dev/null
++++ b/lua/tai/agents/all_rounder.lua
+@@ -0,0 +1,99 @@
++-- all_rounder.lua: Coder agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local config = require('tai.config')
++local log = require('tai.log')
++local tools = require('tai.agents.tools')
++
++if not config.root then
++	return M
++end
++
++local provider
++if config.provider == 'groq' then
++	provider = require('tai.providers.groq')
++elseif config.provider == 'gemini' then
++	provider = require('tai.providers.gemini')
++elseif config.provider == 'local' then
++	provider = require('tai.providers.local')
++elseif config.provider == "mistral" then
++	return M
++elseif config.provider == nil then
++	-- do nothing
++else
++	error('Unknown chat provider: ' .. config.provider)
++end
++
++M.system_prompt = [[
++SYSTEM
++You are a Tai, an excelent coding agent. You are in charge of implementing
++the tasks requested in the current project. You will receive high level
++feature requests or general questions. Your job is to address them.
++
++You have full access to the project's code base, and a terminal in your machine.
++
++]] .. tools.pretty_info(config.coder.tools) .. [[
++
++INSTRUCTIONS
++Consider these guiding tips:
++- Understand the code base by reading files and running commands you need.
++  - Consider the imports to understand the code organization.
++  - Use the tools if you have access: start by looking at the current folder.
++  - You can use multiple turns, e.g. listing files, then reading a file.
++  - You can ask the user for more info.
++- Implement the task considering the constraints given.
++- Before finishing ask yourself if you correctly implemented the task.
++- To finish you must create the patch using the patch tool.
++]]
++
++local history = { { role = "system", content = M.system_prompt } }
++
++function M.task(task, callback)
++	log.info("Agent executing task: " .. task)
++	local msg = { role = "user", content = task }
++	table.insert(history, msg)
++	provider.request(
++		config.all_rounder,
++		history,
++		nil,
++		function(data, err)
++			table.insert(
++				history,
++				{
++					role = "assistant",
++					content = vim.json.encode(data.content),
++					tool_calls = data.tool_calls,
++				}
++			)
++			callback(data, err)
++		end
++	)
++end
++
++function M.run_tools(tool_calls, callback)
++	log.info("Agent running tools")
++
++	local out = tools.run(tool_calls)
++	local msg = { role = "tool", content = out }
++	table.insert(history, msg)
++
++	provider.request(
++		config.all_rounder,
++		history,
++		nil,
++		function(data, err)
++			table.insert(
++				history,
++				{
++					role = "assistant",
++					content = vim.json.encode(data.content),
++					tool_calls = data.tool_calls,
++				}
++			)
++			callback(data, err)
++		end
++	)
++end
++return M
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index 132bff4..e7509c7 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -21,6 +21,25 @@ M.defs = {
+ 			}
+ 		}
+ 	},
++	patch = {
++		type = "function",
++		["function"] = {
++			name = "patch",
++			description =
++			"Creates a patcher from the given changes, please separate them by file, use line numbers and show the new content.",
++			parameters = {
++				type = "object",
++				properties = {
++					changes = {
++						type = "string",
++						description =
++						"Changes to be made. Please separate them by file, use line numbers and show the new content."
++					}
++				},
++				required = { "changes" }
++			}
++		}
++	},
+ 	run = {
+ 		type = "function",
+ 		["function"] = {
+@@ -32,7 +51,8 @@ M.defs = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the user's machine, usually bash. These are the user approved programs: " .. table.concat(config.allowed_commands, ", ")
++						    "The pipeline to be interpreted by the shell in the user's machine, usually bash. These are the user approved programs: " ..
++						    table.concat(config.allowed_commands, ", ")
+ 					}
+ 				},
+ 				required = { "command" }
+@@ -46,7 +66,7 @@ function M.pretty_info(tools)
+ 		return ""
+ 	end
+ 
+-	local pre = "You also can use the following tool calls:\n"
++	local pre = "You can use the following tool calls:\n"
+ 	local tools_desc = vim.tbl_map(
+ 		function(t)
+ 			local desc = M.defs[t]["function"].description
+@@ -62,26 +82,119 @@ function M.pretty_info(tools)
+ 	return pre .. table.concat(tools_desc, "\n") .. "\n"
+ end
+ 
++local function read_file(file_path)
++	log.debug("Running read_file `" .. file_path .. "`")
++
++	local file = io.open(file_path, "r")
++	if not file then
++		return "[tai] File " .. file_path .. " not found"
++	end
++
++	local content = file:read("*all")
++	file:close()
++
++	local numbered_lines = {}
++	for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
++		table.insert(numbered_lines, string.format("%d: %s", i, line))
++	end
++	local numbered_content = table.concat(numbered_lines, "\n")
++
++	log.debug("read_file output: " .. numbered_content)
++	return "[tai] Content of " .. file_path .. ":\n" .. numbered_content .. "\n"
++end
++
++local function validate_command(cmd)
++	local parts = vim.split(cmd, "%s+")
++	if #parts == 0 then return false end
++
++	local base = parts[1]:match("^([^/]+)$")
++	if not base then
++		return false
++	end
++
++	local ok = false
++	for _, c in ipairs(config.allowed_commands) do
++		if c == base then
++			ok = true
++			break
++		end
++	end
++
++	if not ok then
++		return false
++	end
++
++	for _, arg in ipairs(parts) do
++		if arg:sub(1, 1) == "-" then
++			goto continue
++		end
++		if arg:sub(1, 1) == "/" then
++			return false
++		end
++		if arg:match("%.%.") then
++			return false
++		end
++		if arg:match("[*?]") then
++			return false
++		end
++		::continue::
++	end
++
++	return true
++end
++
++local function run_command(cmd)
++	log.debug("Running run `" .. cmd .. "`")
++
++	if not validate_command(cmd) then
++		log.debug("command is not allowed")
++		return "[tai] Command " .. cmd .. " is not allowed"
++	end
++
++       local env = {}
++       for _, name in ipairs({ "PATH" }) do
++               env[#env + 1] = name .. "=" .. (os.getenv(name) or "")
++       end
++
++       local env_prefix = ""
++       for _, v in ipairs(env) do
++               local name, value = v:match("^([^=]+)=(.*)$")
++               if name and value then
++                       env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\''") .. "' "
++               end
++       end
++
++       local full_cmd = env_prefix .. cmd .. " 2&gt;&amp;1"
++       local handle = io.popen(full_cmd, "r")
++       if not handle then
++               return nil, "Failed to run command"
++       end
++
++       local output = handle:read("*a")
++       handle:close()
++
++	if output then
++		output = "[tai] Output of ```" .. cmd .. "```:\n" .. output
++	else
++		output = "[tai] ```" .. cmd .. "``` returned null"
++	end
++	log.debug("command output: " .. output)
++
++	return output
++end
++
+ function M.run(cmds)
+-	log.debug("Running tools")
++	log.debug("Running tool calls")
+ 	local output = ""
+ 
+ 	for _, cmd in ipairs(cmds) do
+-		log.debug("Running command `" .. cmd["function"]["name"] .. "`")
++		local tool = cmd["function"]["name"]
+ 		local args = cmd["function"].arguments
+-		local file = io.open(args.file_path, "r")
+-		if file then
+-			local content = file:read("*all")
+-			file:close()
+-
+-			local numbered_lines = {}
+-			for i, line in ipairs(vim.split(content, '\n', { plain = true })) do
+-				table.insert(numbered_lines, string.format("%d: %s", i, line))
+-			end
+-			local numbered_content = table.concat(numbered_lines, "\n")
+-			output = output .. "\n\n[tai] Content of " .. args.file_path .. ":\n" .. numbered_content .. "\n"
+-		else
+-			output = output .. "\n\n[tai] File " .. args.file_path .. " not found"
++
++		if tool == "read_file" then
++			output = output .. read_file(args.file_path)
++		elseif tool == "run" then
++			output = output .. run_command(args.command)
+ 		end
+ 	end
+ 
+diff --git a/lua/tai/command.lua b/lua/tai/command.lua
+deleted file mode 100644
+index 75162cd..0000000
+--- a/lua/tai/command.lua
++++ /dev/null
+@@ -1,58 +0,0 @@
+-local M = {}
+-local log = require("tai.log")
+-
+-function M.validate(cmd, commands)
+-	local parts = vim.split(cmd, "%s+")
+-	if #parts == 0 then return false end
+-
+-	local base = parts[1]:match("^([^/]+)$")
+-	if not base or not commands[base] then
+-		return false
+-	end
+-
+-	for _, arg in ipairs(parts) do
+-		if arg:sub(1, 1) == "-" then
+-			goto continue
+-		end
+-		if arg:sub(1, 1) == "/" then
+-			return false
+-		end
+-		if arg:match("%.%.") then
+-			return false
+-		end
+-		if arg:match("[*?]") then
+-			return false
+-		end
+-		::continue::
+-	end
+-
+-	return true
+-end
+-
+-function M.run(cmd)
+-	local env = {}
+-	for _, name in ipairs({ "PATH" }) do
+-		env[#env + 1] = name .. "=" .. (os.getenv(name) or "")
+-	end
+-
+-	local env_prefix = ""
+-	for _, v in ipairs(env) do
+-		local name, value = v:match("^([^=]+)=(.*)$")
+-		if name and value then
+-			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\''") .. "' "
+-		end
+-	end
+-
+-	local full_cmd = env_prefix .. cmd .. " 2&gt;&amp;1"
+-	local handle = io.popen(full_cmd, "r")
+-	if not handle then
+-		return nil, "Failed to run command"
+-	end
+-
+-	local output = handle:read("*a")
+-	handle:close()
+-
+-	return output
+-end
+-
+-return M
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 6784cb0..4f301ed 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -77,6 +77,12 @@ if file then
+ 			tools = data.writer.tools,
+ 			think = data.writer.think or false
+ 		}
++		M.all_rounder = {
++			model = data.all_rounder.model,
++			options = data.all_rounder.options,
++			tools = data.all_rounder.tools,
++			think = data.all_rounder.think or false
++		}
+ 		if data.allowed_commands then
+ 			M.allowed_commands = data.allowed_commands
+ 		end
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 6dc5b3a..a850083 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -31,6 +31,21 @@ function M.prompt_input()
+ 	end)
+ end
+ 
++function M.chat()
++	ui.input(function(input)
++		if not input or input == "" then return end
++		log.debug("Received user input: " .. input)
++
++		ui.append_to_buffer("=====================================\n&gt; " .. input)
++
++		vim.schedule(function()
++			ui.open()
++		end)
++
++		project.chat(input)
++	end)
++end
++
+ function M.prompt_full_file()
+ 	local path = vim.fn.expand("%")
+ 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 2735139..fd32c98 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -7,7 +7,7 @@ local planner = require("tai.agents.planner")
+ local coder = require("tai.agents.coder")
+ local patcher = require("tai.agents.patcher")
+ local writer = require("tai.agents.writer")
+-local command = require("tai.command")
++local all_rounder = require("tai.agents.all_rounder")
+ local ui = require("tai.ui")
+ 
+ local completion_prompt =
+@@ -22,26 +22,6 @@ function M.init()
+ 	agents.init()
+ end
+ 
+-local function run_commands(cmds)
+-	local output = ""
+-
+-	for _, cmd in ipairs(cmds) do
+-		log.debug("Running command `" .. cmd .. "`")
+-		if not command.validate(cmd, config.allowed_commands) then
+-			output = "[tai] Command " .. cmd .. " is not allowed"
+-		end
+-
+-		local out = command.run(cmd)
+-		if out then
+-			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
+-		else
+-			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
+-		end
+-	end
+-
+-	return output
+-end
+-
+ local function apply_patch(patch)
+ 	local real = io.popen("ed -s 2&gt;&amp;1", "w")
+ 	if not real then
+@@ -191,6 +171,44 @@ function M.process_request(prompt)
+ 	)
+ end
+ 
++local function handle_chat_reply(reply)
++	log.info("handling chat reply")
++
++	if reply.tool_calls then
++		ui.show_tool_calls(reply.tool_calls)
++		all_rounder.run_tools(
++			reply.tool_calls,
++			function(data, err)
++				if err then
++					ui.show_response({ error = err })
++					return
++				end
++				return handle_chat_reply(data)
++			end
++		)
++		return
++	end
++
++	ui.show_response({ text = reply.content })
++end
++
++function M.chat(prompt)
++	log.debug("Processing chat request " .. prompt)
++
++	all_rounder.task(
++		prompt,
++		function(reply, err)
++			if err then
++				log.error("received error from planner: " .. err)
++				ui.show_response({ error = err })
++				return
++			end
++
++			vim.schedule(function() handle_chat_reply(reply) end)
++		end
++	)
++end
++
+ --function M.complete(start)
+ --	-- Get current buffer content
+ --	local bufnr = vim.api.nvim_get_current_buf()
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 458c8ba..543388a 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -91,11 +91,10 @@ function M.show_tool_calls(calls)
+ 
+ 	local content = "\n--- Tool calls ------------------------\n"
+ 	for _, call in ipairs(calls) do
+-		local args = ""
++		content = content .. "&gt; Calling " .. call["function"].name .. "\n"
+ 		for k, v in pairs(call["function"].arguments) do
+-			args = args .. k .. ": " .. v .. " "
++			content = content .. "\t" .. k .. ": " .. v .. "\n"
+ 		end
+-		content = content .. "&gt; Calling " .. call["function"].name .. " " .. args .. "\n"
+ 	end
+ 	content = content .. "_______________________________________\n"
+ 
+</pre>

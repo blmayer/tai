@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 54c20f0</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 54c20f0
+parent <a href=commit-abbdc34.html>abbdc34</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-07-13T15:03:59-03:00
+
+    Add Zyphra provider and harden provider error handling.
+
+    Support Zyphra Cloud via ZYPHRA_API_KEY, and normalize string vs object
+    error payloads so quota/API failures surface cleanly instead of crashing
+    the UI on pairs(nil).
+
+<a href=tree-54c20f0.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 01932a4..7a8c8aa 100644
+--- a/README.md
++++ b/README.md
+@@ -50,6 +50,7 @@ tai supports the following providers out of the box:
+ | StepFun | `STEPFUN_API_KEY` | |
+ | xAI | `XAI_API_KEY` | |
+ | Z.AI | `Z_AI_API_KEY` | |
++| Zyphra | `ZYPHRA_API_KEY` | |
+ | Custom | *(via `options.url`)* | Any OpenAI-compatible endpoint |
+ 
+ Set the corresponding environment variable for your chosen provider.
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index be29145..a91f6f0 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -69,7 +69,7 @@ function M.make_http_call(url, api_key, body_json, on_complete)
+ 	local tmp = vim.fn.tempname()
+ 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
+ 	if not ok_write then
+-		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
++		return on_complete(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+ 	end
+ 
+ 	local function cleanup()
+@@ -91,13 +91,12 @@ function M.make_http_call(url, api_key, body_json, on_complete)
+ 		stdout_buffered = true,
+ 		on_stdout = function(_, data)
+ 			if not data then
+-				on_complete(nil, nil)
+ 				return
+ 			end
+ 			log.debug("[API] received data: " .. vim.inspect(data))
+-				for _, line in ipairs(data) do
+-					response = response .. line
+-				end
++			for _, line in ipairs(data) do
++				response = response .. line
++			end
+ 		end,
+ 
+ 		on_stderr = function(_, data)
+@@ -114,11 +113,15 @@ function M.make_http_call(url, api_key, body_json, on_complete)
+ 			cleanup()
+ 			if code ~= 0 then
+ 				log.debug("[API] command returned code " .. tostring(code))
+-				on_complete("curl returned code " .. tostring(code))
++				on_complete(nil, "curl returned code " .. tostring(code))
+ 				return
+ 			end
+-			local parsed = vim.json.decode(response)
+-			if not parsed then
++			if response == "" then
++				on_complete(nil, "empty response from provider")
++				return
++			end
++			local ok, parsed = pcall(vim.json.decode, response)
++			if not ok or not parsed then
+ 				on_complete(nil, "Failed to decode JSON response")
+ 				return
+ 			end
+@@ -128,8 +131,41 @@ function M.make_http_call(url, api_key, body_json, on_complete)
+ 
+ 	if job_id &lt;= 0 then
+ 		cleanup()
+-		on_complete("Failed to start job")
++		on_complete(nil, "Failed to start job")
++	end
++end
++
++-- Normalize provider error payloads into a human-readable string.
++-- Providers may return:
++--   - a string: "quota exceeded"
++--   - an object: { message = "...", type = "..." }
++--   - nil / unexpected values
++function M.format_error(err, fallback)
++	if err == nil or err == vim.NIL then
++		return fallback or "unknown provider error"
++	end
++	if type(err) == "string" then
++		if err ~= "" then
++			return err
++		end
++		return fallback or "unknown provider error"
++	end
++	if type(err) == "table" then
++		if type(err.message) == "string" and err.message ~= "" then
++			return err.message
++		end
++		if type(err.error) == "string" and err.error ~= "" then
++			return err.error
++		end
++		if type(err.msg) == "string" and err.msg ~= "" then
++			return err.msg
++		end
++		local ok, encoded = pcall(vim.json.encode, err)
++		if ok and type(encoded) == "string" and encoded ~= "" then
++			return encoded
++		end
+ 	end
++	return fallback or tostring(err)
+ end
+ 
+ -- Extract fields (content, tool_calls) from a standard OpenAI-style response
+@@ -141,7 +177,7 @@ function M.extract_fields(message)
+ 	end
+ 
+ 	if message.error then
+-		fields.error = message.error.message
++		fields.error = M.format_error(message.error)
+ 	end
+ 
+ 	local content = message.content
+@@ -192,7 +228,7 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ 	local tmp = vim.fn.tempname()
+ 	local ok_write, write_err = pcall(vim.fn.writefile, { body_json }, tmp)
+ 	if not ok_write then
+-		return on_complete("Failed to write request body to temp file: " .. tostring(write_err))
++		return on_complete(nil, "Failed to write request body to temp file: " .. tostring(write_err))
+ 	end
+ 
+ 	local function cleanup()
+@@ -237,20 +273,28 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ 			cleanup()
+ 			if code ~= 0 then
+ 				log.debug("[API] command returned code " .. tostring(code))
+-				on_complete("curl returned code " .. tostring(code))
++				on_complete(nil, "curl returned code " .. tostring(code))
+ 				return
+ 			end
+-			on_complete(nil)
++			on_complete(nil, nil)
+ 		end,
+ 	})
+ 
+ 	if job_id &lt;= 0 then
+ 		cleanup()
+-		on_complete("Failed to start job")
++		on_complete(nil, "Failed to start job")
+ 	end
+ end
+ 
+ function M.parse_response(res)
++	if not res then
++		return nil, "empty response"
++	end
++
++	if res.error and res.error ~= vim.NIL then
++		return nil, M.format_error(res.error)
++	end
++
+ 	if not res.choices or #res.choices == 0 or not res.choices[1].message then
+ 		return nil, "no choices received"
+ 	end
+@@ -263,7 +307,7 @@ function M.parse_response(res)
+ 		fields.token_usage = res.usage.total_tokens
+ 	end
+ 
+-	return fields
++	return fields, nil
+ end
+ 
+ local temp_data = ""
+@@ -278,42 +322,52 @@ function M.parse_chunk(chunk)
+ 
+ 	local ok, decoded = pcall(vim.json.decode, chunk)
+ 	if not ok then
++		-- Incomplete SSE fragments are common; buffer and try again.
+ 		log.debug("chunk is not valid JSON trying with temp_data")
+ 		temp_data = temp_data .. chunk
+ 		ok, decoded = pcall(vim.json.decode, temp_data)
+ 	end
+-	if ok then
+-		temp_data = ""
++	if not ok or type(decoded) ~= "table" then
++		-- Still incomplete / unusable — wait for more data without erroring.
++		return {}, nil
+ 	end
++	temp_data = ""
+ 
+-	-- try again
+ 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
+ 
+-	if decoded.error then
+-		return { content = decoded.error.message }
++	if decoded.error and decoded.error ~= vim.NIL then
++		return nil, M.format_error(decoded.error)
+ 	end
+ 	if decoded.object == "error" then
+-		return { content = decoded.message }
++		return nil, M.format_error(decoded.message or decoded)
+ 	end
+ 
+ 	local fields = {}
+ 	if decoded.choices and #decoded.choices &gt; 0 then
+ 		local message = decoded.choices[1].delta
+-		fields, err = M.extract_fields(message)
+-		if err then
+-			return fields, err
++		local extract_err
++		fields, extract_err = M.extract_fields(message)
++		if extract_err then
++			return fields, extract_err
+ 		end
+ 	end
+ 	if decoded.usage and decoded.usage.total_tokens then
+ 		fields.token_usage = decoded.usage.total_tokens
+ 	end
+ 
+-	return fields
++	return fields, nil
+ end
+ 
+ function M.update_fields(fields, chunk)
++	if type(fields) ~= "table" then
++		fields = {}
++	end
++	if type(chunk) ~= "table" then
++		return fields
++	end
++
+ 	if chunk.error then
+-		fields.error = chunk.error
++		fields.error = M.format_error(chunk.error)
+ 	end
+ 
+ 	if chunk.content then
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index e9f8f4b..bd6988b 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -190,6 +190,11 @@ local providers_config = {
+ 		api_key_env = "XAI_API_KEY",
+ 		api_format = "chat_completions",
+ 	},
++	zyphra = {
++		url = "https://api.zyphracloud.com/api/v1/chat/completions",
++		api_key_env = "ZYPHRA_API_KEY",
++		api_format = "chat_completions",
++	},
+ 	-- Generic/custom provider
+ 	custom = {
+ 		url = config.options.url,
+@@ -400,9 +405,10 @@ local function create_provider_module(provider_name)
+ 
+ 				log.debug("Request response: " .. vim.inspect(parsed))
+ 
+-				if parsed and parsed.error ~= vim.NIL then
+-					record_actual_cost(send_time, nil, parsed.error.message)
+-					return callback(nil, "Received error: " .. parsed.error.message)
++				if parsed and parsed.error and parsed.error ~= vim.NIL then
++					local err_msg = common.format_error(parsed.error)
++					record_actual_cost(send_time, nil, err_msg)
++					return callback(nil, "Received error: " .. err_msg)
+ 				end
+ 
+ 				local fields = {}
+@@ -559,8 +565,8 @@ local function create_provider_module(provider_name)
+ 					return
+ 				end
+ 
+-				if parsed and parsed.error ~= vim.NIL then
+-					on_chunk(nil, "Received error: " .. parsed.error.message)
++				if parsed and parsed.error and parsed.error ~= vim.NIL then
++					on_chunk(nil, "Received error: " .. common.format_error(parsed.error))
+ 					return
+ 				end
+ 
+@@ -629,7 +635,7 @@ local function create_provider_module(provider_name)
+ 				if parsed.usage and parsed.usage.total_tokens then
+ 					fields.token_usage = parsed.usage.total_tokens
+ 				end
+-			end, function(err)
++			end, function(_, err)
+ 				if err then
+ 					record_actual_cost(send_time, nil, err)
+ 					on_complete(nil, err)
+@@ -699,15 +705,22 @@ local function create_provider_module(provider_name)
+ 
+ 		log.debug("[API] request response: " .. vim.inspect(parsed))
+ 
+-		if parsed.error then
+-			record_actual_cost(send_time, nil, parsed.error.message or "provider error")
+-			return callback(nil, parsed.error.message)
++		if parsed and parsed.error and parsed.error ~= vim.NIL then
++			local err_msg = common.format_error(parsed.error)
++			record_actual_cost(send_time, nil, err_msg)
++			return callback(nil, err_msg)
++		end
++
++		local fields, parse_err = common.parse_response(parsed)
++		if parse_err or not fields then
++			local err_msg = parse_err or "empty provider response"
++			record_actual_cost(send_time, nil, err_msg)
++			return callback(nil, err_msg)
+ 		end
+ 
+ 		local real = (parsed and parsed.usage and parsed.usage.total_tokens) or nil
+-		record_actual_cost(send_time, real, err)
+-		local fields, _ = common.parse_response(parsed)
+-		callback(fields, err)
++		record_actual_cost(send_time, real, nil)
++		callback(fields, nil)
+ 	end)
+ 		end
+ 
+@@ -752,9 +765,12 @@ local function create_provider_module(provider_name)
+ 	local fields = {}
+ 
+ 	common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
+-		local chunk_data, err = common.parse_chunk(chunk)
+-		if err then
+-			on_chunk(chunk_data, err)
++		local chunk_data, chunk_err = common.parse_chunk(chunk)
++		if chunk_err then
++			on_chunk(nil, chunk_err)
++			return
++		end
++		if type(chunk_data) ~= "table" then
+ 			return
+ 		end
+ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 0fa9362..8db60fe 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -982,6 +982,9 @@ function M.continue()
+ 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+ 					return
+ 				end
++				if type(chunk) ~= "table" then
++					return
++				end
+ 
+ 				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+ 				if chunk.reasoning and #chunk.reasoning &gt; 0 then
+@@ -1015,6 +1018,15 @@ function M.continue()
+ 					table.insert(hist, { role = "assistant", content = err })
+ 					return
+ 				end
++				if type(data) ~= "table" then
++					current_state = "idle"
++					update_input_name()
++					local msg = "empty provider response"
++					M.append("{{{ Received error\n" .. msg .. "\n}}}\n")
++					table.insert(hist, { role = "assistant", content = msg })
++					maybe_auto_save()
++					return
++				end
+ 				local response = { role = "assistant" }
+ 				for k, v in pairs(data) do
+ 					response[k] = v
+@@ -1067,6 +1079,15 @@ if not data.tool_calls or #data.tool_calls == 0 then
+ 					maybe_auto_save()
+ 					return
+ 				end
++				if type(fields) ~= "table" then
++					current_state = "idle"
++					update_input_name()
++					local msg = "empty provider response"
++					M.append("{{{ Error\n" .. msg .. "\n}}}")
++					table.insert(hist, { role = "assistant", content = msg })
++					maybe_auto_save()
++					return
++				end
+ 				local response = { role = "assistant" }
+ 				for k, v in pairs(fields) do
+ 					response[k] = v
+diff --git a/www/index.html b/www/index.html
+index bf62204..2e10725 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -46,6 +46,7 @@ AI coding agents directly to your editor.
+ - stepfun        STEPFUN_API_KEY
+ - xai            XAI_API_KEY
+ - z.ai           Z_AI_API_KEY
++- zyphra         ZYPHRA_API_KEY
+ - custom         (set options.url)
+ 
+ 
+</pre>

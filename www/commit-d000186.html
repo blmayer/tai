@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai d000186</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit d000186
+parent <a href=commit-f3c2a7e.html>f3c2a7e</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-11T10:03:19-03:00
+
+    added token count to input name
+
+    improved prompt
+
+<a href=tree-d000186.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 7030a26..b872713 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -28,6 +28,8 @@ Workflow:
+ - Map the scope: identify the important codebase regions, files, functions,
+   or libraries likely involved. If unknown, plan and perform targeted searches.
+   - Use `ls -Rl`, `find` or similar command to start exploring the repo.
++  - Use grep to search for important code and then read_file to read a more
++    specific range is good because it is more context efficient.
+   - If you find an agents file (e.g. AGENTS.md), read it.
+   - Avoid gathering unrelated context and drifting from the task at hand.
+   - Implement ONLY what is strictly needed to fullfil the request.
+@@ -36,14 +38,14 @@ Workflow:
+   task.
+ - If you edit code: keep changes minimal and consistent, ignore unrelated issues,
+   update docs if user-facing and keep the style consistent.
+-- New files may now appear in `ls` as they can be only in the session's buffer.
++- New or changed files will not appear updated for commands as they are in the 
++  session's buffer until the user saves it.
+ - Keep the user informed of your choices during the process.
+ - Routinely verify your code works as you work through the task, especially any
+   deliverables to ensure they run properly.
+ - After applying a patch you should check the affected files to ensure the patch
+   was applied correctly.
+-  - Don't run commands if you didn't verify the patch.
+-  - Read the changed files ONLY ONE TIME.
++  - Don't run commands that needs the file because changes may have not be saved.
+   - Stop after 3 attempts with failure.
+ - In the final response present a summary.
+ ]]
+@@ -108,6 +110,7 @@ IMPORTANT:
+ - Changes consider the files in the same original state of the patch.
+ - Each patch gets the files at the current state, so later patches are affected
+   by previous ones.
++- After a patch files remain unsaved, so the user can approve or reject.
+ 
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+@@ -117,10 +120,14 @@ it call the `shell` tool with the parameters:
+ {
+ 	"command": "shell pipeline"
+ }
+-Each tool execution gives you a clean env, so paths are reset to the project's
+-folder and any set variables are cleared. NEVER USE this tool for reading or
+-writing to files, to read files ALWAYS use the `read_file` tool, and for
+-writing use the `patch` tool. Don't use absolute paths.
++
++- Each tool execution gives you a clean env, so paths are reset to the project's
++  folder and any set variables are cleared.
++- NEVER USE this tool for reading or writing to files, to read files ALWAYS use
++  the `read_file` tool, and for writing use the `patch` tool.
++- Don't use absolute paths.
++- If there are unsaved files ask the user to save them before running commands
++  that need the files.
+ 
+ ## summarize
+ Use the `summarize` tool when you think the conversation context is getting too
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 0d7ee23..568a6f5 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -131,6 +131,10 @@ function M.request(model_config, msgs, format, callback)
+ 			end
+ 
+ 			-- Mistral tool call arguments are already JSON objects, no need to decode
++			-- Extract token usage if available
++			if parsed.usage and parsed.usage.total_tokens then
++				fields.token_usage = parsed.usage.total_tokens
++			end
+ 			callback(fields, nil)
+ 		end)
+ end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 69f676e..433a7af 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -20,6 +20,16 @@ function M.update_chat_name()
+ 	end
+ end
+ 
++local function update_token_display(token_count)
++	local name = input_bufname
++	if token_count then
++		name = string.format("%s (ctx: %u)", input_bufname, token_count)
++	end
++	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr) then
++		pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, name)
++	end
++end
++
+ M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+ vim.bo[M.input_buffer_nr].buftype = "nofile"
+@@ -169,6 +179,8 @@ local function run_tools(tool_calls)
+ 			M.append_to_buffer(res.content .. "\n")
+ 			M.append_to_buffer("}}}\n")
+ 		elseif name == "patch" then
++			local out = tools.run(name, args)
++
+ 			M.append_to_buffer("{{{ Patching " .. args.file .. "\n")
+ 			for _, change in ipairs(args.changes or {}) do
+ 				M.append_to_buffer(string.format(
+@@ -179,13 +191,12 @@ local function run_tools(tool_calls)
+ 					change.content
+ 				))
+ 			end
+-			local out = tools.run(name, args)
+ 			res.content = out
+ 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
+ 			M.append_to_buffer("}}}\n")
+ 			refresh_and_close_folds()
+ 		elseif name == "summarize" then
+-			M.append_to_buffer("[tai] Summarizing\n")
++			M.append_to_buffer("{{{ Summarizing chat\n}}}\n")
+ 			tai.task(
+ 				{ tools.summary_msg },
+ 				function(summ)
+@@ -202,16 +213,17 @@ local function run_tools(tool_calls)
+ 			return nil
+ 		end
+ 
+-		log.debug("Output of " .. name .. ": " .. (res.content or ""))
+ 		table.insert(results, res)
+ 	end
+ 	return results
+ end
+ 
+ local function process_response(fields)
+-	log.debug("Showing response")
+ 	M.open()
+ 
++	if fields.token_usage then
++		vim.schedule(function() update_token_display(fields.token_usage) end)
++	end
+ 	if fields.error then
+ 		M.append_to_buffer("[tai] " .. fields.error .. "\n")
+ 		return
+</pre>

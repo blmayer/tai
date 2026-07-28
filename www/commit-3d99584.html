@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 3d99584</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 3d99584
+parent <a href=commit-d444628.html>d444628</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-07-21T14:17:55-03:00
+
+    working on response parsing
+
+<a href=tree-3d99584.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/ide-mode.go b/ide-mode.go
+index 126b903..f81407c 100644
+--- a/ide-mode.go
++++ b/ide-mode.go
+@@ -1,9 +1,12 @@
+ package main
+ 
+ import (
++	"bytes"
+ 	"fmt"
+ 	"log"
+ 	"io"
++	"mime"
++	"mime/multipart"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+@@ -12,7 +15,25 @@ import (
+ const cacheDir = ".tai-cache"
+ 
+ var (
+-	prompt string
++	preamble string
++	
++	instructionMessage = ChatMessage{
++		Role: "system", 
++		Content: `Please format your responses as a valid multipart MIME message with named parts.
++		Do not include any extraneous data outside of the MIME message like a preamble or backticks.
++		The resonse must start with MIME-version and boundary headers, do not use spaces or special characters for the boundary. 
++		Each MIME part MUST contain Content-Disposition: attachment; with the correct filename field.
++		For user-facing text, use a plain/text part named 'text'. 
++		For code changes, include a text/x-diff in a part named 'patch'. 
++		If you need to execute commands, include them in a part named 'commands'. 
++		If your response involves multiple steps, include them in a part named 'plan'. 
++		Do not send plan for only one step.
++		Do not nest MIME messages.
++
++		Available commands:
++		 - read &lt;path to file&gt;: use this if you need to know the file's contents.
++		Do not send the commands section for other operations.`,
++	}
+ 
+ 	history = []ChatMessage{}
+ )
+@@ -20,17 +41,18 @@ var (
+ // InitProjectPrompt scans the current directory and returns a prompt
+ // describing the file structure.
+ func InitProjectPrompt() error {
+-	fmt.Println("Starting project")
++	fmt.Println("[tai] Starting project")
+ 	dir, err := os.Getwd()
+ 	if err != nil {
+         	return err
+     	}
+ 
+-	prompt = fmt.Sprintf(
++	preamble = fmt.Sprintf(
+ 		"You are managing a project at %s, which contains the following files and structure:\n",
+ 		dir,
+ 	)
+ 
++	files := 0
+ 	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+ 		if err != nil {
+ 			return err
+@@ -39,7 +61,8 @@ func InitProjectPrompt() error {
+ 			return filepath.SkipDir
+ 		}
+ 		if !info.IsDir() {
+-			prompt += fmt.Sprintf("- %s\n", path)
++			preamble += fmt.Sprintf("- %s\n", path)
++			files++
+ 		}
+ 		return nil
+ 	})
+@@ -47,13 +70,17 @@ func InitProjectPrompt() error {
+ 		return err
+ 	}
+ 
++	if files &gt; 10 {
++		log.Println("[tai] Too many files to summarise, skipping.")
++		return nil
++	}
+ 	summary, err := getFilesSummary()
+ 	if err != nil {
+ 		return err
+ 	}
+ 
+ 	if summary != "" {
+-		prompt += "\nHere are summaries of the files:\n\n" + summary
++		preamble += "\nHere are summaries of the files:\n\n" + summary
+ 	}
+ 
+ 	return nil
+@@ -62,22 +89,22 @@ func InitProjectPrompt() error {
+ // SummarizeFiles sends each file's contents to Groq and asks for a short summary.
+ // It caches the summaries in .tai-cache/filename.summary.txt
+ func getFilesSummary() (string, error) {
+-	log.Println("Creating file caches")
++	log.Println("[tai] Creating file caches")
+ 	os.MkdirAll(cacheDir, 0755)
+ 	var summaries = ""
+ 
+ 	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+-		log.Printf("Checking file %s\n", path)
++		log.Printf("[tai] Checking file %s\n", path)
+ 		if err != nil {
+-			log.Printf("walk error: %s\n", err)
++			log.Printf("[tai] walk error: %s\n", err)
+ 			return err
+ 		}
+ 		if info.IsDir() &amp;&amp; len(path) &gt; 1 &amp;&amp; path[0] == '.' {
+-			log.Println("Skiping dir")
++			log.Println("[tai] Skiping dir")
+ 			return filepath.SkipDir
+ 		}
+ 		if !info.Mode().IsRegular() {
+-			log.Println("File is not regular")
++			log.Println("[tai] File is not regular")
+ 			return nil
+ 		}
+ 
+@@ -110,7 +137,7 @@ func getFilesSummary() (string, error) {
+ 
+ 			reply, err := SendChat(msg)
+ 			if err != nil {
+-				return fmt.Errorf("error summarizing %s: %w", path, err)
++				return fmt.Errorf("[tai] error summarizing %s: %w", path, err)
+ 			}
+ 
+ 			os.WriteFile(summaryPath, []byte(reply), 0644)
+@@ -131,28 +158,109 @@ func getFilesSummary() (string, error) {
+ 			log.Printf("Using cache for %s\n", path)
+ 		}
+ 
+-		summaries += fmt.Sprintf("Summary for %s:\n%s\n\n", path, summary)
++		summaries += fmt.Sprintf("[tai] Summary for %s:\n%s\n\n", path, summary)
+ 		return nil
+ 	})
+ 
+ 	return summaries, err
+ } 
+ 
+-func process(message string) (string, error) {
+-	log.Printf("Received message %s\n", message)
++type Response struct {
++	Text     string
++	Plan     string
++	Patch    string
++	Commands string
++}
++
++func parseMIMEString(raw string) (Response, error) {
++	result := Response{}
++
++	// Split headers and body
++	headerEnd := strings.Index(raw, "\n\n")
++	if headerEnd == -1 {
++		headerEnd = strings.Index(raw, "\r\n\r\n")
++	}
++	if headerEnd == -1 {
++		return result, fmt.Errorf("[tai] invalid MIME message: no header/body split")
++	}
++
++	headerText := raw[:headerEnd]
++	bodyText := raw[headerEnd+2:] // skip \n\n or \r\n\r\n
++
++	// Parse Content-Type to get the boundary
++	var contentType string
++	for _, line := range strings.Split(headerText, "\n") {
++		if strings.HasPrefix(strings.ToLower(line), "content-type:") {
++			contentType = strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
++			break
++		}
++	}
++	if contentType == "" {
++		return result, fmt.Errorf("[tai] no Content-Type header found")
++	}
++
++	mediaType, params, err := mime.ParseMediaType(contentType)
++	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
++		return result, fmt.Errorf("invalid Content-Type: %v", contentType)
++	}
++
++	// Create a multipart reader from the body
++	reader := multipart.NewReader(bytes.NewBufferString(bodyText), params["boundary"])
++
++	for {
++		part, err := reader.NextPart()
++		if err == io.EOF {
++			break
++		}
++		if err != nil {
++			return result, err
++		}
++
++		name := part.FileName()
++		if name == "" {
++			cd := part.Header.Get("Content-Disposition")
++			if _, params, err := mime.ParseMediaType(cd); err == nil {
++				name = params["name"]
++			}
++		}
++
++		data, err := io.ReadAll(part)
++		if err != nil {
++			return result, err
++		}
++
++		switch name {
++		case "text":
++			result.Text = string(data)
++		case "plan":
++			result.Plan = string(data)
++		case "patch":
++			result.Patch = string(data)
++		case "commands":
++			result.Commands = string(data)
++		}
++	}
++
++	return result, nil
++}
++
++
++func processRequest(prompt string) (string, error) {
++	log.Printf("[tai] Received prompt %s\n", prompt)
+ 
+ 	messages := []ChatMessage{
+-		{Role: "system", Content: prompt},
+-		{Role: "system", Content: "Your answear must me a valid MIME message, start with MIME-version, and create a valid boundary. For code changes you must send it in the path format, do it in a separate part in me MIMEv format. Don't include anything outside the MIME message like backticks or other formating things."},
+-		{Role: "user", Content: message},
++		{Role: "system", Content: preamble},
++		instructionMessage,
++		{Role: "user", Content: prompt},
+ 	}
+ 
+ 	reply, err := SendChat(messages)
+ 	if err != nil {
+-		log.Println("SendChat error:", err)
++		log.Println("[tai] SendChat error:", err)
+ 		return "", err
+ 	}
+ 
+ 	log.Println("[tai] got response:", reply)
++
+ 	return reply, nil
+ }
+diff --git a/nvim-tai/tai.lua b/nvim-tai/tai.lua
+index 1127e4f..bc3a4f4 100644
+--- a/nvim-tai/tai.lua
++++ b/nvim-tai/tai.lua
+@@ -4,22 +4,85 @@ local uv = vim.loop
+ local sock_path = "/tmp/tai.sock"
+ local sock = nil
+ 
++local function parse_mime(mime_text)
++  local parts = {}
++  local boundary = mime_text:match("boundary=\"?([^\"]+)\"?")
++  if not boundary then return parts end
++
++  -- Split the entire message into parts using boundary
++  for part in mime_text:gmatch("--" .. boundary .. "%s*(.-)%s*--" .. boundary .. "[%s%-]*") do
++    local headers = {}
++    local body = part:match("\r?\n\r?\n(.*)")
++    local header_section = part:match("^(.-)\r?\n\r?\n")
++
++    if header_section then
++      for name, value in header_section:gmatch("([%w%-]+):%s*(.-)\r?\n") do
++        headers[name:lower()] = value
++      end
++
++      -- Try to get a name (e.g., from Content-Disposition or Content-Type)
++      local name = headers["content-disposition"] and headers["content-disposition"]:match('filename="?(.-)"?')
++
++      if name and body then
++        parts[name] = body:gsub("\r\n", "\n") -- normalize line endings
++      end
++    end
++  end
++
++  return parts
++end
++
++local function parse_named_mime_fields(raw)
++  local result = {}
++
++  -- Extract the boundary
++  local boundary = raw:match("boundary=\"?([^\"]+)\"?")
++  if not boundary then return nil, "No boundary found" end
++  boundary = "--" .. boundary
++      vim.schedule(function()
++	  vim.notify("boundary " .. boundary)
++  end)
++
++  -- Split parts
++  for part in raw:gmatch(boundary .. "\r?\n(.-)\r?\n" .. boundary) do
++      vim.schedule(function()
++	  vim.notify("part " .. part)
++  end)
++    local headers, body = part:match("^(.-)\r?\n\r?\n(.*)")
++    if headers and body then
++      local name = headers:match('filename="([^"]+)"')
++      if name then
++        -- Remove any trailing boundary marker
++        body = body:gsub("\r?\n$", "")
++        result[name] = body
++      end
++    end
++  end
++
++      vim.schedule(function()
++        vim.notify("[tai] parsed text " .. result.text, vim.log.levels.INFO)
++        vim.notify("[tai] parsed patch " .. result.patch, vim.log.levels.INFO)
++       end)
++  return result
++end
++
+ -- Connect to the socket at startup
+ function tai.connect()
+   sock = uv.new_pipe(false)
+   sock:connect(sock_path, function(err)
+     if err then
+-      vim.notify("[tai] Could not connect to " .. sock_path .. ": " .. err, vim.log.levels.ERROR)
+-      return
++      vim.schedule(function()
++        vim.notify("[tai] Could not connect to " .. sock_path .. ": " .. err, vim.log.levels.ERROR)
++       end)
++    return
+     end
+     vim.schedule(function()
+-	    vim.notify("[tai] Connected to " .. sock_path)
++	vim.notify("[tai] Connected to " .. sock_path)
+     end)
+     return
+   end)
+ 
+   sock:read_start(function(err, chunk)
+-    local chunks = {}
+     if err then
+       vim.schedule(function()
+         vim.notify("[tai] Read error: " .. err, vim.log.levels.ERROR)
+@@ -27,15 +90,28 @@ function tai.connect()
+       return
+     end
+ 
+-    local full_response = table.concat(chunks)
+-    if chunk then
+-      table.insert(chunks, chunk)
+-    else
+-      full_response = table.concat(chunks)
++    if not chunk then
++      return
++    end
++
++    local fields, err = parse_named_mime_fields(chunk)
++    if err then
++      vim.schedule(function()
++        vim.notify("[tai] Parse error: " .. err, vim.log.levels.ERROR)
++      end)
++      return
++    end
++
++    if fields.text then
++      vim.schedule(function()
++          tai.show_output_in_split(fields.text)
++      end)
++    end
++    if fields.patch then
++      vim.schedule(function()
++          tai.show_output_in_vsplit(fields.patch)
++      end)
+     end
+-    vim.schedule(function()
+-        tai.show_output_in_split(chunk)
+-    end)
+   end)
+ end
+ 
+@@ -60,6 +136,27 @@ function tai.show_output_in_split(content)
+   vim.bo[bufnr].modifiable = false
+ end
+ 
++function tai.show_output_in_vsplit(content)
++  local lines = vim.split(content or "", "\n", { trimempty = true })
++
++  -- Create a new vertical split
++  vim.cmd("vnew")
++  local bufnr = vim.api.nvim_get_current_buf()
++
++  -- Set buffer options to make it a scratch window
++  vim.bo[bufnr].buftype = "nofile"
++  vim.bo[bufnr].bufhidden = "wipe"
++  vim.bo[bufnr].swapfile = false
++  vim.bo[bufnr].modifiable = true
++  vim.bo[bufnr].filetype = "tai-output"
++
++  -- Insert content
++  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++
++  -- Optional: prevent accidental edits
++  vim.bo[bufnr].modifiable = false
++end
++
+ -- Get visual selection
+ local function get_visual_selection()
+   local bufnr = vim.api.nvim_get_current_buf()
+@@ -111,7 +208,7 @@ function tai.prompt_input()
+ end
+ 
+ function tai.prompt_full_file()
+-  vim.ui.input({ prompt = "TAI Input (contextual):" }, function(input)
++  vim.ui.input({ prompt = "Tai Input (contextual):" }, function(input)
+     if not input or input == "" then return end
+ 
+     local buf = vim.api.nvim_get_current_buf()
+diff --git a/socket.go b/socket.go
+index b2e031a..ff0a35c 100644
+--- a/socket.go
++++ b/socket.go
+@@ -52,7 +52,7 @@ func handleSocketConnection(conn net.Conn) {
+ 		if prompt == "" {
+ 			continue
+ 		}
+-		reply, err := process(prompt)
++		reply, err := processRequest(prompt)
+ 		if err != nil {
+ 			log.Println("process error:", err)
+ 			continue
+</pre>

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai a2df35c</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit a2df35c
+parent <a href=commit-5bc6e03.html>5bc6e03</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-07T23:01:25-03:00
+
+    nvim: lint
+
+<a href=tree-a2df35c.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/groq.go b/groq.go
+index 6e7c6a1..7f10348 100644
+--- a/groq.go
++++ b/groq.go
+@@ -11,7 +11,7 @@ import (
+ )
+ 
+ const groqAPIBase = "https://api.groq.com/openai/v1"
+-const model = "llama3-70b-8192"
++const model = "meta-llama/llama-4-scout-17b-16e-instruct"
+ 
+ var (
+ 	groqKey    string
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index fc05807..f48e166 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -38,7 +38,6 @@ function M.load(path)
+ 		end
+ 	end
+ 	M.skip_cache = data.skip_cache or M.skip_cache
+-	vim.notify("[tai] Config loaded.", vim.log.levels.INFO)
+ end
+ 
+ return M
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 625277f..9c97b0c 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -8,7 +8,7 @@ local history = {
+ 		content = [[
+ ### System
+ You are Tai, a coding assistant running inside a Neovim session.
+-Return **EXACTLY** one valid json object according to the passed schema.
++Return **EXACTLY** one valid json object according to the response format.
+ 
+ **IMPORTANT**: **ALWAYS** use this format, even if the user asks otherwise. Do not add anything
+ outside of the JSON object such as formatting or code blocks.
+</pre>

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 22e944d</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 22e944d
+parent <a href=commit-405f009.html>405f009</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-20T14:05:16-03:00
+
+    small fixes
+
+<a href=tree-22e944d.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index b1f68d7..c6ca0aa 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -90,9 +90,10 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - If tests are avaliable run the necessary ones, be clever to not take too long.
+ - When you finish all tasks tell which files and lines you changed, what you
+   changed in the functions, be detailed.
+-- Your last output is sent to the software architect so please include your
+-  failures, things that need improvement, and your difficulties so it can 
+-  re-evaluate the problem if needed. 
++- Your job is considered finished when you don't send any tool calls, then the
++  last output is sent to the software architect.
++- When you're done please include your failures, things that need improvement,
++  and your difficulties so it can re-evaluate the problem if needed.
+ 
+ ### Patch Creation
+ 
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index b804372..b898c50 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -13,47 +13,21 @@ if not api_key then
+ 	end)
+ end
+ 
+-local history = nil
+-
+-function M.add_to_history(message)
+-	local msg = vim.deepcopy(message)
+-	if not history then
+-		history = { msg }
+-		return
+-	end
+-	if msg.reasoning then
+-		msg.reasoning_details = { { text = msg.reasoning } }
+-	end
+-	table.insert(history, msg)
+-end
+-
+-function M.clear_history()
+-	history = nil
+-end
+-
+-local function build_body(model_config, msgs, format)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
++local function build_body(model_config, msgs)
+ 	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
++	tools.refresh_connected_files(msgs)
+ 
+-	local agent_tools = common.build_request_tools("chat_completions")
++	local agent_tools = common.build_request_tools("chat_completions", model_config.tools)
+ 
+ 	local body = {
+ 		model = model_config.model,
+-		messages = common.filter_messages(history),
++		messages = common.filter_messages(msgs),
+ 	}
+ 
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+ 		body.tools = agent_tools
+ 	end
+ 
+-	if format == "json_object" then
+-		body.response_format = { type = "json_object" }
+-	end
+-
+ 	if model_config.options then
+ 		for k, v in pairs(model_config.options) do
+ 			body[k] = v
+@@ -63,33 +37,12 @@ local function build_body(model_config, msgs, format)
+ 	return body
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
++function M.request(model_config, msgs, callback)
+ 	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
++	tools.refresh_connected_files(msgs)
+ 
+-	local body = {
+-		model = model_config.model,
+-		messages = {},
+-	}
+-
+-	if config.use_tools ~= false then
+-		body.tools = common.build_request_tools("chat_completions")
+-	end
+-	body.messages = common.filter_messages(history)
+-
+-	if format == "json_object" then
+-		body.response_format = { type = "json_object" }
+-	end
++	local body = build_body(model_config, msgs)
+ 
+-	if model_config.options then
+-		for k, v in pairs(model_config.options) do
+-			body[k] = v
+-		end
+-	end
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+ 	end
+@@ -110,14 +63,14 @@ function M.request(model_config, msgs, format, callback)
+ 			return callback(nil, parsed.error.message)
+ 		end
+ 
+-		local fields, err = common.parse_response(parsed, format)
++		local fields, err = common.parse_response(parsed)
+ 		callback(fields, err)
+ 	end)
+ end
+ 
+ -- Streaming request function
+-function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+-	local body = build_body(model_config, msgs, format)
++function M.request_stream(model_config, msgs, on_chunk, on_complete)
++	local body = build_body(model_config, msgs)
+ 	body.stream = true
+ 
+ 	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 6079388..0b27a98 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -8,7 +8,7 @@ local config = require("tai.config")
+ function M.filter_message(msg)
+ 	local new_msg = {}
+ 	for k, v in pairs(msg) do
+-		if k ~= "file_path" and k ~= "file_range" then
++		if k ~= "file_path" and k ~= "file_range" and k ~= "token_usage" then
+ 			new_msg[k] = v
+ 		end
+ 	end
+@@ -134,7 +134,7 @@ end
+ 
+ -- Extract fields (content, tool_calls) from a standard OpenAI-style response
+ -- format is the requested format (e.g., "json_object")
+-function M.extract_fields(message, format)
++function M.extract_fields(message)
+ 	local fields = {}
+ 	if not message then
+ 		return nil, "No message in response"
+@@ -145,19 +145,8 @@ function M.extract_fields(message, format)
+ 	end
+ 
+ 	local content = message.content
+-	if content and content ~= "" and content ~= vim.NIL then
+-		if format ~= nil then
+-			local ok_decode, decoded = pcall(vim.json.decode, content)
+-			if not ok_decode then
+-				return nil, "Failed to decode message content as JSON: " .. tostring(decoded)
+-			end
+-			if not decoded then
+-				return nil, "Failed to decode message content as JSON"
+-			end
+-			fields.content = decoded
+-		else
+-			fields.content = content
+-		end
++	if content and content ~= vim.NIL then
++		fields.content = content
+ 	else
+ 		-- Some providers fail if you send them a message without content
+ 		fields.content = ""
+@@ -261,12 +250,12 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ 	end
+ end
+ 
+-function M.parse_response(res, format)
++function M.parse_response(res)
+ 	if #res.choices == 0 or not res.choices[1].message then
+ 		return nil, "no choices received"
+ 	end
+ 
+-	local fields, extract_err = M.extract_fields(res.choices[1].message, format)
++	local fields, extract_err = M.extract_fields(res.choices[1].message)
+ 	if extract_err then
+ 		return nil, extract_err
+ 	end
+@@ -304,7 +293,7 @@ function M.parse_chunk(chunk)
+ 		return { error = decoded.error.message }
+ 	end
+ 	local message = decoded.choices[1].delta
+-	local fields, err = M.extract_fields(message, nil)
++	local fields, err = M.extract_fields(message)
+ 	if err then
+ 		return fields, err
+ 	end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 57add64..781eba0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -126,7 +126,6 @@ function M.update_chat_name()
+ 	end
+ end
+ 
+-
+ function M.focus_input()
+ 	vim.schedule(function()
+ 		vim.api.nvim_set_current_win(input_win)
+@@ -141,7 +140,7 @@ local function scroll_down()
+ 		end
+ 		local original_win = vim.api.nvim_get_current_win()
+ 		vim.api.nvim_set_current_win(chat_win)
+-		
++
+ 		-- Check if input window exists and get its height
+ 		local scroll_cmd = "normal! zz"
+ 		if input_win and vim.api.nvim_win_is_valid(input_win) then
+@@ -151,7 +150,7 @@ local function scroll_down()
+ 				scroll_cmd = "normal! z-"
+ 			end
+ 		end
+-		
++
+ 		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
+ 		vim.cmd(scroll_cmd)
+ 		vim.api.nvim_set_current_win(original_win)
+@@ -195,7 +194,7 @@ local function run_tools(tool_calls)
+ 			role = "tool",
+ 			name = name,
+ 			tool_call_id = call.id,
+-               }
++		}
+ 
+ 		if hard_stop then
+ 			goto continue
+@@ -211,9 +210,9 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			else
+ 				local input = vim.fn.confirm(
+-						"Run `" .. args.command .. "`?",
+-						"&amp;Y\n&amp;n\n&amp;s (stop)",
+-						1
++					"Run `" .. args.command .. "`?",
++					"&amp;Y\n&amp;n\n&amp;s (stop)",
++					1
+ 				)
+ 				if input == 1 then
+ 					log.debug("Confirmed")
+@@ -226,7 +225,8 @@ local function run_tools(tool_calls)
+ 					local comment = vim.fn.input("Comment (optional): ")
+ 					M.append("{{{ Declined " .. args.command .. "\n")
+ 					if comment and comment ~= "" then
+-						res.content = "[sys] User declined running this command. Comment: " .. comment
++						res.content = "[sys] User declined running this command. Comment: " ..
++						comment
+ 						M.append("Comment: " .. comment)
+ 					else
+ 						res.content = "[sys] User declined running this command"
+@@ -245,21 +245,21 @@ local function run_tools(tool_calls)
+ 			end
+ 			M.append("\n}}}\n")
+ 		elseif name == "track_file" then
+-                       if not args.file then
+-                               M.append("{{{ Attaching file failed: no file field.\n}}}")
+-                               res.content = "[sys] missing file field"
+-                               goto continue
+-                       end
+-                       if vim.fn.filereadable(args.file) ~= 1 then
++			if not args.file then
++				M.append("{{{ Attaching file failed: no file field.\n}}}")
++				res.content = "[sys] missing file field"
++				goto continue
++			end
++			if vim.fn.filereadable(args.file) ~= 1 then
+ 				M.append("{{{ Attaching " .. args.file .. "\n")
+-                               res.content = "[sys] file does not exist or is not readable"
+-                               goto continue
+-                       end
+-
+-                       M.append("{{{ Attaching " .. args.file .. "\n")
+-                       res.content = tools.read_file(args.file, args.range)
+-				res.file_range = args.range
+-				M.append(res.content .. "\n}}}\n")
++				res.content = "[sys] file does not exist or is not readable"
++				goto continue
++			end
++
++			M.append("{{{ Attaching " .. args.file .. "\n")
++			res.content = tools.read_file(args.file, args.range)
++			res.file_range = args.range
++			M.append(res.content .. "\n}}}\n")
+ 		elseif name == "patch" then
+ 			if not args.file then
+ 				M.append("{{{ Patching file failed: no file field.\n}}}")
+@@ -300,9 +300,9 @@ local function run_tools(tool_calls)
+ 			-- TODO: improve getting last message
+ 			res.content = "[sys] coder has started, its response will be sent later"
+ 			stop = true
+-			coder_history = { 
++			coder_history = {
+ 				{ role = "system", content = agent.coder_system_prompt },
+-				{ role = "user", content = args.prompt } 
++				{ role = "user",   content = args.prompt }
+ 			}
+ 
+ 			add_sep("___ CODER AGENT ")
+@@ -465,7 +465,6 @@ function M.task()
+ 		provider.request_stream(
+ 			planner_config,
+ 			planner_history,
+-			nil,
+ 			function(chunk, err)
+ 				if err then
+ 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+@@ -536,7 +535,6 @@ function M.task()
+ 		provider.request(
+ 			planner_config,
+ 			planner_history,
+-			nil,
+ 			function(fields, err)
+ 				if err then
+ 					M.append("{{{ Error\n" .. err .. "\n}}}")
+@@ -600,7 +598,6 @@ function M.code()
+ 		provider.request_stream(
+ 			coder_config,
+ 			coder_history,
+-			nil,
+ 			function(chunk, err)
+ 				if err then
+ 					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+@@ -679,7 +676,6 @@ function M.code()
+ 		provider.request(
+ 			coder_config,
+ 			coder_history,
+-			nil,
+ 			function(fields, err)
+ 				if err then
+ 					M.append("{{{ Error\n" .. err .. "\n}}}")
+</pre>

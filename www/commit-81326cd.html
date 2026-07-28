@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 81326cd</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 81326cd
+parent <a href=commit-5847d3f.html>5847d3f</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-07T09:26:54-03:00
+
+    fixed stop behaviour
+
+<a href=tree-81326cd.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 1af3ea8..eecf499 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -260,7 +260,7 @@ local function run_tools(tool_calls)
+ 
+ 					res.content = summ.content
+ 					tai.clear_history()
+-					tai.add_to_history(res)
++					tai.add_to_history({res})
+ 				end
+ 			)
+ 			return nil
+@@ -333,9 +333,11 @@ local function process_response(fields)
+ 
+ 	vim.schedule(function()
+ 		local res, stop = run_tools(fields.tool_calls)
+-		if not stop then
+-			tai.task(res, process_response)
++		if stop then
++			tai.add_to_history(res)
++			return
+ 		end
++		tai.task(res, process_response)
+ 	end)
+ end
+ 
+</pre>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 2be2fa8</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 2be2fa8
+parent <a href=commit-26a1ca6.html>26a1ca6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-24T12:08:29-03:00
+
+    Improved tool calls and ui for response
+
+    Updated readme
+
+<a href=tree-2be2fa8.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 990a1d1..94cdb29 100644
+--- a/README.md
++++ b/README.md
+@@ -110,7 +110,15 @@ and load it in your `init.lua`:
+ The .tai file supports the following fields:
+ - model: The model used for chat completions.
+ - summary_model: The model used for summaries.
++- complete_model: The model used for complete tasks.
++- provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
+ - skip_cache: A flag to skip caching.
++- planner: Configuration for the planner model (model, options, tools, think).
++- coder: Configuration for the coder model.
++- patcher: Configuration for the patcher model.
++- writer: Configuration for the writer model.
++- all_rounder: Configuration for the all-rounder model.
++- allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
+ 
+ 
+ ### Building
+diff --git a/lua/tai/agents/all_rounder.lua b/lua/tai/agents/all_rounder.lua
+index dff48e9..a1989e2 100644
+--- a/lua/tai/agents/all_rounder.lua
++++ b/lua/tai/agents/all_rounder.lua
+@@ -34,8 +34,9 @@ You are a Tai, an excelent coding and system admin agent. You are in charge of
+ implementing the tasks requested in the current project. You will receive high
+ level feature requests or general questions. Your job is to address them.
+ 
+-The shell's current folder is ]] .. vim.uv.cwd() .. [[, you have full access to
+-the home folder, in a ]] .. host.machine .. " " .. host.sysname .. [[ machine.
++The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
++vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
++host.machine .. " " .. host.sysname .. [[ machine.
+ 
+ ]] .. tools.pretty_info(config.all_rounder.tools) .. [[
+ 
+@@ -50,6 +51,7 @@ INSTRUCTIONS
+ - Implement the task considering the constraints given.
+   - If the task needs multiple steps add a plan to guide you and the user.
+     - Use `[ ]` and `[X]` to indicate the progress, keep it updated.
++    - Send the plan right in the beginning.
+   - Be consistent with the code base's style.
+   - Before finishing ask yourself if you correctly implemented the task.
+ - Don't use commands to change files unless explicitly told to.
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index a20ac4f..9204d36 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -25,7 +25,7 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "patch",
+-			description = "Creates a patch from the given changes, please separate them by file and operation, use line numbers and show the new content. This will ask for user approval.",
++			description = "Creates a patch from the given changes, please double check the line numbers. This will ask for user approval and will not return.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -41,12 +41,12 @@ M.defs = {
+ 								},
+ 								operation = {
+ 									type = "string",
+-									description = "Operation of this change.",
++									description = "Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
+ 									enum = { "add" , "change", "delete" }
+ 								},
+ 								lines = {
+ 									type = "string",
+-									description = "Range of lines that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
++									description = "Range of lines on the original file that the operation is on, starts at 1. Formats: \\d: single line; \\d-\\d: inclusive range; $: last line. Note: to add before the first line use 0.",
+ 								},
+ 								content = {
+ 									type = "string",
+@@ -64,7 +64,7 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "run",
+-			description = "Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /).",
++			description = "Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index dfdac00..3171be8 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -161,7 +161,7 @@ end
+ function M.chat(prompt)
+ 	log.debug("Processing chat request " .. prompt)
+ 
+-	ui.append_to_buffer("&gt; " .. prompt .. "\n----\n")
++	ui.append_to_buffer("---------\n&gt; " .. prompt .. "\n")
+ 	all_rounder.task(
+ 		prompt,
+ 		function(reply, err)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 89bb321..956823a 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -67,7 +67,7 @@ function M.show_response(fields)
+ 	if fields.error then
+ 		content = content .. "[tai] " .. fields.error
+ 	end
+-	if fields.content then
++	if fields.content and fields.content ~= "" then
+ 		content = content .. fields.content .. "\n"
+ 	end
+ 	if fields.tool_calls then
+@@ -83,7 +83,6 @@ function M.show_response(fields)
+ 			end
+ 		end
+ 	end
+-	content = content .. "----\n"
+ 
+ 	M.append_to_buffer(content)
+ 	M.open()
+</pre>

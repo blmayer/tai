@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai cc78306</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit cc78306
+parent <a href=commit-02812f6.html>02812f6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-29T14:05:23-03:00
+
+    nvim: improved chat
+
+<a href=tree-cc78306.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 0afc917..552b19f 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -16,12 +16,16 @@ end
+ function M.prompt_input()
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
++		log.debug("Received user input: " .. input)
+ 
+ 		local path = vim.fn.expand("%")
+ 		local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+ 		local location = string.format("line %d, column %d", row, col)
+ 		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
+ 
++		ui.append_to_buffer("=====================================\n\n&gt; " .. input)
++		ui.open()
++
+ 		project.process_request(prompt, function(res, err)
+ 			if err then
+ 				vim.notify("[tai] recieved error: " .. err)
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 1b9e351..9d2229a 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -38,6 +38,7 @@ function M.init()
+ end
+ 
+ local function run_tool_calls(cmds)
++	log.debug("Running tools")
+ 	local output = ""
+ 
+ 	for _, cmd in ipairs(cmds) do
+@@ -53,6 +54,26 @@ local function run_tool_calls(cmds)
+ 		end
+ 	end
+ 
++	return output
++end
++
++local function run_commands(cmds)
++	local output = ""
++
++	for _, cmd in ipairs(cmds) do
++		log.debug("Running command `" .. cmd .. "`")
++		if not command.validate(cmd, config.allowed_commands) then
++			output = "[tai] Command " .. cmd .. " is not allowed"
++		end
++
++		local out = command.run(cmd)
++		if out then
++			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
++		else
++			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
++		end
++	end
++
+ 	vim.schedule(function()
+ 		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+ 	end)
+@@ -60,6 +81,15 @@ local function run_tool_calls(cmds)
+ 	return output
+ end
+ 
++local function apply_patch(patch)
++	local real = io.popen("ed -s 2&gt;&amp;1", "w")
++	real:write(patch)
++	local output = real:read("*all")
++	real:close()
++	log.debug("Patch application output: " .. output)
++	vim.api.nvim_command("checktime")
++end
++
+ function M.process_request(prompt, callback)
+ 	log.debug("Processing request " .. prompt)
+ 
+@@ -67,7 +97,6 @@ function M.process_request(prompt, callback)
+ 		planner.receive_prompt(prompt, callback)
+ 	else
+ 		local reply = chat.send(config.model, prompt)
+-		ui.show_response(prompt, reply)
+ 
+ 		::continue::
+ 
+@@ -79,7 +108,7 @@ function M.process_request(prompt, callback)
+ 		end
+ 		if reply.patch then
+ 			vim.api.nvim_buf_create_user_command(
+-				bufnr,
++				ui.buffer_nr,
+ 				'ApplyTaiPatch',
+ 				function() apply_patch(reply.patch) end,
+ 				{}
+@@ -87,50 +116,20 @@ function M.process_request(prompt, callback)
+ 		end
+ 		if reply.commands then
+ 			vim.api.nvim_buf_create_user_command(
+-				bufnr,
++				ui.buffer_nr,
+ 				'RunTaiCommand',
+ 				function()
+-					local out = run_commands(fields.commands)
++					local out = run_commands(reply.commands)
+ 					reply = chat.send(config.model, out)
+ 					ui.show_response(reply)
+ 				end,
+ 				{}
+ 			)
+ 		end
++		ui.show_response(reply)
+ 	end
+ end
+ 
+-local function run_commands(cmds)
+-	local output = ""
+-
+-	for _, cmd in ipairs(cmds) do
+-		log.debug("Running command `" .. cmd .. "`")
+-		if not command.validate(cmd, config.allowed_commands) then
+-			output = "[tai] Command " .. cmd .. " is not allowed"
+-		end
+-
+-		local out = command.run(cmd)
+-		if out then
+-			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
+-		else
+-			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
+-		end
+-	end
+-
+-	vim.schedule(function()
+-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+-	end)
+-
+-	return output
+-end
+-
+-function apply_patch(patch)
+-	local real = io.popen("ed -s &gt; /dev/null 2&gt;&amp;1", "w")
+-	real:write(patch)
+-	real:close()
+-	vim.api.nvim_command("checktime")
+-end
+-
+ --function M.complete(start)
+ --	-- Get current buffer content
+ --	local bufnr = vim.api.nvim_get_current_buf()
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index f65f62c..88a418c 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -38,7 +38,7 @@ You are Tai, a coding assistant running inside a Neovim session.
+ INSTRUCTIONS
+ Users will send coding tasks/questions, your goal is to fullfill them with success.
+ ONLY propose steps that solves the issue, don't suppose anything.
+-Generate code changes is the user wants, use the ed format explainded below.
++Generate code changes if the user wants, use the ed format explainded below.
+ 
+ UNDERSTANDING NEEDED CODE CHANGES
+ Understand the problem and the path to the solution and generate patches to
+@@ -152,7 +152,7 @@ Supply concise user-facing text in the `text` field.
+ direct. You may use funny language or jokes, something like TARS would do.
+ 
+ RESPONSE FORMAT
+-**ALWAYS** return a JSON object, no prose, no markdown, with the following format:
++**ALWAYS** return only a JSON object, no prose, no markdown, with the following format:
+ {
+        "text": string,
+        "plan": []string,
+@@ -160,6 +160,7 @@ RESPONSE FORMAT
+        "commands": []string
+ }
+ The only required field is text.
++IMPORTANT: No code blocks (```) arround the JSON.
+ ]]
+ 
+ local response_format = {
+@@ -396,7 +397,7 @@ function M.send(model, messages)
+ 	local fields = {}
+ 	if message.content then
+ 		local ok
+-		ok, fields = json.decode(message.content)
++		ok, fields = pcall(json.decode, message.content)
+ 		if not ok then
+ 			vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+ 			return nil
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index f3105a0..0d51588 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,19 +1,18 @@
+ local M = {}
+ local log = require("tai.log")
+-local config = require("tai.config")
+-local command = require("tai.command")
+-
+-local bufname = "tai-output"
+-
+-local function append_to_buf(bufnr, lines_to_add)
+-    local current_lines_count = vim.api.nvim_buf_line_count(bufnr)
+-    if current_lines_count == 1 and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == "" then
+-        -- If buffer is essentially empty (one empty line), replace it
+-        vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines_to_add)
+-    else
+-        -- Append to existing content
+-        vim.api.nvim_buf_set_lines(bufnr, current_lines_count, current_lines_count, false, lines_to_add)
+-    end
++
++local bufname = "tai-chat"
++
++function M.append_to_buffer(content)
++	local new_lines = vim.split(content, "\n")
++	local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
++	if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
++		-- If buffer is essentially empty (one empty line), replace it
++		vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
++	else
++		-- Append to existing content
++		vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false, new_lines)
++	end
+ end
+ 
+ local function ensure_buf()
+@@ -30,8 +29,10 @@ local function ensure_buf()
+ 	return bufnr
+ end
+ 
++M.buffer_nr = ensure_buf()
++
+ function M.toggle_output_window()
+-	local bufnr = ensure_buf()
++	local bufnr = M.buffer_nr
+ 	local winid = vim.fn.bufwinnr(bufnr)
+ 	if winid ~= -1 then
+ 		-- Close the window
+@@ -45,23 +46,19 @@ function M.toggle_output_window()
+ 	end
+ end
+ 
+-function M.show_response(prompt, fields)
+-	log.debug("Showing response")
++function M.open()
++	if vim.fn.bufwinnr(M.buffer_nr) == -1 then
++		vim.cmd("vsplit")
++		local win = vim.api.nvim_get_current_win()
++		vim.api.nvim_win_set_buf(win, M.buffer_nr)
++		vim.api.nvim_win_set_width(win, 80)
++	end
++end
+ 
+-	local bufnr = ensure_buf()
+-	local winid = vim.fn.bufwinnr(bufnr)
+-	local is_visible = (winid ~= -1)
++function M.show_response(fields)
++	log.debug("Showing response")
+ 
+ 	local content = ""
+-	-- Add divider if not the very first entry (or if the buffer is truly empty)
+-	if vim.api.nvim_buf_line_count(bufnr) &gt; 0 and (vim.api.nvim_buf_line_count(bufnr) &gt; 1 or vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] ~= "") then
+-		content = content .. "\n\n========================================\n"
+-	end
+-
+-	for _, line in ipairs(vim.split(prompt, "\n")) do
+-		content = content .. "&gt; " .. line .. "\n"
+-	end
+-	content = content .. "\n"
+ 
+ 	if fields.plan and #fields.plan &gt; 0 then
+ 		content = "Plan:\n\n"
+@@ -82,50 +79,22 @@ function M.show_response(prompt, fields)
+ 	if fields.patch then
+ 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+ 	end
++	content = content .. "\n\n"
+ 
+-	local lines = vim.split(content, "\n", { trimempty = true })
+-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+-
+-	-- Auto-open if hidden
+-	if vim.fn.bufwinnr(bufnr) == -1 then
+-		vim.cmd("vsplit")
+-		local win = vim.api.nvim_get_current_win()
+-		vim.api.nvim_win_set_buf(win, bufnr)
+-		vim.api.nvim_win_set_width(win, 80)
+-	else
+-		-- Ensure focus on existing window
+-		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
+-	end
++	M.append_to_buffer(content)
++	M.open()
+ end
+ 
+ function M.show_tool_calls(calls)
+ 	log.debug("Showing tool calls")
+ 
+-	local bufnr = ensure_buf()
+-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-
+-	table.insert(lines, "")
+-	table.insert(lines, "------------------------------")
+-	table.insert(lines, "")
++	local content = "\n-----------------------------\n"
+ 	for _, call in ipairs(calls) do
+-		table.insert(
+-			lines,
+-			"&gt; Sending output of " .. call["function"].name
+-		)
++		content = content .. "&gt; Sending output of " .. call["function"].name .. "\n"
+ 	end
+ 
+-	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+-
+-	-- Auto-open if hidden
+-	if vim.fn.bufwinnr(bufnr) == -1 then
+-		vim.cmd("vsplit")
+-		local win = vim.api.nvim_get_current_win()
+-		vim.api.nvim_win_set_buf(win, bufnr)
+-		vim.api.nvim_win_set_width(win, 80)
+-	else
+-		-- Ensure focus on existing window
+-		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
+-	end
++	M.append_to_buffer(content)
++	M.open()
+ end
+ 
+ -- Insert the content at the cursor (insert mode)
+@@ -190,6 +159,4 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
+-
+-
+ return M
+</pre>

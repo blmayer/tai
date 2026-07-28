@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 21e8967</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 21e8967
+parent <a href=commit-16c0694.html>16c0694</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-01T11:54:00-03:00
+
+    small fixes in tool calls, read_file and token
+
+    - improved nil handling for tool calls; now only parsing args on use
+    - read_file now always reads from disk
+    - fixed token usage not showing for streaming responses
+
+<a href=tree-21e8967.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index c550de3..8ff0771 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -22,7 +22,7 @@ function M.add_to_history(message)
+ 		return
+ 	end
+ 	if msg.reasoning then
+-		msg.reasoning_details = {{ text = msg.reasoning }}
++		msg.reasoning_details = { { text = msg.reasoning } }
+ 	end
+ 	table.insert(history, msg)
+ end
+@@ -133,11 +133,7 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 	log.debug("[API] requesting stream " .. url .. " with " .. vim.inspect(body))
+ 	local request_body = vim.json.encode(body)
+ 
+-	local fields = {
+-		content = "",
+-		tool_calls = {},
+-		reasoning_details = { { text = "" } },
+-	}
++	local fields = {}
+ 
+ 	common.make_streaming_http_call(url, api_key, request_body, function(chunk)
+ 		local chunk_data, err = common.parse_chunk(chunk)
+@@ -156,7 +152,10 @@ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
+ 			on_complete(nil, err)
+ 			return
+ 		end
+-		fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++
++		if fields.tool_calls then
++			fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
++		end
+ 		on_complete(fields, nil)
+ 	end)
+ end
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 9c63e06..7cb7bc5 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -273,8 +273,12 @@ function M.parse_chunk(chunk)
+ end
+ 
+ function M.update_fields(fields, chunk)
++	if chunk.error then
++		fields.error = chunk.error
++	end
++
+ 	if chunk.content then
+-		fields.content = fields.content .. chunk.content
++		fields.content = (fields.content or "") .. chunk.content
+ 	end
+ 
+ 	if chunk.reasoning then
+@@ -282,6 +286,9 @@ function M.update_fields(fields, chunk)
+ 	end
+ 
+ 	if chunk.tool_calls then
++		if not fields.tool_calls then
++			fields.tool_calls = {}
++		end
+ 		for _, call in ipairs(chunk.tool_calls) do
+ 			log.debug("[API] updating tool call: " .. vim.inspect(call))
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 34977b7..f174d01 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -200,33 +200,16 @@ function M.read_file(file_path, range)
+ 		return "[sys] Paths cannot start from root (/). Use relative."
+ 	end
+ 
+-	-- Check if file is already open in a buffer
+-	local buf = nil
+-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+-		if vim.api.nvim_buf_is_loaded(b) then
+-			local buf_name = vim.api.nvim_buf_get_name(b)
+-			if buf_name:match("^.*/" .. file_path .. "$") or buf_name == file_path then
+-				buf = b
+-				break
+-			end
+-		end
+-	end
+-
+-	local lines
+-	if buf then
+-		log.debug("reading from buffer")
+-		lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+-	else
+-		log.debug("reading from file")
+-		local file = io.open(file_path, "r")
+-		if not file then
+-			return "[sys] File `" ..
+-			    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
+-		end
+-		local content = file:read("*all")
+-		file:close()
+-		lines = vim.split(content, '\n', { plain = true })
+-	end
++	-- Always read from disk to ensure fresh content (buffers can be stale).
++	log.debug("reading from file")
++	local file = io.open(file_path, "r")
++	if not file then
++		return "[sys] File `" ..
++		    file_path .. "` not found. Hint: check if it exists with the shell command: ls -R."
++	end
++	local content = file:read("*all")
++	file:close()
++	local lines = vim.split(content, '\n', { plain = true })
+ 
+ 	local numbered_lines = {}
+ 	if not range or range == "" then
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 28dc33b..4b46f3e 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -573,10 +573,12 @@ function M.task_stream(msgs)
+ 			if not think_start and content_start then
+ 				append_streaming("\n}}}\n")
+ 			end
+-			if err then
++			if data.token_usage then
++				update_token_display(data.token_usage)
++			end
++			if data.error then
+ 				M.append_to_buffer("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+ 			end
+-
+ 			if not data.tool_calls or #data.tool_calls == 0 then
+ 				return
+ 			end
+</pre>

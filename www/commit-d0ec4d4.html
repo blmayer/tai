@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai d0ec4d4</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit d0ec4d4
+parent <a href=commit-b79a7a6.html>b79a7a6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-30T16:57:08-03:00
+
+    adjusted patch prompt, removed custom logic
+
+    - added delta lines number to patch response
+    - small cleanup
+
+<a href=tree-d0ec4d4.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 2b67730..b1d18a0 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -114,11 +114,12 @@ to ensure patches are correct and minimal:
+   include surrounding lines. Emit multiple calls if needed.
+ - **Verify line numbers and content:** Ensure you are targeting the correct
+   lines and that the content you are replacing/adding is consistent with the
+-  file's current state by calling the `track_file` or `shell` tools. Beware that
+-  a patch is affected by previous ones, so account for line number changes and
+-  adjust the numbers.
++  file's current state by calling the `track_file` or `shell` tools. 
+ - **Valid path verification:** Ensure needed folders exist before creating a
+   new file.
++- **Reevaluate line numbers:** After a patch the line numbers may change, so
++  before your next patch to the same file reevaluate the line number taking
++  into account your previous changes.
+ 
+ ### Tool Usage
+ ]] .. tool_usage
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index bbfc283..6862afd 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -66,7 +66,7 @@ function M.reload()
+ 	if M.use_tools == nil then
+ 		M.use_tools = true
+ 	end
+-	M.options = data.options
++	M.options = data.options or {}
+ 	M.stream = data.stream or false
+ 	M.allowed_commands = data.allowed_commands
+ 	M.think = data.think or nil
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 5d0fa54..591f158 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -251,7 +251,7 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ end
+ 
+ function M.parse_response(res)
+-	if #res.choices == 0 or not res.choices[1].message then
++	if not res.choices or #res.choices == 0 or not res.choices[1].message then
+ 		return nil, "no choices received"
+ 	end
+ 
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index 380c231..cc091f5 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -48,8 +48,8 @@ local providers_config = {
+ 	},
+ 	-- Generic/custom provider
+ 	custom = {
+-		url = function() return config.options.url end,
+-		api_key_env = nil,
++		url = config.options.url,
++		api_key_env = "",
+ 		api_format = "chat_completions",
+ 	},
+ 	-- OpenAI Responses API provider
+@@ -110,109 +110,7 @@ local function create_provider_module(provider_name)
+ 		return body
+ 	end
+ 
+-	-- Provider-specific implementations
+-	if provider_name == "custom" then
+-		-- Generic provider using config.options.url
+-		local history = nil
+-
+-		function M_module.add_to_history(message)
+-			local msg = vim.deepcopy(message)
+-			if not history then
+-				history = { msg }
+-				return
+-			end
+-			table.insert(history, msg)
+-		end
+-
+-		function M_module.clear_history()
+-			history = nil
+-		end
+-
+-		-- Non-streaming request
+-		function M_module.request(model_config, msgs, callback)
+-			for _, msg in ipairs(msgs) do
+-				M_module.add_to_history(msg)
+-			end
+-
+-			-- Keep connected files up to date in history before sending
+-			tools.refresh_connected_files(history)
+-
+-			local body = {
+-				model = model_config.model,
+-				messages = {},
+-			}
+-
+-			if config.use_tools ~= false then
+-				body.tools = common.build_request_tools("chat_completions")
+-			end
+-			body.messages = common.filter_messages(history)
+-
+-			if model_config.think ~= nil then
+-				body.reasoning_effort = model_config.think
+-			end
+-
+-			if model_config.options then
+-				for k, v in pairs(model_config.options) do
+-					body[k] = v
+-				end
+-			end
+-
+-			local request_body = vim.json.encode(body)
+-
+-			log.debug("[API] requesting " .. provider_config.url() .. " with " .. vim.inspect(body))
+-
+-			common.make_http_call(provider_config.url(), "", request_body, function(parsed, err)
+-				if err then
+-					callback(nil, err)
+-					return
+-				end
+-
+-				log.debug("[API] request response: " .. vim.inspect(parsed))
+-
+-				if parsed.error then
+-					return callback(nil, parsed.error.message)
+-				end
+-
+-				local fields, err = common.parse_response(parsed)
+-				callback(fields, err)
+-			end)
+-		end
+-
+-		-- Streaming request
+-		function M_module.request_stream(model_config, msgs, on_chunk, on_complete)
+-			local body = build_body(model_config, msgs)
+-			body.stream = true
+-
+-			log.debug("[API] requesting stream " .. provider_config.url() .. " with " .. vim.inspect(body))
+-			local request_body = vim.json.encode(body)
+-
+-			local fields = {}
+-
+-			common.make_streaming_http_call(provider_config.url(), "", request_body, function(chunk)
+-				local chunk_data, err = common.parse_chunk(chunk)
+-				if err then
+-					on_chunk(chunk_data, err)
+-					return
+-				end
+-
+-				-- accumulate
+-				fields = common.update_fields(fields, chunk_data)
+-
+-				on_chunk(chunk_data, nil)
+-			end, function(_, err)
+-				-- on_complete: flatten tool_calls map to array and decode arguments
+-				if err then
+-					on_complete(nil, err)
+-					return
+-				end
+-
+-				if fields.tool_calls then
+-					fields.tool_calls = common.merge_tool_calls(fields.tool_calls)
+-				end
+-				on_complete(fields, nil)
+-			end)
+-		end
+-	elseif provider_name == "openai_responses" then
++	if provider_name == "openai_responses" then
+ 		-- OpenAI Responses API provider
+ 		local history = nil
+ 		local api_key = os.getenv("OPENAI_API_KEY")
+@@ -544,7 +442,7 @@ local function create_provider_module(provider_name)
+ 			}
+ 
+ 			if config.use_tools ~= false then
+-				body.tools = common.build_request_tools(provider_config.api_format)
++				body.tools = common.build_request_tools(provider_config.api_format, model_config.tools)
+ 			end
+ 			body.messages = common.filter_messages(msgs)
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index a2d0822..98f723b 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -34,7 +34,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls.",
++			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls. Returns the line number changes.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -95,14 +95,19 @@ M.defs = {
+ 		["function"] = {
+ 			name = "coder_agent",
+ 			description =
+-			"This tool calls the coder agent to start working on the tasks sent. It will return a summary of the actions taken during the course of the implementation.",
++			"This tool calls the coder agent to start working on the tasks sent. The return is the last response sent by the coder agent.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					prompt = {
+ 						type = "string",
+ 						description = "Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
+-					}
++					},
++					clean_env = {
++						type = "boolean",
++						description = "If the coder agent should start with a clean context or remember a previous interaction. Use this if you want to iterate on a past task.",
++					},
++
+ 				},
+ 				additionalProperties = false,
+ 				required = { "prompt" }
+@@ -391,6 +396,7 @@ function M.apply_patch(name, file, operation, lines, content)
+ 	if start &lt; 0 then start = 0 end
+ 	if end_line &gt;= total_lines then end_line = total_lines - 1 end
+ 
++	local delta = 0
+ 	if operation == "add" then
+ 		-- Insert content after the specified line
+ 		local new_lines = vim.split(content, '\n')
+@@ -399,18 +405,22 @@ function M.apply_patch(name, file, operation, lines, content)
+ 			insert_pos = 0
+ 		end
+ 		vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
++		delta = #new_lines
+ 	elseif operation == "update" then
+ 		-- Replace lines with new content
+ 		local new_lines = vim.split(content or "", '\n')
+ 		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
++		delta = end_line - start + #new_lines
+ 	elseif operation == "delete" then
+ 		-- Remove lines
+ 		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
++		delta = end_line - start
+ 	end
+ 
+ 	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
+ 	vim.api.nvim_buf_call(buf, function() vim.cmd("write!") end)
+-	return "[sys] Patched " .. file
++
++	return "[sys] Patched " .. file .. "\nLine number delta: " .. delta
+ end
+ 
+ -- Convert image file to base64 data URL
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index fed9ee9..52d61e0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -28,8 +28,6 @@ coder_config.tools = { "track_file", "shell", "send_image", "patch" }
+ 
+ -- Global stop flag for hard stop command
+ local hard_stop = false
+-local pending_tool_calls = nil
+-local pending_confirmation = nil
+ 
+ function M.init()
+ 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+@@ -182,7 +180,6 @@ end
+ 
+ local function run_tools(tool_calls)
+ 	M.append("\n")
+-	-- pending_tool_calls = tool_calls
+ 	local results = {}
+ 	local stop = false
+ 
+@@ -299,11 +296,13 @@ local function run_tools(tool_calls)
+ 			add_sep("___ CODER AGENT ")
+ 
+ 			stop = true
+-			coder_call = res
+-			coder_history = {
+-				{ role = "system", content = agent.coder_system_prompt },
+-				{ role = "user",   content = args.prompt }
+-			}
++			coder_call = vim.deepcopy(res)
++			if args.clean_env then
++				coder_history = {
++					{ role = "system", content = agent.coder_system_prompt },
++				}
++			end
++			table.insert(coder_history, { role = "user", content = args.prompt })
+ 
+ 			M.code()
+ 			goto next
+@@ -444,6 +443,7 @@ end
+ function M.clear()
+ 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
+ 	planner_history = { { role = "system", content = agent.planner_system_prompt } }
++	coder_history = { { role = "system", content = agent.coder_system_prompt } }
+ end
+ 
+ function M.task()
+@@ -702,10 +702,8 @@ function M.code()
+ 				if not fields.tool_calls or #fields.tool_calls == 0 then
+ 					log.debug("[UI] coder finished, handing back to planner")
+ 					-- worker finished the job
+-					table.insert(
+-						planner_history,
+-						{ role = "user", content = coder_history[#coder_history].content }
+-					)
++					coder_call.content = coder_history[#coder_history].content
++					table.insert(planner_history, coder_call)
+ 					add_sep("___ PLANNER AGENT ")
+ 					M.task()
+ 					return
+</pre>

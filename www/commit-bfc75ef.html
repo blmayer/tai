@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai bfc75ef</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit bfc75ef
+parent <a href=commit-be7b8c6.html>be7b8c6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-23T14:30:32-03:00
+
+    Improved read_file response
+
+    updated todo
+
+<a href=tree-bfc75ef.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/TODO.md b/TODO.md
+index 742aa50..c55c589 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -1,5 +1,8 @@
+ # TODO
+ 
+-- make tool output into a separate message
+ - tools must be per agent, not provider:
+   - instantiate a tool new_tools(agent_config)
++
++
++# DONE
++- make tool output into a separate message
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index a6aa342..e9e8d4e 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -105,9 +105,13 @@ end
+ local function read_file(file_path)
+ 	log.debug("Running read_file `" .. file_path .. "`")
+ 
++	if file_path:sub(1, 1) == "/" then
++		return "Paths cannot start from root (/). Use relative."
++	end
++
+ 	local file = io.open(file_path, "r")
+ 	if not file then
+-		return "[tai] File `" .. file_path .. "` not found"
++		return "[sys] File `" .. file_path .. "` not found"
+ 	end
+ 
+ 	local content = file:read("*all")
+</pre>

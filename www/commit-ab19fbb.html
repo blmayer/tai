@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ab19fbb</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ab19fbb
+parent <a href=commit-9b8b1b9.html>9b8b1b9</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-25T11:50:59-03:00
+
+    improved coder agent loop
+
+    small improvement on prompt
+
+<a href=tree-ab19fbb.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index dfd0ca1..74abac4 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -11,8 +11,9 @@ local host = vim.uv.os_uname()
+ local tool_usage = [[
+ You can use tools to help on your task.
+ 
++- Don't use `cat` for just reading files instead use `track_file`.
+ - Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
+-  file in sequence is useless.
++  file is useless.
+ - Do NOT guess file paths — verify they exist with directory listing or `find`
+   commands before trying to read or edit them.
+ - The shell tool already starts at the project's root folder. **Do NOT prepend
+@@ -42,24 +43,29 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - If coding is needed: 
+   1. Make sure you scrutinized the issue and explored the codebase so you are
+      confident you understood it deeply and the solution will work. You don't
+-     need to ask permission at this stage. Explore at will.
++     need to ask permission at this stage. Explore at will. If you find the
++     AGENTS.md file read it.
+   2. Generate a detailed list of changes (if needed), separated by file, with
+-     instructions of what to change, including file names, line numbers,
+-     function names etc that builds up the solution like a dependency graph. Be
+-     file/class/function oriented. You can also give any other information that
+-     can help the agent to correcty implement the tasks. If changes are not
+-     needed go to 6.
+-  3. Show the plan and request authorization and in positive case call the
++     instructions of what to change, including file names, please indicate line
++     numbers this helps a lot, function names etc that builds up the solution
++     like a dependency graph. Be file/class/function oriented. You can also give
++     any other information that can help the agent to correcty implement the
++     task. If changes are not needed go to 6.
++  3. Show the plan and REQUEST AUTHORIZATION and in positive case call the
+      `coder_agent` tool with the detailed list to start the implementation.
+-  4. When the coder finishes the task get the response from the coder agent
+-     (if any) and do a decent code review of the affected files: consider
+-     coding best practices, check for syntax errors, failing tests (if any),
+-     verify if the solution implemented works and satisfies the user's request.
++  4. When the coder finishes the task you MUST do a code review of the affected
++     files, including:
++     - Consider coding best practices, check for syntax errors, failing tests
++     (if any).
++     - Verify if the solution implemented works by running builds or programs.
++     - Check if the solution satisfies the user's request.
+   5. If it passes go to 6. Else generate a new plan based on the current state,
+      with the fixes needed and call the `coder_agent` tool with the new plan.
+   6. Write a summary of what changed and how the solution works to the user.
+ - Each call to the coder agent starts with a clean context, so if you want the
+   agent to consider past interactions include the content in the prompt.
++- NEVER send empty messages, at least tell what are doing so the user knows what
++  to expect.
+ 
+ ### Tool Usage
+ ]] .. tool_usage
+@@ -90,10 +96,9 @@ Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ - If tests are avaliable run the necessary ones, be clever to not take too long.
+ - When you finish all tasks tell which files and lines you changed, what you
+   changed in the functions, be detailed.
+-- Your job is considered finished when you don't send any tool calls, then the
+-  last output is sent to the software architect.
+-- When you're done please include your failures, things that need improvement,
+-  and your difficulties so it can re-evaluate the problem if needed.
++- Respond without any tool calls to indicate you finished your job, in your last
++  response you MUST report your failures, things that need improvement, and task
++  implementation details.
+ 
+ ### Patch Creation
+ 
+diff --git a/lua/tai/providers.lua b/lua/tai/providers.lua
+index 3bdb5cd..380c231 100644
+--- a/lua/tai/providers.lua
++++ b/lua/tai/providers.lua
+@@ -60,8 +60,13 @@ local providers_config = {
+ 	},
+ 	-- Ollama/local provider
+ 	ollama = {
+-		url = function() return config.options.ollama_url or 'http://localhost:11434/v1/chat/completions' end,
+-		api_key_env = nil,
++		url = "http://localhost:11434/v1/chat/completions",
++		api_key_env = "",
++		api_format = "chat_completions",
++	},
++	llama_cpp = {
++		url = "http://localhost:8080/v1/chat/completions",
++		api_key_env = "",
+ 		api_format = "chat_completions",
+ 	},
+ }
+@@ -529,15 +534,7 @@ local function create_provider_module(provider_name)
+ 		end
+ 	else
+ 		-- Standard cloud provider logic
+-		local api_key = os.getenv(provider_config.api_key_env)
+-		if not api_key then
+-			vim.schedule(function()
+-				vim.notify("[tai] ❌ Missing " .. provider_config.api_key_env .. " environment variable.",
+-					vim.log.levels.ERROR)
+-			end)
+-		end
+-
+-		-- Non-streaming request
++		local api_key = os.getenv(provider_config.api_key_env) or ""
+ 		function M_module.request(model_config, msgs, callback)
+ 			tools.refresh_connected_files(msgs)
+ 
+@@ -564,12 +561,6 @@ local function create_provider_module(provider_name)
+ 			local request_body = vim.json.encode(body)
+ 
+ 			log.debug("[API] requesting " .. provider_config.url .. " with " .. vim.inspect(body))
+-
+-			if not api_key then
+-				return callback(nil,
+-					"Missing API key environment variable: " .. provider_config.api_key_env)
+-			end
+-
+ 			common.make_http_call(provider_config.url, api_key, request_body, function(parsed, err)
+ 				if err then
+ 					callback(nil, err)
+@@ -597,18 +588,6 @@ local function create_provider_module(provider_name)
+ 
+ 			local fields = {}
+ 
+-			local api_key = os.getenv(provider_config.api_key_env)
+-			if not api_key then
+-				vim.schedule(function()
+-					vim.notify(
+-						"[tai] ❌ Missing " ..
+-						provider_config.api_key_env .. " environment variable.",
+-						vim.log.levels.ERROR)
+-				end)
+-				on_complete(nil, "Missing API key environment variable: " .. provider_config.api_key_env)
+-				return
+-			end
+-
+ 			common.make_streaming_http_call(provider_config.url, api_key, request_body, function(chunk)
+ 				local chunk_data, err = common.parse_chunk(chunk)
+ 				if err then
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 575be12..3ea3727 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -9,7 +9,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "track_file",
+ 			description =
+-			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made.",
++			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made. Use this instead of cat.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -82,7 +82,7 @@ M.defs = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc."
++						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc. 2&gt;&amp;1 is added to the end of the command."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -356,6 +356,9 @@ function M.apply_patch(name, file, operation, lines, content)
+ 	if end_line &lt; 0 then
+ 		end_line = total_lines + end_line
+ 	end
++	if start &gt; 0 and end_line &gt; 0 and start &gt; end_line then
++		return "[sys] Error: Invalid range: start is bigger than end"
++	end
+ 
+ 	-- Clamp to valid ranges
+ 	if start &lt; 0 then start = 0 end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 3c47078..e63aeb5 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -22,6 +22,7 @@ local coder_history = { { role = "system", content = agent.coder_system_prompt }
+ 
+ local planner_config = vim.deepcopy(config)
+ local coder_config = vim.deepcopy(config)
++local coder_call = {}
+ planner_config.tools = { "track_file", "shell", "send_image", "coder_agent" }
+ coder_config.tools = { "track_file", "shell", "send_image", "patch" }
+ 
+@@ -206,9 +207,8 @@ local function run_tools(tool_calls)
+ 				log.debug("Executing allowed command: " .. args.command)
+ 				M.append("{{{ Running: " .. args.command .. "\n")
+ 				local out = tools.exec_command(args.command)
+-				M.append((out or "") .. "\n}}}")
++				M.append(out or "")
+ 				res.content = out
+-				goto continue
+ 			else
+ 				local input = vim.fn.confirm(
+ 					"Run `" .. args.command .. "`?",
+@@ -296,18 +296,18 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			end
+ 
+-			M.append("{{{ Calling coder agent.\nPrompt:\n" .. args.prompt .. "\n}}}\n")
++			M.append("{{{ Calling coder agent\nPrompt:\n" .. args.prompt .. "\n}}}\n")
++			add_sep("___ CODER AGENT ")
+ 
+-			-- TODO: improve getting last message
+-			res.content = "[sys] coder has started, its response will be sent later"
+ 			stop = true
++			coder_call = res
+ 			coder_history = {
+ 				{ role = "system", content = agent.coder_system_prompt },
+ 				{ role = "user",   content = args.prompt }
+ 			}
+ 
+-			add_sep("___ CODER AGENT ")
+ 			M.code()
++			goto next
+ 			-- res.content = coder_history[-1].content
+ 		elseif name == "send_image" then
+ 			if not args.file then
+@@ -346,10 +346,14 @@ local function run_tools(tool_calls)
+ 			M.append("{{{ Invalid tool name\n}}}\n")
+ 		end
+ 
++		-- add response to history
+ 		::continue::
++
+ 		-- table.remove(pending_tool_calls, 1)
+ 		refresh_and_close_folds()
+ 		table.insert(results, res)
++
++		::next::
+ 	end
+ 
+ 	-- Second pass is needed for image inputs
+@@ -651,10 +655,8 @@ function M.code()
+ 				if not data.tool_calls or #data.tool_calls == 0 then
+ 					log.debug("[UI] coder finished, handing back to planner")
+ 					-- worker finished the job
+-					table.insert(
+-						planner_history,
+-						{ role = "user", content = coder_history[#coder_history].content }
+-					)
++					coder_call.content = coder_history[#coder_history].content
++					table.insert(planner_history, coder_call)
+ 					add_sep("___ PLANNER AGENT ")
+ 					M.task()
+ 					return
+</pre>

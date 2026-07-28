@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f7ba370</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f7ba370
+parent <a href=commit-3e3ded4.html>3e3ded4</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-20T15:52:39-03:00
+
+    updated readme and site files
+
+<a href=tree-f7ba370.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index f4f3474..990a1d1 100644
+--- a/README.md
++++ b/README.md
+@@ -4,12 +4,21 @@
+ # Features
+ 
+ 
+-## Groq Integration
++## Providers
+ 
+-This project uses the Groq API for processing requests. Make sure to set the environment variable:
++This project is compatible with the Groq, and Gemini APIs for processing requests. Make sure to set the correct
++environment variable:
+ 
+       GROQ_API_KEY=your_api_key_here
+ 
++for Groq, or:
++
++      GEMINI_API_KEY=your_api_key_here
++
++for Gemini.
++
++Mistral support is in progress (their API is flaky ATM).
++
+ 
+ ## Integrated workflow
+ 
+diff --git a/www/index.html b/www/index.html
+index eeb1408..fae7cb4 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -23,6 +23,13 @@ for processing using the groq API.
+ - agents create plans for big code changes
+ 
+ 
++&lt;i&gt;providers&lt;/i&gt;
++
++- groq
++- gemini
++- mistral (wip, their handoff is not working)
++
++
+ &lt;b&gt;keybindings&lt;/b&gt;
+ 
+ &lt;i&gt;normal mode:&lt;/i&gt;
+@@ -81,7 +88,8 @@ move tai to a folder in your path.
+ 
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+-make sure the &lt;i&gt;GROQ_API_KEY&lt;/i&gt; env var is set.
++make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
++for Groq or &lt;i&gt;GEMINI_API_KEY&lt;/i&gt; for Gemini.
+ create a .tai file at the root or your project.
+ editting any file in that project should start tai.
+ then just use the keybindings above.
+</pre>

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 1e4aad8</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 1e4aad8
+parent <a href=commit-f3a5d2e.html>f3a5d2e</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-05T18:38:07-03:00
+
+    improved patch tool and system prompt
+
+<a href=tree-1e4aad8.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 63d4a80..194a450 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -20,30 +20,28 @@ Your goal is to complete the tasks requested by the user with high precision and
+ - **Minimalism:** Prefer small, focused changes over large, sweeping ones to reduce risk and complexity.
+ - **Context Awareness:** Always understand the context (imports, dependencies, existing logic) before proposing changes.
+ - **Verification:** Whenever possible, verify changes using tests, linters, or shell commands.
++- **Transparency:** Keep the user informed of your choices and the progress as it progresses.
++- **Iteration:** At each step analyze if your actions are taking you towards the solution and self-correct if needed.
++- **Ownership:** You are the maintainer of the project, keep it organized and efficient, easy to understand and maintain.
+ 
+ ## Guidelines for Patch Creation
+ 
+-When you need to modify files, follow these rules to ensure patches are correct and minimal:
++When you need to create or modify files use the patch tool, follow these rules to ensure patches are correct and minimal:
+ 
+ - **Analyze before acting:** Before proposing a change, read the entire file or the relevant sections to understand the context (imports, variable definitions, existing logic).
+ - **Small, focused patches:** Avoid making large, sweeping changes. Aim for the smallest possible change that accomplishes the task.
+ - **Verify line numbers and content:** When using tools to edit files, ensure you are targeting the correct lines and that the content you are replacing/adding is consistent with the file's current state.
+ - **Respect existing style:** Follow the existing coding style, indentation, and naming conventions of the file.
+-- **Test your changes:** If possible, use shell commands (like running tests or linting) to verify that your changes work and don't break existing functionality.
++- **Valid path verification:** Ensure needed folders exist before creating a new file.
+ 
+ ## Guidelines for Tool Usage
+ 
+-### Navigating and finding files
+-
++- Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same file in sequence is useless.
+ - **Always explore the directory structure before accessing files.** Use `ls`, `find`, or similar commands to discover file locations first.
+ - Do NOT guess file paths — verify they exist with directory listing or `find` commands before trying to read or edit them.
+-- Use `find` for searching across the full tree, and `ls` for inspecting specific directories.
+-
+-### Running shell commands
+-
+-- The shell already starts at the project's root folder.
+-- **Do NOT prepend commands with `cd ... &amp;&amp;`** — it is unnecessary, wastes tokens, and can lead to errors. Use relative paths instead.
++- The shell tool already starts at the project's root folder. **Do NOT prepend commands with `cd ... &amp;&amp;`** — it is unnecessary and can lead to errors. Use relative paths instead.
+ - Avoid unnecessary redirections or complex shell pipelines unless required for the task.
++- The best patches change only a few lines and don't include surrounding lines. Emit multiple calls if needed.
+ ]]
+ 
+ M.system_prompt = config.system_prompt or default_system_prompt
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index 924fd01..cd38c57 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -10,11 +10,6 @@ local history = nil
+ 
+ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
+-	for _, call in ipairs(msg.tool_calls or {}) do
+-		local args = call["function"].arguments
+-		call["function"].arguments = vim.json.encode(args)
+-	end
+-
+ 	if not history then
+ 		history = { msg }
+ 		return
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 2b5207a..ff5702a 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -17,6 +17,10 @@ local history = nil
+ 
+ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
++	if msg.error then
++		msg.content = msg.error
++		msg.error = nil
++	end
+ 	if not history then
+ 		history = { msg }
+ 		return
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index f174d01..118a3dc 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -46,7 +46,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state. After applying a patch you should check the affected files. For best results make the smallest possible changes.",
++			"Use this tool if you need to edit a file or create a new one. All 'range' values are 1-based. After applying a patch you should check the affected file. For best results make the smallest possible change. For multiple changes send multiple calls.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -58,39 +58,27 @@ M.defs = {
+ 					file = {
+ 						type = "string",
+ 						description =
+-						"File name for these changes. Relative to the project's folder (don't start with /)."
++						"File name for this change. Relative to the project's folder (don't start with /)."
+ 					},
+-					changes = {
+-						type = "array",
++					operation = {
++						type = "string",
++						description =
++						"Operation of this change: add will append the content after the line or interval; update will substitute the whole range with the content; delete will erase the lines in range.",
++						enum = { "add", "update", "delete" }
++					},
++					range = {
++						type = "string",
+ 						description =
+-						"List of changes to be made. All changes will use the ORIGINAL state of the file. Create ONLY the smallest necessary patch.",
+-						items = {
+-							type = "object",
+-							properties = {
+-								operation = {
+-									type = "string",
+-									description =
+-									"Operation of this change: add will append new content after the line or interval; update will substitute the range with the new content; delete will erase the lines in range.",
+-									enum = { "add", "update", "delete" }
+-								},
+-								lines = {
+-									type = "string",
+-									description =
+-									"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+-								},
+-								content = {
+-									type = "string",
+-									description =
+-									"New content (empty for delete operation). NEVER include unchanged lines.",
+-								}
+-							},
+-							additionalProperties = false,
+-							required = { "operation", "lines", "content" }
+-						}
++						"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
++					},
++					content = {
++						type = "string",
++						description =
++						"New content (empty for delete operation). NEVER include unchanged lines nor line numbers.",
+ 					}
+ 				},
+ 				additionalProperties = false,
+-				required = { "file", "changes", "name" }
++				required = { "file", "operation", "range" }
+ 			}
+ 		}
+ 	},
+@@ -309,7 +297,7 @@ function M.exec_command(cmd)
+ 	return output
+ end
+ 
+-function M.apply_patch(name, file, changes)
++function M.apply_patch(name, file, operation, lines, content)
+ 	-- First, check if the file is already open in a buffer
+ 	local buf = nil
+ 	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+@@ -351,70 +339,40 @@ function M.apply_patch(name, file, changes)
+ 		end
+ 	end
+ 
+-	-- If buffer already exists (visible or not), reuse it directly.
+-	-- No need to open a window since we modify via nvim_buf_set_lines API.
+-
+-	-- Apply changes to new buffer
+-	-- vim.api.nvim_buf_set_lines is 0 indexed
+-	local line_shift = 0
+-	if type(changes) ~= "table" then
+-		return "changes must be an array, got " .. type(changes)
+-	end
+-	for _, hunk in ipairs(changes) do
+-		local operation = hunk.operation
+-		local lines_str = hunk.lines
+-		local content = hunk.content
+-
+-		-- Get current state of buffer
+-		local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+-		local total_lines = #current_lines
+-
+-		-- Parse line range
+-		local start, end_line = parse_lines(lines_str)
++	-- Get current state of buffer
++	local current_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
++	local total_lines = #current_lines
+ 
+-		-- Convert negative indexes (relative to end) to 0-based absolute indexes
+-		if start &lt; 0 then
+-			start = total_lines + start
+-		end
+-		if end_line &lt; 0 then
+-			end_line = total_lines + end_line
+-		end
++	-- Parse line range
++	local start, end_line = parse_lines(lines)
+ 
+-		-- Adjust for line shift from previous changes
+-		local adjusted_start = start + line_shift
+-		local adjusted_end = end_line + line_shift
++	-- Convert negative indexes (relative to end) to 0-based absolute indexes
++	if start &lt; 0 then
++		start = total_lines + start
++	end
++	if end_line &lt; 0 then
++		end_line = total_lines + end_line
++	end
+ 
+-		-- Clamp to valid ranges
+-		if adjusted_start &lt; 0 then adjusted_start = 0 end
+-		if adjusted_end &gt;= total_lines then adjusted_end = total_lines - 1 end
++	-- Clamp to valid ranges
++	if start &lt; 0 then start = 0 end
++	if end_line &gt;= total_lines then end_line = total_lines - 1 end
+ 
+-		if operation == "add" then
+-			-- Insert content after the specified line
+-			local new_lines = vim.split(content, '\n')
+-			local insert_pos = adjusted_end + 1
+-			if lines_str == "0" then
+-				insert_pos = 0
+-			end
+-			vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
+-			-- Track the addition for subsequent changes
+-			line_shift = line_shift + #new_lines
+-		elseif operation == "update" then
+-			-- Replace lines with new content
+-			local new_lines = vim.split(content or "", '\n')
+-			local old_line_count = adjusted_end - adjusted_start + 1
+-			local new_line_count = #new_lines
+-			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
+-
+-			-- Track the net change for subsequent changes
+-			line_shift = line_shift + (new_line_count - old_line_count)
+-		elseif operation == "delete" then
+-			-- Remove lines
+-			local old_line_count = adjusted_end - adjusted_start + 1
+-			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, {})
+-
+-			-- Track the deletion for subsequent changes
+-			line_shift = line_shift - old_line_count
++	if operation == "add" then
++		-- Insert content after the specified line
++		local new_lines = vim.split(content, '\n')
++		local insert_pos = end_line + 1
++		if lines == "0" then
++			insert_pos = 0
+ 		end
++		vim.api.nvim_buf_set_lines(buf, insert_pos, insert_pos, false, new_lines)
++	elseif operation == "update" then
++		-- Replace lines with new content
++		local new_lines = vim.split(content or "", '\n')
++		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, new_lines)
++	elseif operation == "delete" then
++		-- Remove lines
++		vim.api.nvim_buf_set_lines(buf, start, end_line + 1, false, {})
+ 	end
+ 
+ 	-- Save the buffer to disk (explicitly target our buffer to avoid conflicts)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 39bdb46..56be5d0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -267,32 +267,31 @@ local function run_tools(tool_calls)
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
+-			if not args.changes or type(args.changes) ~= "table" or #args.changes == 0 then
++			if not args.operation then
+ 				M.append_to_buffer(
+-					"{{{ Patching file failed: invalid changes field (must be a non-empty table).\n}}}")
++					"{{{ Patching file failed: no operation field.\n}}}")
+ 				res.content =
+-				"[sys] invalid changes field (must be a non-empty object) check the tool definition to know the correct fields."
++				"[sys] invalid operation field (must be one of 'add', 'update' or 'delete') check the tool definition to know the correct fields."
+ 				goto continue
+ 			end
+-
+-			M.append_to_buffer("{{{ Patching " .. args.file)
+-			for _, change in ipairs(args.changes or {}) do
+-				if not change.lines or not change.operation then
+-					M.append_to_buffer("Patching file failed: empty fields.\n}}}")
+-					res.content = "[sys] patch needs lines and operation fields"
+-					goto continue
+-				end
+-
+-				M.append_to_buffer(string.format(
+-					"File: %s\nOperation: %s\nLines: %s\nContent:\n%s\n",
+-					args.file,
+-					change.operation,
+-					change.lines,
+-					change.content
+-				))
++			if not args.range then
++				M.append_to_buffer(
++					"{{{ Patching file failed: no range field.\n}}}")
++				res.content =
++				"[sys] invalid lines range (must be a no-empty string) check the tool definition to know the correct fields."
++				goto continue
+ 			end
+ 
+-			local out = tools.apply_patch(args.name, args.file, args.changes)
++			M.append_to_buffer("{{{ Patching " .. args.file)
++			M.append_to_buffer(string.format(
++				"File: %s\nOperation: %s\nRange: %s\nContent:\n%s\n",
++				args.file,
++				args.operation,
++				args.range,
++				args.content
++			))
++
++			local out = tools.apply_patch(args.name, args.file, args.operation, args.range, args.content)
+ 			res.content = out
+ 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}\n")
+ 		elseif name == "summarize" then
+</pre>

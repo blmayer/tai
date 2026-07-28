@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 23ff7c1</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 23ff7c1
+parent <a href=commit-f7ba370.html>f7ba370</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-09-20T20:02:50-03:00
+
+    Fixed system prompts
+
+<a href=tree-23ff7c1.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 1dc9aec..e2e5cb3 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -1,7 +1,5 @@
+ local M = {}
+ local log = require("tai.log")
+-
+--- Load config and determine provider
+ local config = require('tai.config')
+ 
+ -- Load the appropriate provider
+@@ -15,6 +13,7 @@ else
+ end
+ 
+ local history = {
++	{ role = "system", content = "You are edditing a project with root at " .. config.root .. "." },
+ 	{ role = "system", content = provider.system_prompt }
+ }
+ 
+@@ -23,8 +22,9 @@ function M.send(model, prompt)
+ 	local msg = { role = "user", content = prompt }
+ 	table.insert(history, msg)
+ 	local reply = provider.send(config.model, history)
+-	log.debug("received reply: " .. vim.json.encode(reply))
+-	table.insert(history, { role = "assistant", content = reply })
++	local response = vim.json.encode(reply)
++	log.debug("received reply: " .. response)
++	table.insert(history, { role = "assistant", content = response })
+ 	return reply
+ end
+ 
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 90e1b66..142afa3 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -123,7 +123,7 @@ NOTES
+ You must know the original content of the files affected.
+ 
+ RESPONSE FORMAT
+-**ALWAYS** return a JSON object with the following format:
++**ALWAYS** return a JSON object, no prose, no markdown, with the following format:
+ {
+        "text": string,
+        "plan": []string,
+@@ -235,7 +235,7 @@ function M.send_raw(model, messages)
+ 		messages = vim.tbl_map(
+ 			function(m) return { role = m.role, content = m.content } end,
+ 			messages
+-		)
++		),
+ 	}
+ 
+ 	local json_data = json.encode(req_body)
+</pre>

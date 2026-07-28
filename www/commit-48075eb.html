@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 48075eb</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 48075eb
+parent <a href=commit-0b6bc43.html>0b6bc43</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-17T14:20:19-03:00
+
+    added comment option for declined commands
+
+    added check for changes type in response
+
+<a href=tree-48075eb.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index b872713..71e6d39 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -20,6 +20,8 @@ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
+ Output rules:
+ - Do not use Markdown.
+ - Do not wrap content in quotes/backticks or escape it unless the user asked.
++- Thinking output is not shown to the user, add it to the text output if needed.
++  
+ 
+ Workflow:
+ - Decompose the request into explicit requirements, unclear areas, and hidden
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index b6e656b..8e3c888 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -325,6 +325,9 @@ local function apply_patch(name, file, changes)
+ 	-- Apply changes to new buffer
+ 	-- vim.api.nvim_buf_set_lines is 0 indexed
+ 	local line_shift = 0
++	if type(changes) ~= "table" then
++		return "changes must be an array, got " .. type(changes)
++	end
+ 	for _, hunk in ipairs(changes) do
+ 		local operation = hunk.operation
+ 		local lines_str = hunk.lines
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 433a7af..6672f74 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -156,13 +156,21 @@ local function run_tools(tool_calls)
+ 				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+-				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}\n")
+-				res.content = "[sys] User declined running this command"
++				M.append_to_buffer("{{{ Declined " .. args.command .. "\n}}}")
++				local comment = vim.fn.input("Comment (optional): ")
++				if comment and comment ~= "" then
++					res.content = "[sys] User declined running this command. Comment: " .. comment
++				else
++					res.content = "[sys] User declined running this command"
++				end
+ 			else
+-				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
+-				res.content = "[sys] User stopped the conversation"
+-				table.insert(results, res)
+-				return results
++				local comment = vim.fn.input("Comment (optional): ")
++				if comment and comment ~= "" then
++					res.content = "[sys] User declined running this command. Comment: " .. comment
++				else
++					M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n}}}\n")
++					res.content = "[sys] User stopped the conversation"
++				end
+ 			end
+ 		elseif name == "read_file" then
+ 			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
+</pre>

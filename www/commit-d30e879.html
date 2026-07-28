@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai d30e879</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit d30e879
+parent <a href=commit-c33b86b.html>c33b86b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-12T15:50:54-03:00
+
+    nvim: adjusted prompts and history mgmt
+
+<a href=tree-d30e879.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 860c654..1182d71 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -65,8 +65,7 @@ Return only the JSON object, no markdown or code fences (```) in the format:
+ function M.task(task, callback)
+ 	log.info("Coder executing task: " .. task)
+ 	provider.request(
+-		config.coder_model,
+-		config.coder_thinks,
++		config.coder,
+ 		M.system_prompt,
+ 		task,
+ 		"json",
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+index 24e414b..c6b431d 100644
+--- a/lua/tai/agents/patcher.lua
++++ b/lua/tai/agents/patcher.lua
+@@ -124,8 +124,7 @@ function M.create_patch(changes, callback)
+ 	log.info("Patcher creating patch from changes: " .. changes)
+ 
+ 	provider.request(
+-	    config.patcher_model,
+-	    config.patcher_thinks,
++	    config.patcher,
+ 	    M.system_prompt,
+ 	    changes,
+ 	    nil,
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index da8d41f..a07eacc 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -29,7 +29,6 @@ end
+ 
+ M.system_prompt = [[
+ You are Planner Tai, a coding assistant running inside a Neovim session.
+-
+ Your job is to coordinate agents to fullfil the user's prompts.
+ 
+ INSTRUCTIONS
+@@ -37,6 +36,8 @@ Users will send coding tasks or questions, your goal is to fullfill them with su
+ You have access to other agents that will assist you to reach the user's goals:
+ - coder: knows how to code, it will take your instructions and implement them.
+ - writer: will respond to the user using the correct format.
++For general question that don't need code changes, elaborate the explanation
++and use the writer agent.
+ After your response the other agents will be called.
+ 
+ UNDERSTANDING NEEDED CODE CHANGES
+@@ -51,27 +52,39 @@ For solutions that will need many steps that includes interaction from the user
+ a step by step plan and send it to the writer agent, so it will forward it to the user.
+ Use the plan created to guide you and the agents towards the goal.
+ 
+-USING THE WRITER AGENT
+-Write to the writer agent whatever you want the user to receive.
+-
+ RESPONSE FORMAT
+ Return only a JSON object, no code fences(```), no markdown, with the format:
+ {
+-	"coder": "instructions to the coder agent",
++	"coder": "instructions to the coder agent (optional)",
+ 	"writer": "instructions or text to the writer agent (required)"
+ }
+ Note: don't add the field "coder" if unecessary.
+ ]]
+ 
++local history = { }
++
+ function M.plan(prompt, callback)
+ 	log.info("Planner received prompt: " .. prompt)
++
++	local messages = { 
++		{ role = "system", content = M.system_prompt },
++		unpack(history),
++	}
++	local msg = { role = "user", content = prompt }
++	table.insert(history, msg)
++
+ 	provider.request(
+-		config.planner_model,
+-		config.planner_thinks,
+-		M.system_prompt,
+-		prompt, 
++		config.planner,
++		messages,
+ 		"json",
+ 		function(data, err) 
++			table.insert(
++				history,
++				{
++					role = "assistant",
++					content = vim.json.encode(data)
++				}
++			)
+ 			callback(data, err)
+ 		end
+ 	)
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index ab33fd7..d0a1901 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -27,13 +27,13 @@ You are Writer Tai, a writer assistant running inside a Neovim session.
+ Your job is to inform the user about the code changes in a professional tone.
+ 
+ INSTRUCTIONS
+-Agents will send you text, that can be code changes, text for the user, plans and commands to be executed.
++Agents will send you text, that can be code changes, text for the user, plans
++and commands to be executed.
+ Your goal is to gather them and format them correctly.
+ 
+ Supply concise user-facing text in the `text` field.
+ - Use maximum of 80 characters per line.
+ - You can include ASCII tables, diagrams, art etc if needed.
+-- Do not change anything from the patcher agent, simply forward it in the patch field.
+ - Format the commands and plan as lists on the respective fields.
+ 
+ RESPONSE FORMAT
+@@ -47,14 +47,40 @@ The only required field is text. Don't add fields if they are empty. Don't
+ send plans with only 1 step.
+ ]]
+ 
++local response_format = {
++	name = "writer response",
++	type = "object",
++	properties = {
++		text = {
++			description = "Text intended you the user.",
++		      	type = "string",
++		},
++		plan = {
++			description = "Plan to be followed by the user.",
++			type = "array",
++			items = {
++				type = "string"
++			},
++		},
++		commands = {
++			description = "Commands to be run in the user's machine.",
++			type = "array",
++			items = {
++				type = "string"
++			},
++		},
++	},
++}
++
+ function M.write(text, callback)
+     log.info("Writer received prompt: " .. text)
+ 	provider.request(
+-		config.writer_model,
+-		config.writer_thinks,
+-		M.system_prompt,
+-		text,
+-		"json",
++		config.writer,
++		{ 
++			{ role = "system", content = M.system_prompt },
++			{ role = "user", content = text },
++		},
++		response_format,
+ 		function(data, err) 
+ 			callback(data, err)
+ 		end
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index ef4bad2..53b376b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -50,20 +50,26 @@ if file then
+ 		M.summary_model = data.summary_model or M.summary_model
+ 		M.complete_model = data.complete_model or M.complete_model
+ 		M.provider = data.provider or M.provider
+-		if M.provider == "local" then
+-			M.planner_model = data.planner_model
+-			M.coder_model = data.coder_model
+-			M.patcher_model = data.patcher_model
+-			M.writer_model = data.writer_model
+-
+-			M.planner_thinks = data.planner_thinks or false
+-			M.coder_thinks = data.coder_thinks or false
+-			M.patcher_thinks = data.patcher_thinks or false
+-			M.writer_thinks = data.writer_thinks or false
+-		end
+-		if data.options then
+-			M.options = data.options
+-		end
++		M.planner = {
++			model = data.planner.model,
++			options = data.planner.options,
++			think = data.planner.think or false
++		}
++		M.coder = {
++			model = data.coder.model,
++			options = data.coder.options,
++			think = data.coder.think or false
++		}
++		M.patcher = {
++			model = data.patcher.model,
++			options = data.patcher.options,
++			think = data.patcher.think or false
++		}
++		M.writer = {
++			model = data.writer.model,
++			options = data.writer.options,
++			think = data.writer.think or false
++		}
+ 		if data.allowed_commands then
+ 			M.allowed_commands = {}
+ 			-- Convert the list to a map for quick lookup
+diff --git a/lua/tai/providers/local.lua b/lua/tai/providers/local.lua
+index f80996c..9aa09f6 100644
+--- a/lua/tai/providers/local.lua
++++ b/lua/tai/providers/local.lua
+@@ -25,52 +25,23 @@ local read_tool = {
+     }
+ }
+ 
+-local planner_response_format = {
+-	type = "json_object",
+-	json_schema = {
+-		name = "tai_response",
+-		description = "Response format for the Planner agent",
+-		schema = {
+-			type = "object",
+-			additionalProperties = false,
+-			properties = {
+-				writer = {
+-					type = "string",
+-					description = "Response for the writer agent",
+-				},
+-				coder = {
+-					type = "string",
+-					description = "Response for the coder agent",
+-				},
+-			}
+-		}
+-	}
+-}
+-
+-local history = { }
+ 
+-function M.request(model, think, system, prompt, format, callback)
++function M.request(model_config, messages, format, callback)
+ 	local url = url .. "/chat"
+-	local msg = { role = "user", content = prompt }
+-	table.insert(history, msg)
+ 
+ 	local body = { 
+-		model = model,
+-		messages = { 
+-			{ role = "system", content = system },
+-			unpack(history),
+-		},
++		model = model_config.model,
++		messages = messages,
+ 		stream = false,
+-		-- tools = agents.tools,
+ 	}
+ 	if format then
+ 		body.response_format = format
+ 	end
+-	if think ~= nil then
+-		body.think = think
++	if model_config.think ~= nil then
++		body.think = model_config.think
+ 	end
+-	if config.options then
+-		body.options = config.options
++	if model_config.options then
++		body.options = model_config.options
+ 	end
+ 
+ 	local request_body = vim.json.encode(body)
+@@ -103,16 +74,10 @@ function M.request(model, think, system, prompt, format, callback)
+ 			end
+ 
+ 		if parsed.error then
+-			table.insert(history, { role = "assistant", content = parsed.error })
+ 			return { error = parsed.error }
+ 		end
+ 
+ 		local message = parsed.message.content
+-		if not format then
+-			table.insert(history, { role = "assistant", content = message })
+-			return message
+-		end
+-
+ 		local fields = {}
+ 		if message then
+ 			log.debug("response content: " .. message)
+@@ -121,7 +86,6 @@ function M.request(model, think, system, prompt, format, callback)
+ 				vim.notify("[tai] Failed to decode message: " .. message, vim.log.levels.ERROR)
+ 				return { error = "[tai] Failed to decode message: " .. message }
+ 			end
+-			table.insert(history, { role = "assistant", content = fields[1] })
+ 		end
+ 		callback(fields, nil)
+ 	end)
+</pre>

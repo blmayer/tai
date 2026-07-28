@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 619c2ae</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 619c2ae
+parent <a href=commit-77fa846.html>77fa846</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-17T17:02:40-03:00
+
+    nvim: adjusted prompts
+
+    fixed writer response
+
+<a href=tree-619c2ae.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index d5dd40f..8263920 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -49,6 +49,9 @@ agent so it can correctly apply the changes in the original files.
+ INSTRUCTIONS
+ Consider these guiding tips:
+ - Understand the code base by reading files and running commands you need.
++  - Use the tools if you have access: start by looking at the current folder.
++  - You can use multiple turns, e.g. listing files, then reading a file.
++  - You can ask the user for more info.
+ - You can use multiple turns to run tools or asking the user for clarification.
+ - Consider the imports to understand the code organization.
+ - Implement the task considering the constraints given.
+@@ -56,11 +59,13 @@ Consider these guiding tips:
+ - Separate the changes by file making it clear what have changed.
+ - Communicate the patcher agent of your changes.
+ - If you receive a plan, stick to it, but you can add more detailed steps.
++
+ The patcher agent will create an ed script from the code changes you send. So
+-make sure to explain your changes, including:
++you MUST explain your changes, including:
+ - the file name
+-- line numbers
++- line numbers affected
+ - the new content
++In other words: you MUST know the content of the files you are changing!
+ Only use the patcher to implement code changes that are complete, don't issue
+ partial solutions. If no changes are needed don't call it. The only thing the
+ pacher can do is to create the patch, it can't run commands or code.
+@@ -79,6 +84,7 @@ Return ONLY a JSON object, no markdown, no code fences (```), with the format:
+ 	"patcher": string,
+ 	"writer": string
+ }
++IMPORTANT: Don't include the field if it is empty.
+ ]]
+ 
+ local response_format = {
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+index f740795..0fc9d0f 100644
+--- a/lua/tai/agents/patcher.lua
++++ b/lua/tai/agents/patcher.lua
+@@ -33,6 +33,7 @@ patches in ed script format from code changes.
+ INSTRUCTIONS
+ You will receive a list of code changes, you job is to correctly format them in
+ a **VALID** ed script that the user can apply with `ed -s &lt; patch`.
++If there are no changes output nothing.
+ 
+ OUTPUT FORMAT
+ **IMPORTANT**: The content **MUST** be **VALID** ed script.
+@@ -40,7 +41,7 @@ OUTPUT FORMAT
+ - **ALWAYS** finish the script with `w` and `q`. Intermediaries don't need `q`.
+ - Make sure you get the line numbers correct.
+ - Generally preffer using line numbers.
+-- Output ONLY the script, don't add prose, preambles or code fences (```)
++- Output ONLY the script, don't add prose, preambles or code fences (```).
+ 
+ ED FORMAT
+ 
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index 801dce9..cc41aa8 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -33,7 +33,7 @@ SYSTEM
+ You are Planner Tai, an experienced software architect. You are coordinating a
+ team of agents on the current project. Users will inquire you with questions
+ about anything, specially about the project, they may ask for refactors or
+-smaller code changes. Your job is to plan and coordinate the team to fullfil
++smaller code changes. Your job is to plan and coordinate the agents to fullfil
+ the user's requests.
+ 
+ You and the team have access to the project's code base.
+@@ -46,13 +46,9 @@ After your response the other agents will be called.
+ ]] .. tools.pretty_info(config.planner.tools) .. [[
+ 
+ INSTRUCTIONS
+-These are general guiding tips you should follow while working:
+ - Understand the user request, the problem and the context.
+-- Evaluate if the user wants to implement something in the code base.
+-- Examinate the code base if you need:
+-  - Use the tools if you have access: start by looking at the current folder
+-  - You can use multiple turns, e.g. listing files, then reading a file
+-  - You can ask the user for more info
++  - Use you knowledge and past context
++- Evaluate if the user wants to change the code base.
+ - Think on the path to the solution and the constraints, and elaborate a plan.
+ - Include the plan (if any) so agents can follow.
+ - Before giving an answer ask yourself if it actualy solves the user's demand.
+@@ -61,10 +57,11 @@ USING THE CODER AGENT
+ If code changes are needed send instructions to the coder agent:
+ - Make sure you have concrete evidence that your plan will implement the demand.
+ - Generate a detailed set of instructions to the coder agent:
+-  - Indicate the files that are a good starting point.
++  - Indicate the files that are a good starting point if you know their content.
+   - Give tips about the implementation, like imports, good pratices and style.
+   - Include a description of the user's task.
+-  - Try to facilitate its job by giving more context and pointing to files.
++  - Try to facilitate its job by giving more context.
++  - Give boundaries and goals so the agent can steer to the right direction.
+ - Don't use other tools or agents to make changes, only the coder can do it.
+ 
+ USING THE WRITER AGENT
+@@ -115,6 +112,11 @@ function M.plan(prompt, callback)
+ 		history,
+ 		response_format,
+ 		function(data, err)
++			if err then
++				callback(nil, err)
++				return
++			end
++
+ 			table.insert(
+ 				history,
+ 				{
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index 960e705..0baec4b 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -28,15 +28,16 @@ Your job is to format the incoming content in a short and professional tone.
+ 
+ INSTRUCTIONS
+ Agents will send you text, your goal is to gather and format them.
+-Gather all text that is not a plan, process and generate concise and friendly
+-user-facing text in the `text` field.
++Gather all text from the user that is not a plan, process and generate concise
++and friendly user-facing text in the `text` field.
+ - Use maximum of 80 characters per line.
+ - You can include ASCII tables, diagrams, art etc if needed.
+ - Format the commands and plan as lists on the respective fields.
++
+ Collect the plan steps (if any), agents will be explicit about plans, don't
+ assume anything, and format then correctly in the `plan` field:
+ - use [ ] and [X] for todo and done steps
+-- don't add numbering
++- don't add numbering or bullets
+ - use identation to make sub steps
+ 
+ RESPONSE FORMAT
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index e526b98..6dc5b3a 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -27,7 +27,7 @@ function M.prompt_input()
+ 			ui.open()
+ 		end)
+ 
+-		project.process_request(prompt)
++		project.process_request(input)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 166824c..2735139 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -22,7 +22,6 @@ function M.init()
+ 	agents.init()
+ end
+ 
+-
+ local function run_commands(cmds)
+ 	local output = ""
+ 
+@@ -116,7 +115,7 @@ local function handle_planner_reply(reply)
+ 	if not reply.content.coder then
+ 		if not reply.content.writer then
+ 			log.error("planner did not sent writer field")
+-			ui.show_response({ error = "[tai] Planner did not sent writer field" })
++			ui.show_response({ error = "Planner did not sent writer field" })
+ 			return
+ 		end
+ 
+@@ -139,15 +138,18 @@ local function handle_planner_reply(reply)
+ 	handle_coder_req(
+ 		reply.content.coder,
+ 		function(res, err)
++			local text = res.content.writer or ""
+ 			if reply.content.writer then
+-				res.content.writer = reply.content.writer .. "\n\n" .. res.content.writer
++				text = reply.content.writer .. "\n\n" .. text
+ 			end
++			log.debug("calling writer after coder/patcher: " .. text)
+ 			writer.write(
+-				res.content.writer,
++				text,
+ 				function(data, err)
+ 					ui.show_response(
+ 						{
+-							unpack(data),
++							plan = data.content.plan,
++							text = data.content.text,
+ 							patch = res.content.patcher
+ 						}
+ 					)
+diff --git a/lua/tai/providers/local.lua b/lua/tai/providers/local.lua
+index 8be775e..86db6f4 100644
+--- a/lua/tai/providers/local.lua
++++ b/lua/tai/providers/local.lua
+@@ -38,22 +38,23 @@ function M.request(model_config, messages, format, callback)
+ 			'-d', request_body
+ 		}, { text = true }, function(obj)
+ 			if obj.code ~= 0 then
+-				callback(nil, "LLM request failed: " .. obj.stderr)
++				local err_msg = "curl returned code " .. obj.code
++				callback(nil, err_msg)
+ 				return
+ 			end
+ 
+ 			log.debug("Request response: " .. obj.stdout)
+ 			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "[tai] Received empty response from Gemini")
++				return callback(nil, "Received empty response from Gemini")
+ 			end
+ 
+ 			local parsed = vim.json.decode(obj.stdout)
+ 			if not parsed then
+-				return callback(nil, "[tai] Failed to decode JSON: " .. parsed)
++				return callback(nil, "Failed to decode JSON: " .. parsed)
+ 			end
+ 
+ 			if #parsed &gt; 0 and parsed[1].error then
+-				return callback(nil, "[tai] Received error: " .. parsed[1].error.message)
++				return callback(nil, "Received error: " .. parsed[1].error.message)
+ 			end
+ 
+ 			if parsed.error then
+@@ -68,7 +69,7 @@ function M.request(model_config, messages, format, callback)
+ 					log.debug("parsing JSON content")
+ 					fields.content = vim.json.decode(content)
+ 					if not fields.content then
+-						return callback(nil, "[tai] Failed to decode message")
++						return callback(nil, "Failed to decode message")
+ 					end
+ 				else
+ 					fields.content = content
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 855a9a4..458c8ba 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -63,30 +63,24 @@ end
+ function M.show_response(fields)
+ 	log.debug("Showing response")
+ 
+-	local content = "\n----------------------------\n"
++	local content = "\n---------------------------------\n"
+ 	if fields.error then
+-		content = content .. fields.error
++		content = content .. "[tai] " .. fields.error
+ 	end
+ 	if fields.plan and #fields.plan &gt; 0 then
+-		content = "--- Plan ------------------------\n\n"
++		content = "--- Plan -----------------------------\n\n"
+ 		for i, p in ipairs(fields.plan) do
+ 			content = content .. i .. ". " .. p .. "\n"
+ 		end
+-		content = content .. "___________________________\n\n"
++		content = content .. "__________________________________\n\n"
+ 	end
+ 	if fields.text then
+ 		content = content .. fields.text
+ 	end
+-	if fields.commands and #fields.commands &gt; 0 then
+-		content = content .. "\n\nCommand requested (use :RunTaiCommand to run):\n\n"
+-		for _, cmd in ipairs(fields.commands) do
+-			content = content .. cmd .. "\n\n"
+-		end
+-	end
+ 	if fields.patch then
+-		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
++		content = content .. "\n--- Patch (use :ApplyTaiPatch to apply) ---------\n\n" .. fields.patch
+ 	end
+-	content = content .. "\n\n"
++	content = content .. "\n"
+ 
+ 	M.append_to_buffer(content)
+ 	M.open()
+@@ -95,7 +89,7 @@ end
+ function M.show_tool_calls(calls)
+ 	log.debug("Showing tool calls")
+ 
+-	local content = "\n--- tool calls ---------------------\n"
++	local content = "\n--- Tool calls ------------------------\n"
+ 	for _, call in ipairs(calls) do
+ 		local args = ""
+ 		for k, v in pairs(call["function"].arguments) do
+@@ -103,7 +97,7 @@ function M.show_tool_calls(calls)
+ 		end
+ 		content = content .. "&gt; Calling " .. call["function"].name .. " " .. args .. "\n"
+ 	end
+-	content = content .. "____________________________________\n"
++	content = content .. "_______________________________________\n"
+ 
+ 	M.append_to_buffer(content)
+ 	M.open()
+</pre>

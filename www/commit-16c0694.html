@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 16c0694</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 16c0694
+parent <a href=commit-8fc0eeb.html>8fc0eeb</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-31T19:43:12-03:00
+
+    fixed streaming tool calls
+
+    - improved prompt a bit
+
+<a href=tree-16c0694.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 94d4449..919f7c8 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -13,6 +13,21 @@ You are a coding agent working in a project. You have read/write access to the
+ project's codebase in the current folder: ]] .. config.root .. [[
+ 
+ Please work on the tasks given by the user.
++
++## Important guidelines
++
++### Navigating and finding files
++- **Always explore the directory structure before accessing files.** Use
++  `ls`, `find`, or similar commands to discover file locations first.
++- Do NOT guess file paths — verify they exist with directory listing or
++  find commands before trying to read or edit them.
++- Use `find` for searching across the full tree, and `ls` for inspecting
++  specific directories.
++
++### Running shell commands
++- The shell already starts at the project's root folder.
++- **Do NOT prepend commands with `cd ... &amp;&amp;`** — it is unnecessary,
++  wastes tokens, and can lead to errors. Use relative paths instead.
+ ]]
+ 
+ M.system_prompt = config.system_prompt or default_system_prompt
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index d7945ad..c550de3 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -17,14 +17,13 @@ local history = nil
+ 
+ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
+-	for _, call in ipairs(msg.tool_calls or {}) do
+-		local args = call["function"].arguments
+-		call["function"].arguments = vim.json.encode(args)
+-	end
+ 	if not history then
+ 		history = { msg }
+ 		return
+ 	end
++	if msg.reasoning then
++		msg.reasoning_details = {{ text = msg.reasoning }}
++	end
+ 	table.insert(history, msg)
+ end
+ 
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 6c81cbe..9c63e06 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -115,6 +115,10 @@ function M.extract_fields(message, format)
+ 		return nil, "No message in response"
+ 	end
+ 
++	if message.error then
++		fields.error = message.error.message
++	end
++
+ 	local content = message.content
+ 	if content and content ~= "" and content ~= vim.NIL then
+ 		if format ~= nil then
+@@ -147,18 +151,8 @@ function M.extract_fields(message, format)
+ 		fields.reasoning = message.reasoning_details[1].text
+ 	end
+ 
+-	-- Some providers offer a more detailed reasoning response
+ 	if message.tool_calls and message.tool_calls ~= vim.NIL then
+ 		fields.tool_calls = message.tool_calls
+-		for _, call in ipairs(fields.tool_calls) do
+-			local args = call["function"].arguments
+-			if type(args) == "string" then
+-				local ok_decode, decoded = pcall(vim.json.decode, args)
+-				if ok_decode and decoded then
+-					call["function"].arguments = decoded
+-				end
+-			end
+-		end
+ 	end
+ 
+ 	return fields, nil
+@@ -241,27 +235,39 @@ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_comple
+ end
+ 
+ function M.parse_chunk(chunk)
+-	if chunk:sub(1, 6) ~= "data: " then
+-		log.debug("chunk is not data, ignoring: " .. chunk)
+-		return {}, nil
++	local ok, decoded = pcall(vim.json.decode, chunk)
++	if not ok then
++		if chunk:sub(1, 6) ~= "data: " then
++			log.debug("chunk is not data, ignoring: " .. chunk)
++			return {}, nil
++		end
++		chunk = chunk:sub(7)
+ 	end
+-	chunk = chunk:sub(7)
+ 
+ 	if chunk == "[DONE]" then
+ 		return {}, nil
+ 	end
+ 
+-	local ok, decoded = pcall(vim.json.decode, chunk)
++	-- try again
+ 	if not ok then
+-		return nil, "failed to decode JSON"
++		ok, decoded = pcall(vim.json.decode, chunk)
++		if not ok then
++			return nil, "failed to decode JSON: " .. chunk
++		end
+ 	end
+ 	log.debug("[API] parsed chunk: " .. vim.inspect(decoded))
+ 
++	if decoded.error then
++		return { error = decoded.error.message }
++	end
+ 	local message = decoded.choices[1].delta
+ 	local fields, err = M.extract_fields(message, nil)
+ 	if err then
+ 		return fields, err
+ 	end
++	if decoded.usage and decoded.usage.total_tokens then
++		fields.token_usage = decoded.usage.total_tokens
++	end
+ 
+ 	return fields
+ end
+@@ -271,9 +277,8 @@ function M.update_fields(fields, chunk)
+ 		fields.content = fields.content .. chunk.content
+ 	end
+ 
+-	if chunk.reasoning_details and #chunk.reasoning_details &gt; 0 then
+-		local text = chunk.reasoning_details[1].text
+-		fields.reasoning = fields.reasoning_details[1].text .. text
++	if chunk.reasoning then
++		fields.reasoning = (fields.reasoning or "") .. chunk.reasoning
+ 	end
+ 
+ 	if chunk.tool_calls then
+@@ -289,31 +294,22 @@ function M.update_fields(fields, chunk)
+ 				log.debug("[API] created new tool call")
+ 			else
+ 				fields.tool_calls[idx].name = saved_call["function"].name .. (fn.name or "")
+-				if type(fn.arguments) == "table" then
+-					fields.tool_calls[idx]["function"].arguments = fn.arguments
+-				else
+-					fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
+-					    tostring(fn.arguments)
+-				end
++				fields.tool_calls[idx]["function"].arguments = saved_call["function"].arguments ..
++				    tostring(fn.arguments)
+ 				log.debug("[API] updated tool call: " .. vim.inspect(fields.tool_calls[idx]))
+ 			end
+ 		end
+ 	end
++
++	if chunk.token_usage then
++		fields.token_usage = (fields.token_usage or 0) + chunk.token_usage
++	end
+ 	return fields
+ end
+ 
+ function M.merge_tool_calls(calls)
+ 	local new_calls = {}
+ 	for _, call in pairs(calls) do
+-		if type(call["function"].arguments) == "string" then
+-			local ok_decode, decoded = pcall(vim.json.decode, call["function"].arguments)
+-			if ok_decode then
+-				call["function"].arguments = decoded
+-			else
+-				call["function"].arguments = ""
+-			end
+-		end
+-
+ 		if not call.id then
+ 			call.id = "call_" .. tostring(vim.uv.hrtime())
+ 		end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index f25b875..28dc33b 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -181,17 +181,16 @@ local function run_tools(tool_calls)
+ 	local inputs = {}
+ 
+ 	for _, call in ipairs(tool_calls or {}) do
+-		log.debug("[UI] running tool: " .. vim.inspect(call)
+-		)
++		log.debug("[UI] running tool: " .. vim.inspect(call))
+ 		local name = call["function"].name
+-		local args = call["function"].arguments
++		local args = vim.json.decode(call["function"].arguments)
+ 
+ 		local res = {
+ 			role = "tool",
+ 			name = name,
+ 			tool_call_id = call.id,
+ 		}
+-		--
++
+ 		-- Check for hard stop before each tool
+ 		if hard_stop then
+ 			goto continue
+@@ -534,7 +533,7 @@ function M.task_stream(msgs)
+ 		nil,
+ 		function(chunk, err)
+ 			if err then
+-				append_streaming("{{{ Chunk error\n" .. err .. "\n}}}\n")
++				append_streaming("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+ 				return
+ 			end
+ 
+</pre>

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai a3071fe</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit a3071fe
+parent <a href=commit-cea4808.html>cea4808</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-21T19:04:53-03:00
+
+    updated web page
+
+<a href=tree-a3071fe.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 94cdb29..d085e3e 100644
+--- a/README.md
++++ b/README.md
+@@ -1,7 +1,6 @@
+-&gt; This project contains two utilities: A simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim and a command line program to integrate AI into your shell.
++# tai.nvim
+ 
+-
+-# Features
++&gt; This project contains a simple Neovim plugin to send text selections or prompts and receive responses, enabling interactive workflows from within Neovim.
+ 
+ 
+ ## Providers
+@@ -24,31 +23,13 @@ Mistral support is in progress (their API is flaky ATM).
+ 
+ Uses intuitive bindings that make it easy to query and interact with your code or text without leaving Neovim.
+ 
+-
+-# Project Components
+-
+-1. **tai.nvim** (Neovim Plugin)
+-
+-- Sends operator-motion or visual selections to the server
+-- Optionaly prompts for freeform input
+-- Sends file context along with prompts
+-- Displays server responses in a split buffer
++- Opens a side panel to display input and responses
+ - Minimal, dependency-free Lua code for Neovim
+ - Can run commands with safety validation
+ - Follows plans for complex tasks
+ 
+ 
+-2. **tai** (CLI)
+-
+-- Receives text payloads and standard input
+-- Sends responses back to the standard output
+-- Designed for easy integration with shell pipelines
+-
+-
+-## tai.nvim
+-
+-
+-### Installation
++## Installation
+ 
+ Place the plugin code at:
+ 
+@@ -75,32 +56,30 @@ and load it in your `init.lua`:
+     end)
+ 
+     vim.keymap.set("n", "&lt;leader&gt;ti", function()
+-      vim.schedule(tai.prompt_input)
++      vim.schedule(tai.chat)
+     end, { noremap = true })
+ 
+-    vim.keymap.set("n", "&lt;leader&gt;tf", function()
+-      vim.schedule(tai.prompt_full_file)
++    vim.keymap.set("n", "&lt;leader&gt;tr", function()
++      vim.schedule(tai.clear)
+     end, { noremap = true })
+ 
+     vim.keymap.set("n", "&lt;C-w&gt;&lt;C-t&gt;", function()
+     	require("tai").toggle_chat_window()
+     end, { noremap = true })
+ 
+-    vim.keymap.set("i", "&lt;C-X&gt;&lt;C-t&gt;", function()
+-      vim.schedule(tai.complete)
+-    end, { noremap = true })
+ 
++## Usage
+ 
+-### Usage
++The default mappings will give you:
+ 
+ - Use `gT` plus a motion to send a text selection to the server.
+ - Use `gP` plus a motion to send a text selection **with** a prompted input.
+-- Use insert mode `&lt;leader&gt;ti` to prompt input and send.
+-- Use insert mode `&lt;leader&gt;tf` to prompt input and send along with the full file context.
++- In normal mode `&lt;leader&gt;ti` to prompt input and send.
+ - To toggle the chat window use `Ctrl+w Ctrl+t`
++- Use `&lt;leader&gt;tr` to clear history.
+ 
+ 
+-### Requirements
++## Requirements
+ 
+ - A `.tai` JSON file in your project root, if not found tai will not work.
+ - Neovim 0.5 or newer
+@@ -117,19 +96,10 @@ The .tai file supports the following fields:
+ - coder: Configuration for the coder model.
+ - patcher: Configuration for the patcher model.
+ - writer: Configuration for the writer model.
+-- all_rounder: Configuration for the all-rounder model.
++- tai: Configuration for the all-rounder model.
+ - allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
+ 
+ 
+-### Building
+-
+-Clone this repo and run:
+-
+-    go build -o tai .
+-
+-Move the binary to a folder in your path for best results.
+-
+-
+ ## License
+ 
+ MIT License
+diff --git a/www/index.html b/www/index.html
+index fae7cb4..dff3a0e 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -4,11 +4,10 @@
+ &lt;meta name="color-scheme" content="light dark"&gt;
+ &lt;link rel=icon href=data:,&gt;
+ &lt;style&gt;pre{width:52ch;margin:2ch auto}a{color:#ff00ff}&lt;/style&gt;
+-&lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim + tai&lt;/b&gt;&lt;/i&gt;
++&lt;pre&gt;&lt;i&gt;&lt;b&gt;tai.nvim&lt;/b&gt;&lt;/i&gt;
+ 
+-a minimal Neovim plugin and a CLI tool built
+-to bring AI-powered text and code insights directly
+-to your editor.
++a minimal Neovim plugin built to bring AI-powered
++text and code insights directly to your editor.
+ 
+ the plugin sends selections, prompts, or full files
+ for processing using the groq API.
+@@ -37,7 +36,7 @@ for processing using the groq API.
+ gT + motion	- send motion selection
+ gP + motion	- send motion selection with input
+ &amp;lt;leader&amp;gt;ti 	- prompt input and send
+-&amp;lt;leader&amp;gt;tf 	- prompt input with file
++&amp;lt;leader&amp;gt;tr 	- reset the chat history
+ 
+ 
+ &lt;i&gt;insert mode:&lt;/i&gt;
+@@ -77,15 +76,6 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+   end, { noremap = true })
+ 
+ 
+-&lt;i&gt;CLI&lt;/i&gt;
+-
+-build the go code:
+-
+-  go build -o tai .
+-
+-move tai to a folder in your path.
+-
+-
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+ make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
+@@ -94,19 +84,6 @@ create a .tai file at the root or your project.
+ editting any file in that project should start tai.
+ then just use the keybindings above.
+ 
+-note: the first time tai is open it will index all
+-your project's files, so it may take some time to
+-fully load.
+-
+-to use the CLI you just run tai in your shell, this
+-will start the interactive mode that you can use to
+-chat.
+-
+-tai is aware if is being used in a pipeline, so you
+-can run it to improve your terminal workflow, e.g.
+-
+-  ls . | tai "rename to snake_case" | ... 
+-
+ 
+ &lt;i&gt;screenshots&lt;/i&gt;
+ 
+</pre>

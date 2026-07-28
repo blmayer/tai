@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai a707060</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit a707060
+parent <a href=commit-6dfb0a4.html>6dfb0a4</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-28T19:56:43-03:00
+
+    nvim: wip refactor
+
+<a href=tree-a707060.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index 4888744..9811103 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -23,8 +23,6 @@ local history = {
+ 	{ role = "system", content = provider.system_prompt }
+ }
+ 
+--- Expose provider functions
+-
+ function M.send(model, prompt)
+ 	local msg = { role = "user", content = prompt }
+ 	table.insert(history, msg)
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 80ae3ca..0afc917 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -27,9 +27,6 @@ function M.prompt_input()
+ 				vim.notify("[tai] recieved error: " .. err)
+ 				return
+ 			end
+-			vim.schedule(function()
+-				ui.show_response(res)
+-			end)
+ 		end)
+ 	end)
+ end
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index f187c1a..5ddbd08 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -6,6 +6,8 @@ local agents = require("tai.agents")
+ local library = require("tai.library")
+ local planner = require("tai.agents.planner")
+ local chat = require("tai.chat")
++local command = require("tai.command")
++local ui = require("tai.ui")
+ 
+ local completion_prompt =
+ "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+@@ -42,9 +44,90 @@ function M.process_request(prompt, callback)
+ 		planner.receive_prompt(prompt, callback)
+ 	else
+ 		local reply = chat.send(config.model, prompt)
+-		callback(reply)
+-		return
++		ui.show_response(prompt, reply)
++
++		::continue::
++
++		if reply.tool_calls then
++			ui.show_tool_call(reply.tool_calls)
++			local out = run_tool_calls(reply.tool_calls)
++			reply = chat.send(config.model, "Result of tool calls:\n" .. out)
++			goto continue
++		end
++		if reply.patch then
++			vim.api.nvim_buf_create_user_command(
++				bufnr,
++				'ApplyTaiPatch',
++				function() apply_patch(reply.patch) end,
++				{}
++			)
++		end
++		if reply.commands then
++			vim.api.nvim_buf_create_user_command(
++				bufnr,
++				'RunTaiCommand',
++				function()
++					local out = run_commands(fields.commands)
++					reply = chat.send(config.model, out)
++					ui.show_response(reply)
++				end,
++				{}
++			)
++		end
++	end
++end
++
++local function run_tool_calls(cmds)
++	local output = ""
++
++	for _, cmd in ipairs(cmds) do
++		log.debug("Running command `" .. cmd.name .. "`")
++		local file = io.open(cmd.args.file_path, "r")
++		if file then
++			local content = file:read("*all")
++			file:close()
++			output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
++		else
++			output = output .. "\n\n[tai] File " .. filepath .. " not found"
++		end
+ 	end
++
++	vim.schedule(function()
++		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
++	end)
++
++	return output
++end
++
++local function run_commands(cmds)
++	local output = ""
++
++	for _, cmd in ipairs(cmds) do
++		log.debug("Running command `" .. cmd .. "`")
++		if not command.validate(cmd, config.allowed_commands) then
++			output = "[tai] Command " .. cmd .. " is not allowed"
++		end
++
++		local out = command.run(cmd)
++		if out then
++			output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
++		else
++			output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
++		end
++	end
++
++	vim.schedule(function()
++		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
++	end)
++
++	return output
++end
++
++function apply_patch(patch)
++	local real = io.popen("ed -s &gt; /dev/null 2&gt;&amp;1", "w")
++	real:write(patch)
++	real:close()
++	vim.api.nvim_command("checktime")
+ end
+ 
+ --function M.complete(start)
+@@ -65,4 +148,5 @@ end
+ --	return reply
+ --end
+ 
++
+ return M
+diff --git a/lua/tai/providers/gemini.lua b/lua/tai/providers/gemini.lua
+index 9f8d991..0d0c839 100644
+--- a/lua/tai/providers/gemini.lua
++++ b/lua/tai/providers/gemini.lua
+@@ -14,6 +14,24 @@ end
+ 
+ local url = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+ 
++local read_tool = {
++    type = "function",
++    ["function"] = {
++      name = "read_file",
++      description = "Reads the content of a file from the file system.",
++      parameters = {
++        type = "object",
++        properties = {
++          file_path = {
++            type = "string",
++            description = "The path to the file to read."
++          }
++        },
++        required = {"file_path"}
++      }
++    }
++}
++
+ M.system_prompt = [[
+ You are Tai, a coding assistant running inside a Neovim session.
+ 
+@@ -41,7 +59,9 @@ Supply the list of commands to be executed on the user's machine for the writer
+   - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+   - Use POSIX shell compliant scripting.
+   - Don't use commands for code changes, use the patch field.
+-  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
++
++TOOLS
++You have access to tools that can read files. When you need to read a file, use the `read_file` tool.
+ 
+ ED FORMAT
+ 
+@@ -52,6 +72,7 @@ General Rules
+ - Ranges can apply to a single line, multiple lines, or the whole file.
+ - When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
+ - To return to command mode, you enter a line containing only a single `.`.
++- If you need to edit a different file use `w` to finish the current and `e file_name` to start the new one.
+ 
+ Addressing and Ranges
+ 1 	first line
+@@ -124,6 +145,7 @@ You must know the original content of the files affected.
+ 
+ USER FACING TEXT
+ Supply concise user-facing text in the `text` field.
++- No markdown, use plain text.
+ - Use maximum of 80 characters per line.
+ - You can include ASCII tables, diagrams, art etc if needed.
+ - Be concise, use a professional tone to convey the info while beign
+@@ -218,7 +240,7 @@ function M.send_raw_async(model, messages, callback)
+ 
+ 			local ok, parsed = pcall(json.decode, table.concat(result))
+ 			if not ok or not parsed.choices or #parsed.choices == 0 then
+-				vim.notify("[tai] No valid response from Mistral: " .. table.concat(result), vim.log.levels.ERROR)
++				vim.notify("[tai] No valid response from Gemini: " .. table.concat(result), vim.log.levels.ERROR)
+ 				callback(nil)
+ 				return
+ 			end
+@@ -310,9 +332,8 @@ function M.send(model, messages)
+ 			function(m) return { role = m.role, content = m.content } end,
+ 			messages
+ 		),
+-		response_format = {
+-			type = "json_object"
+-		}
++		tools = { read_tool },
++		tool_choice = "auto",
+ 	}
+ 
+ 	local json_data = json.encode(req_body)
+@@ -367,17 +388,27 @@ function M.send(model, messages)
+ 	end
+ 
+ 	if not parsed.choices or #parsed.choices == 0 then
+-		vim.notify("[tai] No response from Mistral, received " .. response, vim.log.levels.ERROR)
++		vim.notify("[tai] No response from Gemini, received " .. response, vim.log.levels.ERROR)
+ 		return nil
+ 	end
+ 
+-	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
++	local message = parsed.choices[1].message
++	local ok, fields = pcall(json.decode, message.content)
+ 	if not ok then
+ 		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+ 		return nil
+ 	end
++	if not message or not fields then
++		return nil
++	end
+ 
+-	return fields
++	return {
++		text = fields.text,
++		patch = fields.patch,
++		plan = fields.plan,
++		commands = fields.commands,
++		tools = message.tool_calls,
++	}
+ end
+ 
+ return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 53e6b14..0be38bf 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -2,10 +2,20 @@ local M = {}
+ local log = require("tai.log")
+ local config = require("tai.config")
+ local command = require("tai.command")
+-local project = require("tai.project")
+ 
+ local bufname = "tai-output"
+ 
++local function append_to_buf(bufnr, lines_to_add)
++    local current_lines_count = vim.api.nvim_buf_line_count(bufnr)
++    if current_lines_count == 1 and vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == "" then
++        -- If buffer is essentially empty (one empty line), replace it
++        vim.api.nvim_buf_set_lines(bufnr, 0, 1, false, lines_to_add)
++    else
++        -- Append to existing content
++        vim.api.nvim_buf_set_lines(bufnr, current_lines_count, current_lines_count, false, lines_to_add)
++    end
++end
++
+ local function ensure_buf()
+ 	local bufnr = vim.fn.bufnr(bufname)
+ 	if bufnr == -1 then
+@@ -15,7 +25,7 @@ local function ensure_buf()
+ 		vim.bo[bufnr].bufhidden = "hide" -- keep content when hidden
+ 		vim.bo[bufnr].swapfile = false
+ 		vim.bo[bufnr].modifiable = true
+-		vim.bo[bufnr].filetype = "tai-output"
++		vim.bo[bufnr].filetype = "text"
+ 	end
+ 	return bufnr
+ end
+@@ -35,18 +45,30 @@ function M.toggle_output_window()
+ 	end
+ end
+ 
+-function M.show_response(fields)
++function M.show_response(prompt, fields)
+ 	log.debug("Showing response text: " .. fields.text)
+ 
+ 	local bufnr = ensure_buf()
++	local winid = vim.fn.bufwinnr(bufnr)
++	local is_visible = (winid ~= -1)
+ 
+ 	local content = ""
++	-- Add divider if not the very first entry (or if the buffer is truly empty)
++	if vim.api.nvim_buf_line_count(bufnr) &gt; 0 and (vim.api.nvim_buf_line_count(bufnr) &gt; 1 or vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] ~= "") then
++		content = content .. "\n\n========================================\n"
++	end
++
++	for _, line in ipairs(vim.split(prompt, "\n")) do
++		content = content .. "&gt; " .. line .. "\n"
++	end
++	content = content .. "\n"
++
+ 	if fields.plan and #fields.plan &gt; 0 then
+ 		content = "Plan:\n\n"
+ 		for i, p in ipairs(fields.plan) do
+ 			content = content .. i .. ". " .. p .. "\n"
+ 		end
+-		content = content .. "\n-----------------------------\n\n"
++		content = content .. "\n----------------\n\n"
+ 	end
+ 	if fields.text then
+ 		content = content .. fields.text
+@@ -56,18 +78,9 @@ function M.show_response(fields)
+ 		for _, cmd in ipairs(fields.commands) do
+ 			content = content .. cmd .. "\n\n"
+ 		end
+-		vim.api.nvim_buf_create_user_command(
+-			bufnr, 'RunTaiCommand',
+-			function() M.run_commands(fields.commands) end,
+-			{}
+-		)
+ 	end
+ 	if fields.patch then
+ 		content = content .. "\n\nPatch (use :ApplyTaiPatch to apply):\n\n" .. fields.patch
+-		local patch = fields.patch
+-		vim.api.nvim_buf_create_user_command(bufnr, 'ApplyTaiPatch',
+-			function() M.apply_patch(patch) end,
+-			{})
+ 	end
+ 
+ 	local lines = vim.split(content, "\n", { trimempty = true })
+@@ -85,6 +98,34 @@ function M.show_response(fields)
+ 	end
+ end
+ 
++function M.show_tool_calls(calls)
++	log.debug("Showing tool calls: " .. calls)
++
++	local bufnr = ensure_buf()
++	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++
++	table.insert(lines, "\n------------------------------\n\n")
++	for _, call in ipairs(calls) do
++		table.insert(
++			lines,
++			"&gt; Sending output of: " .. call.name .. " " ..call.args.file_name
++		)
++	end
++
++	vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
++
++	-- Auto-open if hidden
++	if vim.fn.bufwinnr(bufnr) == -1 then
++		vim.cmd("vsplit")
++		local win = vim.api.nvim_get_current_win()
++		vim.api.nvim_win_set_buf(win, bufnr)
++		vim.api.nvim_win_set_width(win, 80)
++	else
++		-- Ensure focus on existing window
++		vim.api.nvim_set_current_win(vim.fn.bufwinid(bufnr))
++	end
++end
++
+ -- Insert the content at the cursor (insert mode)
+ function M.insert_response(content)
+ 	local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+@@ -147,50 +188,6 @@ function M.input(callback)
+ 	end, { buffer = bufnr })
+ end
+ 
+-function M.apply_patch(patch)
+-	local real = io.popen("ed -s &gt; /dev/null 2&gt;&amp;1", "w")
+-	real:write(patch)
+-	real:close()
+-	vim.api.nvim_command("checktime")
+-end
+-
+-function M.run_commands(cmds)
+-	local output = ""
+-
+-	for _, cmd in ipairs(cmds) do
+-		log.debug("Running command `" .. cmd .. "`")
+-		-- Check for @read file_name pattern
+-		if cmd:match("^@read%s+(.+)$") then
+-			local filepath = cmd:match("^@read%s+(.+)$")
+-			local file = io.open(filepath, "r")
+-			if file then
+-				local content = file:read("*all")
+-				file:close()
+-				output = output .. "\n\n[tai] Content of " .. filepath .. ":\n" .. content .. "\n"
+-			else
+-				output = output .. "\n\n[tai] File " .. filepath .. "not found"
+-			end
+-		else
+-			if not command.validate(cmd, config.allowed_commands) then
+-				output = "[tai] Command " .. cmd .. " is not allowed"
+-			end
+-
+-			local out = command.run(cmd)
+-			if out then
+-				output = output .. "\n\n[tai] Output of ```" .. cmd .. "```:\n" .. out
+-			else
+-				output = output .. "\n\n[tai] ```" .. cmd .. "``` returned null"
+-			end
+-		end
+-	end
+ 
+-	vim.schedule(function()
+-		vim.notify("[tai] Sending commands output", vim.log.levels.TRACE)
+-	end)
+-
+-	project.process_request(output, function(reply, err)
+-		M.show_response(reply)
+-	end)
+-end
+ 
+ return M
+</pre>

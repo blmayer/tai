@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 09b2079</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 09b2079
+parent <a href=commit-0bdc256.html>0bdc256</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-20T20:00:22-03:00
+
+    improved error messages
+
+    - updated readme and www pages
+
+<a href=tree-09b2079.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index ec70112..a6f949d 100644
+--- a/README.md
++++ b/README.md
+@@ -109,6 +109,8 @@ tai reads configuration from a `.tai` JSON file in your project root. The follow
+ - `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
+ - `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
+ - `think`: Enable extended thinking/reasoning for models that support it.
++- `system_prompt`: Custom system prompt to override the default agent instructions.
++- `custom_prompt`: Additional prompt text appended to the system prompt. Useful for adding extra instructions without replacing the default.
+ - `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
+ 
+ Example `.tai` file:
+@@ -122,6 +124,8 @@ Example `.tai` file:
+ 		"max_tokens": 4096
+ 	},
+ 	"use_tools": true,
++	"system_prompt": "You are a senior python programmer. Always write tests.",
++	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index cd80809..ac028ae 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -77,7 +77,12 @@ function M.request(model_config, msgs, format, callback)
+ 		log.debug("Request response: " .. vim.inspect(parsed))
+ 
+ 		if parsed.error then
+-			return callback(nil, parsed.error.message)
++			local error = parsed.error
++			local msg = error.message
++			if error.metadata and error.metadata.raw then
++				msg = msg .. ": " .. error.metadata.raw
++			end
++			return callback(nil, msg)
+ 		end
+ 
+ 		local fields, extract_err = provider_common.extract_fields(parsed, format)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 34925d3..c555acf 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -311,9 +311,8 @@ local function run_tools(tool_calls)
+ 				}
+ 			})
+ 		else
+-			local err_msg = "[sys] Invalid tool name: " .. name
++			res.content = "[sys] Invalid tool name: " .. name
+ 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
+-			res.content = err_msg
+ 		end
+ 
+ 		::continue::
+@@ -338,7 +337,7 @@ local function process_response(fields)
+ 		vim.schedule(function() update_token_display(fields.token_usage) end)
+ 	end
+ 	if fields.error then
+-		M.append_to_buffer("[tai] " .. fields.error .. "\n")
++		M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+ 		return
+ 	end
+ 
+diff --git a/www/index.html b/www/index.html
+index 8b0d0a0..bc811cd 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -80,30 +80,34 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+ &lt;b&gt;configuring&lt;/b&gt;
+ 
+ tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file
+-in your project root. The following options are
++in your project root. the following options are
+ supported:
+ 
+-- &lt;i&gt;model&lt;/i&gt;: The model used for chat completions
+-  e.g., llama-3.1-70b-versatile, gemini-2.0-flash.
+-- &lt;i&gt;provider&lt;/i&gt;: One of: groq, gemini, mistral,
++- &lt;i&gt;model&lt;/i&gt;: the model used for chat completions
++- &lt;i&gt;provider&lt;/i&gt;: one of: groq, gemini, mistral,
+   z_ai, openai, openrouter, stepfun, local, minimax.
+-- &lt;i&gt;options&lt;/i&gt;: Provider-specific options passed
++- &lt;i&gt;options&lt;/i&gt;: provider-specific options passed
+   to the API (e.g., temperature, max_tokens). See
+   the provider's API docs.
+-- &lt;i&gt;provider_tools&lt;/i&gt;: Array of provider-side
++- &lt;i&gt;provider_tools&lt;/i&gt;: array of provider-side
+   tools (e.g., ["web_browser"] for OpenAI).
+-- &lt;i&gt;use_tools&lt;/i&gt;: Boolean to enable/disable agent
+-  tools. Default is true. If false, the agent won't
++- &lt;i&gt;use_tools&lt;/i&gt;: boolean to enable/disable agent
++  tools. default is true. if false, the agent won't
+   have access to file read/write or the shell tool.
+-- &lt;i&gt;think&lt;/i&gt;: Enable extended thinking/reasoning
++- &lt;i&gt;think&lt;/i&gt;: enable extended thinking/reasoning
+   for models that support it.
+-- &lt;i&gt;allowed_commands&lt;/i&gt;: Override the default
+-  list of allowed shell commands. By default, tai
++- &lt;i&gt;system_prompt&lt;/i&gt;: custom system prompt to
++  override the default agent instructions.
++- &lt;i&gt;custom_prompt&lt;/i&gt;: additional prompt text
++  appended to the system prompt. useful for adding
++  extra instructions without replacing the default.
++- &lt;i&gt;allowed_commands&lt;/i&gt;: override the default
++  list of allowed shell commands. by default, tai
+   allows: cat, grep, ag, rg, ls, head, tail, wc,
+   diff, sort, uniq, find, file, stat, date, echo,
+   tree, pwd, which, type.
+ 
+-Example .tai file:
++example .tai file:
+ 
+ {
+ 	"provider": "groq",
+@@ -113,6 +117,8 @@ Example .tai file:
+ 		"max_tokens": 4096
+ 	},
+ 	"use_tools": true,
++	"system_prompt": "You are a senior python programmer. Always write tests.",
++	"custom_prompt": "Additional instructions: prefer using rust over python for performance-critical code.",
+ 	"allowed_commands": {
+ 		"git": true,
+ 		"npm": true,
+@@ -121,6 +127,8 @@ Example .tai file:
+ }
+ 
+ 
++
++
+ &lt;b&gt;usage&lt;/b&gt;
+ 
+ make sure the correct env var is set: &lt;i&gt;GROQ_API_KEY&lt;/i&gt;,
+</pre>

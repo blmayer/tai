@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 1fd60a7</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 1fd60a7
+parent <a href=commit-df2c009.html>df2c009</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-20T08:39:18-03:00
+
+    fixed ui.lua
+
+<a href=tree-1fd60a7.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 1ed6259..7e027ea 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -242,7 +242,6 @@ local function run_tools(tool_calls)
+                        end
+                        if vim.fn.filereadable(args.file) ~= 1 then
+ 				M.append("{{{ Attaching " .. args.file .. "\n")
+-				args.file .. "\n}}}\n")
+                                res.content = "[sys] file does not exist or is not readable"
+                                goto continue
+                        end
+</pre>

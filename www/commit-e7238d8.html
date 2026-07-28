@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai e7238d8</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit e7238d8
+parent <a href=commit-0a6e8cd.html>0a6e8cd</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-12-23T10:19:30-03:00
+
+    added a new provider and updated readme and index.html
+
+<a href=tree-e7238d8.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index d085e3e..0ba47b4 100644
+--- a/README.md
++++ b/README.md
+@@ -5,16 +5,21 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, and Gemini APIs for processing requests. Make sure to set the correct
+-environment variable:
++This project is compatible with the Groq, Gemini, Mistral, Z.AI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+ 
+-      GROQ_API_KEY=your_api_key_here
++       GROQ_API_KEY=your_api_key_here
+ 
+ for Groq, or:
+ 
+-      GEMINI_API_KEY=your_api_key_here
++       GEMINI_API_KEY=your_api_key_here
+ 
+-for Gemini.
++for Gemini, or:
++
++for Mistral, or:
++
++       ZAI_API_KEY=your_api_key_here
++
++for Z.AI, or configure a local Ollama server (localhost:11434).
+ 
+ Mistral support is in progress (their API is flaky ATM).
+ 
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index f4037c7..9313dae 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -39,8 +39,17 @@ function M.request(model_config, msgs, format, callback)
+ 	)
+ 	local body = {
+ 		model = model_config.model,
+-		messages = history,
++		messages = {},
+ 	}
++	for _, message in ipairs(history) do
++		local new_message = {}
++		for key, value in pairs(message) do
++			if key ~= "file_path" then
++				new_message[key] = value
++			end
++		end
++		table.insert(body.messages, new_message)
++	end
+ 
+ 	if #agent_tools &gt; 0 then
+ 		body.tools = agent_tools
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+new file mode 100644
+index 0000000..2be0be8
+--- /dev/null
++++ b/lua/tai/openrouter.lua
+@@ -0,0 +1,144 @@
++local M = {}
++
++local log = require("tai.log")
++local tools = require("tai.tools")
++
++local url = "https://openrouter.ai/api/v1/chat/completions"
++
++local api_key = os.getenv("OPENROUTER_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing OPENROUTER_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local history = nil
++
++function M.add_to_history(message)
++	local msg = vim.deepcopy(message)
++	for _, call in ipairs(msg.tool_calls or {}) do
++		local args = call["function"].arguments
++		call["function"].arguments = vim.json.encode(args)
++	end
++	if not history then
++		history = { msg }
++		return
++	end
++	table.insert(history, msg)
++end
++
++function M.clear_history()
++	history = nil
++end
++
++function M.request(model_config, msgs, format, callback)
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
++
++	local agent_tools = vim.tbl_map(
++		function(t)
++			return tools.defs[t]
++		end,
++		model_config.tools or {}
++	)
++	local body = {
++		model = model_config.model,
++		messages = {},
++	}
++	for _, message in ipairs(history) do
++		local new_message = {}
++		for key, value in pairs(message) do
++			if key ~= "file_path" then
++				new_message[key] = value
++			end
++		end
++		table.insert(body.messages, new_message)
++	end
++
++	if #agent_tools &gt; 0 then
++		body.tools = agent_tools
++	end
++
++	-- Mistral API does not directly support 'format', 'reasoning_effort' or 'extra_body' at the top level
++	-- in the same way Gemini does.
++	-- If a specific format (e.g., JSON) is needed, it's usually via 'response_format'.
++	-- For now, I'll omit these or adapt if user specifies.
++	if format == "json_object" then -- Assuming 'json_object' as a possible format for Mistral
++		body.response_format = { type = "json_object" }
++	end
++
++	-- Add other model options if provided in model_config.options, assuming they are valid Mistral API parameters
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("Requesting " .. url .. " with " .. request_body)
++	vim.system(
++		{
++			"curl", "-s", "-X", "POST", url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", request_body,
++		}, { text = true }, function(obj)
++			if obj.code ~= 0 then
++				local err_msg = "curl returned code " .. obj.code
++				callback(nil, err_msg)
++				return
++			end
++
++			log.debug("Request response: " .. obj.stdout)
++			if not obj.stdout or obj.stdout == "" then
++				return callback(nil, "Received empty response from Mistral")
++			end
++
++			local parsed = vim.json.decode(obj.stdout)
++			if not parsed then
++				return callback(nil, "Failed to decode JSON: " .. obj.stdout)
++			end
++
++			-- Mistral errors are usually at the root level, e.g., parsed.error
++			if parsed.error then
++				return callback(nil,
++					(parsed.error.message .. ": " .. parsed.error.metadata.raw) or
++					"Unknown Openrouter API error")
++			end
++
++			if not parsed.choices or #parsed.choices == 0 then
++				return callback(nil, "No choices received from Openrouter")
++			end
++
++			local message = parsed.choices[1].message
++			local content = message.content
++			local fields = {}
++			if content and content ~= "" then
++				log.debug("response content: " .. content)
++				if format == "json_object" then
++					log.debug("parsing JSON content")
++					fields.content = vim.json.decode(content)
++					if not fields.content then
++						return callback(nil, "Failed to decode message content as JSON")
++					end
++				else
++					fields.content = content
++				end
++			end
++
++			if message.tool_calls and message.tool_calls ~= vim.NIL then
++				fields.tool_calls = message.tool_calls
++				for _, call in ipairs(fields.tool_calls) do
++					local args = call["function"].arguments
++					call["function"].arguments = vim.json.decode(args)
++				end
++			end
++
++			-- Mistral tool call arguments are already JSON objects, no need to decode
++			callback(fields, nil)
++		end)
++end
++
++return M
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index dd6c517..7abb669 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -72,6 +72,56 @@ local function add_sep()
+ 	M.append_to_buffer(result .. "\n")
+ end
+ 
++local function run_tools(tool_calls, callback)
++	local results = {}
++	for _, call in ipairs(tool_calls or {}) do
++		local name = call["function"].name
++		local args = call["function"].arguments
++
++		local res = {
++			role = "tool",
++			name = name,
++			tool_call_id = call.id
++		}
++		if name == "shell" then
++			log.debug("Asking for confirmation")
++			local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
++			if input == 1 then
++				log.debug("Confirmed")
++				M.append_to_buffer("[tai] Running " .. args.command .. "\n")
++				res.content = tools.run(name, args)
++			else
++				log.debug("Declined")
++				M.append_to_buffer("[tai] Declined " .. args.command .. "\n")
++				res.content = "[sys] User declined running this command"
++			end
++		elseif name == "read_file" then
++			M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
++			res.content = tools.run(name, args)
++			res.file_path = args.file_path
++		elseif name == "patch" then
++			M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
++			res.content = tools.run(name, args)
++			for _, change in ipairs(args.changes) do
++				M.append_to_buffer("\t" .. change.file .. ":\n")
++				for _, hunk in ipairs(change.hunks) do
++					if hunk.operation == "delete" then
++						M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
++					else
++						M.append_to_buffer(
++							"\t" ..
++							hunk.operation ..
++							" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
++						)
++					end
++				end
++			end
++		end
++		table.insert(results, res)
++	end
++	callback(results)
++end
++
+ local function process_response(fields)
+ 	log.debug("Showing response")
+ 	M.open()
+@@ -88,52 +138,10 @@ local function process_response(fields)
+ 	end
+ 
+ 	vim.schedule(function()
+-		local results = {}
+-		for _, call in ipairs(fields.tool_calls or {}) do
+-			local name = call["function"].name
+-			local args = call["function"].arguments
+-
+-			local res = {
+-				role = "tool",
+-				name = name,
+-				tool_call_id = call.id
+-			}
+-			if name == "shell" then
+-				log.debug("Asking for confirmation")
+-					local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n", 1)
+-					if input == 1 then
+-						log.debug("Confirmed")
+-						M.append_to_buffer("[tai] Running " .. args.command .. "\n")
+-						res.content = tools.run(name, args)
+-					else
+-						log.debug("Declined")
+-						res.content = "[sys] User declined"
+-					end
+-			elseif name == "read_file" then
+-				M.append_to_buffer("[tai] Reading " .. args.file_path .. "\n")
+-				res.content = tools.run(name, args)
+-				res.file_path = args.file_path
+-			elseif name == "patch" then
+-				M.append_to_buffer("[tai] Patching " .. #args.changes .. " file(s):\n")
+-				res.content = tools.run(name, args)
+-				for _, change in ipairs(args.changes) do
+-					M.append_to_buffer("\t" .. change.file .. ":\n")
+-					for _, hunk in ipairs(change.hunks) do
+-						if hunk.operation == "delete" then
+-							M.append_to_buffer("\tdelete " .. hunk.lines .. "\n")
+-						else
+-							M.append_to_buffer(
+-								"\t" ..
+-								hunk.operation ..
+-								" " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+-							)
+-						end
+-					end
+-				end
+-			end
+-			table.insert(results, res)
+-		end
+-		return tai.task(results, process_response)
++		run_tools(
++			fields.tool_calls,
++			function(res) tai.task(res, process_response) end
++		)
+ 	end)
+ end
+ 
+diff --git a/www/index.html b/www/index.html
+index 662d48e..5b10b73 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -22,9 +22,10 @@ agents directly to your editor.
+ 
+ - groq
+ - gemini
+-- mistral (wip, their handoff is not working)
++- mistral
+ - ollama
+ - z.ai
++- local
+ 
+ 
+ &lt;b&gt;keybindings&lt;/b&gt;
+</pre>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 1a47e22</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 1a47e22
+parent <a href=commit-05d0b93.html>05d0b93</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-21T20:53:07-03:00
+
+    improved content in empty responses
+
+    - added check for invalid tool calls
+    - small cleanup and simplifications
+
+<a href=tree-1a47e22.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 78e3d70..299bad2 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -19,14 +19,7 @@ function M.add_to_history(message)
+ 	local msg = vim.deepcopy(message)
+ 	for _, call in ipairs(msg.tool_calls or {}) do
+ 		local args = call["function"].arguments
+-		local new_args = {}
+-		new_args.role = args.role
+-		new_args.content = args.content
+-		new_args.tool_call_id = args.tool_call_id
+-		call["function"].arguments = vim.json.encode(new_args)
+-	end
+-	if message.role == "tool" then
+-		message.name = nil
++		call["function"].arguments = vim.json.encode(args)
+ 	end
+ 	if not history then
+ 		history = { msg }
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index ffe72c8..a0b24e0 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -15,10 +15,6 @@ function M.filter_message(msg)
+ 			new_msg[k] = v
+ 		end
+ 	end
+-	-- Remove 'name' field from tool messages as it's not part of the OpenAI API spec
+-	if new_msg.role == "tool" then
+-		new_msg.name = nil
+-	end
+ 	return new_msg
+ end
+ 
+@@ -94,6 +90,9 @@ function M.extract_fields(parsed, format)
+ 		else
+ 			fields.content = content
+ 		end
++	else
++		-- Some providers fail if you send them a message without content
++		fields.content = ""
+ 	end
+ 	if message.tool_calls and message.tool_calls ~= vim.NIL then
+ 		fields.tool_calls = message.tool_calls
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index c581de1..462e8f0 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -158,7 +158,6 @@ local function run_tools(tool_calls)
+ 				local out = tools.run_command(args.command)
+ 				M.append_to_buffer((out or "") .. "\n")
+ 				M.append_to_buffer("}}}")
+-				refresh_and_close_folds()
+ 				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+@@ -241,7 +240,6 @@ local function run_tools(tool_calls)
+ 			res.content = out
+ 			M.append_to_buffer("Result:\n" .. (out or "") .. "\n")
+ 			M.append_to_buffer("}}}")
+-			refresh_and_close_folds()
+ 		elseif name == "summarize" then
+ 			M.append_to_buffer("{{{ Summarizing chat\n}}}")
+ 			tai.task(
+@@ -258,9 +256,14 @@ local function run_tools(tool_calls)
+ 				end
+ 			)
+ 			return nil
++		else
++			local err_msg = "[sys] Invalid tool name: " .. name
++			M.append_to_buffer("{{{ Invalid tool call\n}}}")
++			res.content = err_msg
+ 		end
+ 
+ 		::continue::
++		refresh_and_close_folds()
+ 		table.insert(results, res)
+ 	end
+ 	return results
+</pre>

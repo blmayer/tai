@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 7199398</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 7199398
+parent <a href=commit-b3b8a15.html>b3b8a15</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-08-20T15:44:32-03:00
+
+    nvim: added missing command file
+
+<a href=tree-7199398.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/command.lua b/lua/tai/command.lua
+new file mode 100644
+index 0000000..2769414
+--- /dev/null
++++ b/lua/tai/command.lua
+@@ -0,0 +1,68 @@
++local M = {}
++
++local allowed_commands = {
++	["cat"] = true,
++	["tail"] = true,
++	["head"] = true,
++	["grep"] = true,
++	["cut"] = true,
++	["ls"] = true,
++	["wc"] = true,
++	["sort"] = true
++}
++
++function M.validate(cmd)
++	local parts = vim.split(cmd, "%s+")
++	if #parts == 0 then return false end
++
++	local base = parts[1]:match("^([^/]+)$")
++	if not base or not allowed_commands[base] then
++		return false
++	end
++
++	for _, arg in ipairs(parts) do
++		if arg:sub(1, 1) == "-" then
++			goto continue
++		end
++		if arg:sub(1, 1) == "/" then
++			return false
++		end
++		if arg:match("%.%.") then
++			return false
++		end
++		if arg:match("[*?]") then
++			return false
++		end
++		::continue::
++	end
++
++	return true
++end
++
++function M.run(cmd)
++	local env = {}
++	for _, name in ipairs({ "PATH" }) do
++		env[#env + 1] = name .. "=" .. (os.getenv(name) or "")
++	end
++
++	local env_prefix = ""
++	for _, v in ipairs(env) do
++		local name, value = v:match("^([^=]+)=(.*)$")
++		if name and value then
++			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\''") .. "' "
++		end
++	end
++
++	local full_cmd = env_prefix .. cmd .. " 2&gt;&amp;1"
++	local handle = io.popen(full_cmd, "r")
++	if not handle then
++		return nil, "Failed to run command"
++	end
++
++	local output = handle:read("*a")
++	handle:close()
++
++	return output
++end
++
++return M
+</pre>

@@ -1,0 +1,1390 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f5b07fc</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f5b07fc
+parent <a href=commit-30f87e8.html>30f87e8</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-07-15T13:54:44-03:00
+
+    improved harness
+
+<a href=tree-f5b07fc.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/.tai b/.tai
+index efcaea9..c9c39e4 100644
+--- a/.tai
++++ b/.tai
+@@ -1,6 +1,3 @@
+ {
+-	"provider": "mistral",
+-	"model": "mistral-small-latest",
+-	"rpm": 49,
+-	"tpm": 40000
++	"provider": "llama_cpp"
+ }
+diff --git a/AGENTS.md b/AGENTS.md
+index af8a58b..1414d65 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -8,14 +8,19 @@ These notes are intended for **automated coding agents** working in this reposit
+ ## Repository layout
+ 
+ - `lua/tai/` — Neovim plugin implementation (all core logic)
+-  - `init.lua` — plugin entrypoint
+-  - `config.lua` — defaults + user configuration
+-  - `agent.lua` — profiles (main/plan/code), system prompts, `new_frame`
++  - `init.lua` — plugin entrypoint (`setup`, `chat`, `stop`, …)
++  - `config.lua` — defaults + `.tai` project config
++  - `agent.lua` — main/subtask system prompts, `new_frame`, tool allowlists
+   - `providers.lua` / `provider_common.lua` — provider adapters
+-  - `tools.lua` — tool schemas + execution helpers (notes/todos/memory)
+-  - `ui.lua` — agent stack, chat UI, tool runner, subtask folds
+-  - `context.lua` — session persistence (stack + chat_lines)
++  - `tools.lua` — tool **schemas** + re-exports
++  - `tools/` — implementation modules (`io`, `shell`, `edit`, `subtask`)
++  - `ui.lua` — facade wiring ui modules
++  - `ui/core.lua` — stack, continue loop, tool runner, chat UI
++  - `ui/session.lua` — persistence helpers (if used)
++  - `ui/tools.lua` — alternate/legacy tool-runner path
++  - `context.lua` — session file load/save
+   - `log.lua` — logging
++- `plugin/tai.lua` — optional autoload + `:Tai` user command
+ - `www/` — static website assets
+ - `README.md` — user documentation
+ - `TODO.md` — rough roadmap / scratchpad
+@@ -24,46 +29,57 @@ These notes are intended for **automated coding agents** working in this reposit
+ 
+ ```
+ stack[1] = MAIN frame (history + notes + todos)
+-stack[2] = optional PLAN or CODE subtask
++stack[2] = optional SUBTASK (goal, tools, system_prompt?, seed notes/todos)
+ 
+-each request:
+-  system = base_prompt + render_memory(frame)   -- ephemeral, not stored
++each request (ephemeral):
++  system = base_prompt
++         + Live Context (notes/todos)   -- never stored in history
++
++subtask ends when the child returns with no tool_calls:
++  finish_subtask → parent tool result = summary + child notes + todos
++  UI fold closes (}}} )
+ ```
+ 
+-- `subtask` pushes a frame and opens `{{{ SUBTASK …`
+-- `complete` pops, closes `}}}`, returns summary+notes+todos as the parent tool result
++- Main tools: `read`, `shell`, `send_image`, `edit`, `write`, `todos`, `notes`, `subtask`
++- Child tools: only those listed in `subtask.tools` (never `subtask` itself)
+ - Max depth: 2
++- No `complete` tool — final assistant text is the handoff
+ 
+ ## How to orient quickly (when debugging)
+ 
+-1. Start at the entrypoint: `lua/tai/init.lua`.
+-2. Trace configuration: `config.lua` → where it’s read/merged.
+-3. Trace a request:
+-   - frame + prompts: `agent.lua`
+-   - injection + stack: `ui.lua` (`prepare_messages`, `finish_subtask`)
+-   - provider formatting: `providers.lua`
+-   - tools: `tools.lua`
++1. Entrypoint: `lua/tai/init.lua` → `ui.init` / `ui.continue`.
++2. Config: `config.lua` (needs `.tai` walking up from cwd).
++3. Request path:
++   - prompts/frames: `agent.lua`
++   - Live Context: `tools/subtask.lua` `render_memory` + `ui/core.lua` `prepare_messages`
++   - tool execution: `ui/core.lua` `run_tools`
++   - provider: `providers.lua`
+ 
+ ## Common tasks
+ 
+ - **Add a new provider**
+-  - Extend `providers.lua` (or the provider registry there).
++  - Extend `providers.lua`.
+   - Update `README.md` and `www/index.html`.
+ 
+ - **Add/adjust a tool**
+-  - Update `lua/tai/tools.lua` (schema + runner).
+-  - Give the tool to the right profile(s) in `agent.lua`.
+-  - Wire execution in `ui.lua` `run_tools` if needed.
+-  - Update docs.
++  - Schema in `lua/tai/tools.lua`.
++  - Implementation under `lua/tai/tools/` (or inline).
++  - Wire in `ui/core.lua` `run_tools`.
++  - Update allowlists in `agent.lua` if subtasks may use it.
++  - Update README / www.
++
++- **Change system prompts**
++  - `lua/tai/agent.lua` (`system_prompt`, `subtask_system_prompt`, `tool_usage`).
+ 
+-- **Add provider-side tools (e.g., web_browser)**
+-  - Add the tool name to `config.provider_tools` in `.tai`.
++- **Provider-side tools (e.g. web_search)**
++  - `.tai` field `provider_tools`.
+   - Document in README / www.
+ 
+ ## Development notes
+ 
+ - Prefer small, explicit Lua. Avoid new dependencies.
+ - Keep system prompts compact (small models).
+-- Working memory must stay request-ephemeral (never append into history).
++- Live Context must stay request-ephemeral (never append into history).
++- Requires Neovim 0.10+ (`vim.uv`).
+ 
+ (Agent reminder) You are editing the Tai plugin’s own code—double-check changes for regressions.
+diff --git a/README.md b/README.md
+index f774ad4..7707c2e 100644
+--- a/README.md
++++ b/README.md
+@@ -3,8 +3,8 @@
+ ![tai.nvim in action](www/screenshot.png)
+ 
+ &gt; A minimal, dependency-free Neovim plugin that brings AI coding agents directly
+-&gt; into your editor. It uses a **subtask harness** (main → plan/code), per-agent
+-&gt; working memory, session persistence, and many LLM providers.
++&gt; into your editor. It uses a **subtask harness**, per-agent Live Context
++&gt; (notes/todos), session persistence, and many LLM providers.
+ 
+ &lt;a href="https://dotfyle.com/plugins/blmayer/tai"&gt;
+ 	&lt;img src="https://dotfyle.com/plugins/blmayer/tai/shield?style=flat" /&gt;
+@@ -12,13 +12,15 @@
+ 
+ ## Features
+ 
+-- **Subtask harness** — a main orchestrator spawns plan/code subtasks with
+-  isolated history; only summaries return to the parent.
+-- **Working memory** — each agent has private `notes` and `todos`, injected into
++- **Subtask harness** — spawn focused child agents with clean history; only
++  their final report (plus notes/todos) returns to the parent.
++- **Live Context** — each agent has private `notes` and `todos`, merged into
+   the system prompt every request (not stored in chat history).
+-- **Session persistence** — conversations are saved and restored between Neovim
+-  sessions (`.tai-session.json` in the project root).
+-- **Tool use** — read/write files, shell, edit, images, subtask/complete.
++- **Flexible subtasks** — pass `goal`, `tools`, optional `system_prompt`, and
++  seed `notes`/`todos` for personas (planner, implementer, reviewer, …).
++- **Session persistence** — conversations auto-save/restore (`.tai-session.json`
++  in the project root).
++- **Tool use** — read/write files, shell, edit, images, subtask.
+ - **Rate limiting** — configurable `rpm` / `tpm`.
+ - **Streaming and non-streaming** for all providers.
+ - **Code folding** — tool output and whole subtasks fold in the chat buffer.
+@@ -28,43 +30,66 @@
+ ## Agent harness
+ 
+ ```
+-┌─────────────────────────────────────────────────────────────┐
+-│  MAIN (long-lived)                                          │
+-│  tools: read, shell, send_image, subtask, notes, todos      │
+-│  memory: notes + todos  ──► injected into system each turn  │
+-│                                                             │
+-│   user request                                              │
+-│        │                                                    │
+-│        ▼                                                    │
+-│   ┌─────────────────────────────────────────────────────┐   │
+-│   │  SUBTASK profile=plan          {{{ fold             │   │
+-│   │  own history + notes/todos                          │   │
+-│   │  explore → sketch plan in notes → complete()        │   │
+-│   └───────────────────────┬─────────────────────────────┘   │
+-│                           │ summary + notes + todos         │
+-│                           ▼                                 │
+-│   merge into main memory, request auth if needed            │
+-│        │                                                    │
+-│        ▼                                                    │
+-│   ┌─────────────────────────────────────────────────────┐   │
+-│   │  SUBTASK profile=code          {{{ fold             │   │
+-│   │  seeded with plan notes                             │   │
+-│   │  implement → verify → complete()                    │   │
+-│   └───────────────────────┬─────────────────────────────┘   │
+-│                           │ report + notes + todos          │
+-│                           ▼                                 │
+-│   verify lightly → answer user                              │
+-└─────────────────────────────────────────────────────────────┘
++┌──────────────────────────────────────────────────────────────┐
++│  MAIN (long-lived)                                           │
++│  tools: read, shell, send_image, edit, write, notes, todos,  │
++│         subtask                                              │
++│  Live Context: notes + todos → injected into system each turn│
++│                                                              │
++│   user request → plan (explore / subtask) → auth if needed   │
++│        │                                                     │
++│        ▼                                                     │
++│   ┌──────────────────────────────────────────────────────┐   │
++│   │  SUBTASK {{{ fold                                    │   │
++│   │  goal + tools + optional system_prompt / notes seed  │   │
++│   │  own history + private notes/todos                    │   │
++│   │  … work … → final text reply                         │   │
++│   └──────────────────────┬───────────────────────────────┘   │
++│                          │ summary + child notes + todos     │
++│                          ▼                                   │
++│   merge memory, verify, next step or answer user             │
++└──────────────────────────────────────────────────────────────┘
+ ```
+ 
+ **Rules of the harness:**
+ 
+ 1. Each frame (main or subtask) has its own history and notes/todos.
+ 2. Notes/todos are **request-time only** — merged into the single system message
+-   when calling the API; never written into message history.
+-3. `subtask` opens a chat fold; `complete` closes it and returns
+-   `status`, `summary`, child notes, and child todos to the parent.
+-4. Max depth is 2 (main + one subtask). Plan and code run sequentially, not nested.
++   as **Live Context**; never written into message history.
++3. `subtask` opens a chat fold (`{{{ SUBTASK …`); when the child finishes with a
++   normal final reply (no more tool calls), the fold closes (`}}}`) and the
++   parent receives summary + child notes/todos.
++4. Max depth is 2 (main + one subtask). Children cannot spawn subtasks.
++5. Main can implement directly or delegate via subtask; the prompt prefers
++   plan → authorize → implement for non-trivial work.
++
++### Subtask tool parameters
++
++| Field | Required | Description |
++|---|---|---|
++| `goal` | yes | Full charter for the child (it cannot see parent chat) |
++| `tools` | yes | Tool names granted to the child (minimal set) |
++| `system_prompt` | no | Override default focused-agent prompt (persona/constraints) |
++| `notes` | no | Seed the child’s notepad (e.g. accepted plan) |
++| `todos` | no | Seed the child’s todo list |
++
++Examples:
++
++```json
++{
++  "goal": "Explore auth and produce a file-by-file fix plan.",
++  "tools": ["read", "shell", "send_image", "todos", "notes"]
++}
++```
++
++```json
++{
++  "goal": "Implement the plan in notes. Minimal diffs.",
++  "tools": ["read", "shell", "edit", "write", "todos", "notes"],
++  "system_prompt": "You are a careful implementer. Do not freestyle architecture.",
++  "notes": "Plan:\n- foo.lua: …"
++}
++```
+ 
+ ## Providers
+ 
+@@ -89,7 +114,7 @@
+ 
+ ### Requirements
+ 
+-- Neovim 0.10+
++- Neovim 0.10+ (`vim.uv`)
+ - curl (for API calls)
+ - An API key for your chosen provider
+ 
+@@ -124,6 +149,9 @@ Plug "blmayer/tai"
+ 
+ #### Native / Manual Installation
+ 
++Place or symlink the plugin (include `lua/` and `plugin/` if you want `:Tai`
++commands). Example keymaps:
++
+ ```lua
+ local tai = require("tai")
+ tai.setup({})
+@@ -135,6 +163,9 @@ vim.keymap.set("n", "&lt;leader&gt;ts", tai.stop, { noremap = true })
+ vim.keymap.set("n", "&lt;C-W&gt;&lt;C-T&gt;", tai.toggle_chat_window, { noremap = true })
+ ```
+ 
++Tai only fully activates when a **`.tai`** file is found walking up from the
++current working directory.
++
+ ## Project Configuration
+ 
+ tai reads configuration from a `.tai` JSON file in your project root:
+@@ -153,6 +184,7 @@ tai reads configuration from a `.tai` JSON file in your project root:
+ | `system_prompt` | string | — | Override the default main system prompt |
+ | `custom_prompt` | string | — | Extra instructions appended to the main prompt |
+ | `allowed_commands` | object | *(defaults)* | Map of allowed shell commands |
++| `auto_approve` | boolean | `false` | Auto-approve shell commands outside the allowlist |
+ 
+ Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`,
+ `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`,
+@@ -182,23 +214,36 @@ Example `.tai` file:
+ 
+ ## Agent Tools
+ 
+-| Tool | Who | Description |
+-|---|---|---|
+-| `read` | main, plan, code | Read file contents (optional line range) |
+-| `shell` | main, plan, code | Run shell commands in the project root |
+-| `send_image` | main, plan, code | Send images for visual analysis |
+-| `edit` | code | Search-and-replace edit (`multi` flag supported) |
+-| `write` | code | Create new files |
+-| `subtask` | main | Spawn plan or code child (own history + memory) |
+-| `complete` | plan, code | Finish subtask; return summary + notes + todos |
+-| `todos` | all | Add/update todos (list is auto-injected) |
+-| `notes` | all | Write/append notes (content is auto-injected) |
++| Tool | Description |
++|---|---|
++| `read` | Read file contents (optional line range) |
++| `shell` | Run shell commands in the project root |
++| `send_image` | Send images for visual analysis |
++| `edit` | Search-and-replace edit (`multi` flag supported) |
++| `write` | Create new files |
++| `subtask` | Spawn a child agent (`goal`, `tools`, optional `system_prompt` / seeds) |
++| `todos` | Add/update todos (auto-injected as Live Context; no list action) |
++| `notes` | Write/append notes (auto-injected as Live Context; no read action) |
++
++Main agent gets all of the above. Subtasks get only the tools listed in `tools`
++(never `subtask` itself).
++
++## Commands
++
++If `plugin/tai.lua` is on the runtimepath:
++
++| Command | Action |
++|---|---|
++| `:Tai chat` | Open chat and focus input |
++| `:Tai toggle` | Toggle chat window |
++| `:Tai reload` | Reload `.tai` config |
++| `:Tai clear` | Clear history and session |
+ 
+ ## Running Tests
+ 
+ ```sh
+-nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_edit.lua" -c "qa!"
+-nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_persist.lua" -c "qa!"
++nvim --headless -u NONE -c "set rtp+=." -c "luafile lua/tai/tests/edit_test.lua" -c "qa!"
++nvim --headless -u NONE -c "set rtp+=." -c "luafile lua/tai/tests/subtask_test.lua" -c "qa!"
+ ```
+ 
+ ## Screenshots
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index bb4487d..7a3e55d 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -8,104 +8,146 @@ end
+ 
+ M.MAX_DEPTH = 2
+ 
+-local root = config.root
+-local now = os.date("%Y-%m-%d %H:%M:%S %Z")
+-
+-local tool_basics = [[
+-## Tools
+-- Prefer `read` over `cat`. Use relative paths. Shell starts at project root (no `cd`).
+-- Be careful with destructive git commands.
+-- Working memory (notes/todos) is injected every turn — update only via `notes`/`todos` tools.
+-- Keep notes structured: Goal / Approach / Plan / Findings.
++local tool_usage = [[
++## Tool Usage
++
++You can use tools to help on your task.
++
++- Don't use `cat` for just reading files — use the `read` tool. Binary files
++  are not supported; for images use `send_image`.
++- Avoid repeating tool calls (e.g. reading the same file again is useless).
++- Do NOT guess file paths — verify they exist before reading or editing.
++- The shell tool starts at the project root. ALWAYS use relative paths.
++- Be EXTREMELY careful with destructive git commands (e.g. `git restore`).
++
++### Progress Tracking (todos &amp; notes)
++
++Use `todos` and `notes` to stay organized. They are private to this agent and
++their content is auto-injected every turn as Live Context (not stored in chat
++history), so you always see current state without re-reading them.
++
++1. **At the start**: `todos` add steps; `notes` write the overall goal/context.
++2. **Before a step**: mark it `in_progress` (only one at a time).
++3. **After a step**: mark it `done` immediately.
++4. **After a discovery**: `notes` append (paths, decisions, errors).
++5. **New work found**: `todos` add items rather than forgetting them.
++
++### Subtasks
++
++`subtask` delegates focused work with a clean history:
++
++- The child cannot see your conversation — put all needed context in `goal`.
++- Optionally seed the child with `notes` / `todos`.
++- Optionally set `system_prompt` for a persona or constraints.
++- Choose tools explicitly (minimal set):
++  - Read-only: ["read", "shell", "send_image", "todos", "notes"]
++  - Implementation: ["read", "shell", "send_image", "edit", "write", "todos", "notes"]
++- The child's final text reply is returned as the tool result, plus its notes/todos.
++- Subtasks cannot spawn further subtasks.
+ ]]
+ 
+-M.profiles = {
+-	main = {
+-		label = "MAIN",
+-		tools = { "read", "shell", "send_image", "subtask", "todos", "notes" },
+-		prompt = [[
+-You are Tai, a coding agent for: ]] .. root .. [[
+-
+-Time: ]] .. now .. [[
+-
+-You coordinate work. You cannot edit files — use `subtask` for planning and implementation.
+-
+-]] .. tool_basics .. [[
+-
+-## Workflow
+-- Simple questions: answer directly (explore with read/shell if needed).
+-- Multi-step coding:
+-  1. `subtask` profile=plan — explore, put a file-oriented plan in notes, `complete`.
+-  2. Merge the returned notes/todos into yours. Request user authorization if needed.
+-  3. `subtask` profile=code with notes=the plan — implement, `complete`.
+-  4. Verify, then summarize for the user (files changed, how verified).
+-- Seed subtasks with `notes` and `todos`. After each `complete`, update your memory, then next step.
+-- Never send empty replies; say what you are doing.
+-]],
+-	},
+-	plan = {
+-		label = "PLAN",
+-		tools = { "read", "shell", "send_image", "todos", "notes", "complete" },
+-		prompt = [[
+-You are a planning agent (read-only) for: ]] .. root .. [[
+-
+-Time: ]] .. now .. [[
+-
+-Explore the codebase and produce a solid plan in notes. No file writes.
+-
+-]] .. tool_basics .. [[
+-
+-## Workflow
+-1. Explore until you understand the problem.
+-2. Write notes: Goal, Approach, Plan (file-by-file: paths, functions, line ranges, what to change).
+-3. Track steps with todos.
+-4. Call `complete` with a short summary. Your notes/todos are returned to the parent.
+-]],
+-	},
+-	code = {
+-		label = "CODE",
+-		tools = { "read", "shell", "send_image", "edit", "write", "todos", "notes", "complete" },
+-		prompt = [[
+-You are a coding agent for: ]] .. root .. [[
+-
+-Time: ]] .. now .. [[
+-
+-Implement the plan in your notes. Minimal, precise changes.
+-
+-]] .. tool_basics .. [[
+-
+-## Workflow
+-1. Follow the plan in notes; use todos for progress.
+-2. Prefer line ranges when reading. Match existing style.
+-3. Use `edit`/`write` for changes. Verify (read, build, tests).
+-4. If the plan is wrong, `complete` with status=blocked — do not freestyle architecture.
+-5. Always finish with `complete` (summary of files changed and verification).
+-]],
+-	},
+-}
++M.system_prompt = [[
++You are a software engineering agent. You have access to the project's
++codebase in the current folder: ]] .. config.root .. [[
+ 
+--- Optional overrides from .tai
+-local main = M.profiles.main
+-if config.system_prompt and config.system_prompt ~= "" then
+-	main.prompt = config.system_prompt
+-end
++## Guidelines
++
++- For general questions answer right away.
++- For questions about the current project: explore the project for the answer.
++- NEVER send empty messages — say what you are doing so the user knows what to expect.
++- NEVER add time estimates to your responses.
++
++### Think first, then act (Planning)
++
++Before implementing anything non-trivial, you MUST plan:
++
++1. **Understand**: Scrutinize the request. If you need to explore the codebase,
++   read files, or run shell commands, spawn a sub agent with the `subtask` tool
++   and provide a clear goal.
++   - Do NOT perform exploration yourself unless explicitly required.
++   - Read AGENTS.md if it exists.
++2. **Plan with subtasks**: For each todo item you create, spawn a focused
++   subtask to handle it systematically. This keeps work isolated and
++   maintainable.
++3. **Iterate**: after each step update your `notes` and `todos`.
++4. **Request authorization**: present the plan and wait for approval before
++   large implementations.
++5. **Implement**: spawn implementation subtasks with the relevant plan slice
++   and full context in `goal` / `notes`.
++6. **Verify**: use a subtask to QA/verify changes: read changes, run
++   builds/tests when applicable; go back to 2 if not done.
++7. **Summarize**: files changed, how verified, how it solves the request.
++
++]] .. tool_usage
++
++M.subtask_system_prompt = [[
++You are a focused agent working on a specific subtask. You have access to the
++project's codebase in the current folder: ]] .. config.root .. [[
++
++Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
++
++## Guidelines
++
++- Focus exclusively on the goal in the user message.
++- Work systematically: explore → understand → act → verify.
++- When done, respond with a clear report of what you found or accomplished.
++  That report is returned to the calling agent (plus your notes/todos).
++- Do NOT ask questions — you cannot talk to the user. Decide and document.
++- Respect existing code style (tabs/spaces, indentation).
++- If you have write tools, verify changes by reading them back.
++- If blocked, report what you tried and what failed.
++
++]] .. tool_usage
++
++M.system_prompt = config.system_prompt or config.planner_system_prompt or M.system_prompt
+ if config.custom_prompt and config.custom_prompt ~= "" then
+-	main.prompt = main.prompt .. "\n" .. config.custom_prompt
++	M.system_prompt = M.system_prompt .. "\n" .. config.custom_prompt
++end
++
++M.main_tools = {
++	"read", "shell", "send_image", "edit", "write", "todos", "notes", "subtask",
++}
++
++-- Allowed tools a parent may grant a subtask (never subtask itself).
++M.subtask_tool_allowlist = {
++	read = true,
++	shell = true,
++	send_image = true,
++	edit = true,
++	write = true,
++	todos = true,
++	notes = true,
++}
++
++function M.sanitize_subtask_tools(tools)
++	local out = {}
++	for _, name in ipairs(tools or {}) do
++		if M.subtask_tool_allowlist[name] then
++			table.insert(out, name)
++		end
++	end
++	return out
+ end
+ 
+ --- Build a new agent frame.
+---- @param opts table { profile?, system_prompt?, tools?, notes?, todos?, goal?, depth?, parent_call_id? }
++--- opts: profile ("main"|"subtask"), system_prompt?, tools?, notes?, todos?, goal?, depth?, parent_call_id?
+ function M.new_frame(opts)
+ 	opts = opts or {}
+-	local name = opts.profile or "main"
+-	local prof = M.profiles[name]
+-	if not prof then
+-		prof = M.profiles.code
+-		name = "code"
++	local is_sub = opts.profile == "subtask" or opts.role == "subtask"
++
++	local system = opts.system_prompt
++		or (is_sub and M.subtask_system_prompt or M.system_prompt)
++
++	local tool_list
++	if is_sub then
++		tool_list = M.sanitize_subtask_tools(opts.tools)
++		if #tool_list == 0 then
++			tool_list = { "read", "shell", "send_image", "todos", "notes" }
++		end
++	else
++		tool_list = opts.tools or M.main_tools
+ 	end
+ 
+-	local system = opts.system_prompt or prof.prompt
+-	local tool_list = opts.tools or prof.tools
+ 	local todos = {}
+ 	local next_id = 1
+ 	if type(opts.todos) == "table" then
+@@ -130,8 +172,8 @@ function M.new_frame(opts)
+ 	end
+ 
+ 	local frame = {
+-		role = name,
+-		label = prof.label or name:upper(),
++		role = is_sub and "subtask" or "main",
++		label = is_sub and "SUBTASK" or "MAIN",
+ 		system_prompt = system,
+ 		tools = tool_list,
+ 		history = { { role = "system", content = system } },
+diff --git a/lua/tai/library.lua b/lua/tai/library.lua
+index 758e8cc..71d4196 100644
+--- a/lua/tai/library.lua
++++ b/lua/tai/library.lua
+@@ -1,160 +1,11 @@
+ -- library.lua: Library management for Tai
+ 
++-- DEPRECATED: This entire module is deprecated and unused.
++-- The library feature was never fully implemented and the client module
++-- (tai.agents.client) does not exist in the codebase.
++
+ local M = {
+ 	cache = {},
+ }
+ 
+--- Import necessary modules
+-local log = require('tai.log')
+-local client = require('tai.agents.client')
+-local config = require('tai.config')
+-
+--- Function to parse ISO 8601 date string to Unix timestamp
+-local function parse_iso_date(iso_date)
+-	local pattern = "(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+).(%d+)Z"
+-	local year, month, day, hour, min, sec, msec = iso_date:match(pattern)
+-	local timestamp = os.time({ year = year, month = month, day = day, hour = hour, min = min, sec = sec })
+-	return timestamp
+-end
+-
+--- Function to list existing libraries in Mistral
+-function M.list(callback)
+-	client.request("GET", 'libraries', {}, function(response, err)
+-		if err then
+-			log.error("Failed to list libraries: " .. err)
+-			callback(nil, err)
+-		else
+-			local existing_libraries = {}
+-			for _, library in ipairs(response.data) do
+-				existing_libraries[library.name] = library.id
+-			end
+-			callback(existing_libraries)
+-		end
+-	end)
+-end
+-
+--- Function to list existing file in library
+-function M.files(callback)
+-	log.debug("getting files")
+-	client.request("GET", 'libraries/' .. M.id .. "/documents", {}, function(response, err)
+-		if err then
+-			log.error("Failed to list files: " .. err)
+-			callback(nil, err)
+-		else
+-			callback(response.data)
+-		end
+-	end)
+-end
+-
+--- Function to setup a library using the Mistral library API
+-function M.setup(callback)
+-	log.info("Checking for library " .. config.root)
+-	M.list(function(existing_libraries, err)
+-		if err then
+-			log.error("Failed to list libraries: " .. err)
+-			callback(nil, err)
+-			return
+-		end
+-
+-		local library_name = config.root
+-		if existing_libraries[library_name] then
+-			log.info("Library " ..
+-			library_name .. " already exists with ID: " .. existing_libraries[library_name])
+-			M.id = existing_libraries[library_name]
+-			callback(M.id)
+-		else
+-			client.request("POST", 'libraries', { name = library_name }, function(response, err)
+-				if err then
+-					log.error("Failed to setup library: " .. err)
+-					callback(nil, err)
+-				else
+-					log.info("Library setup with ID: " .. response.id)
+-					M.id = response.id
+-					callback(response.id)
+-				end
+-			end)
+-		end
+-	end)
+-end
+-
+--- Function to upload a file to the library
+-function M.upload_file(filepath, callback)
+-	local file_stat = vim.uv.fs_stat(filepath)
+-
+-	client.upload(
+-		"POST",
+-		'libraries/' .. M.id .. '/documents',
+-		filepath,
+-		function(response, err)
+-			if err then
+-				log.error("Failed to upload file: " .. filepath .. " - " .. err)
+-				callback(nil, err)
+-			else
+-				if not response or not response.id then
+-					callback(nil, "Failed to upload file: empty response")
+-					return
+-				end
+-
+-				log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
+-				M.cache[filepath] = {
+-					id = response.id,
+-					hash = response.hash,
+-					creation_time = file_stat.mtime
+-					    .sec
+-				}
+-				callback(response.id)
+-			end
+-		end
+-	)
+-end
+-
+-function M.sync(files)
+-	M.files(function(libs, err)
+-		if err then
+-			log.error("Failed to sync files: " .. err)
+-			return
+-		end
+-		log.debug("Got list of files in library: " ..
+-			table.concat(vim.tbl_map(function(item) return item.name end, libs), ", "))
+-
+-		for i, filepath in ipairs(files) do
+-			if vim.fn.isdirectory(filepath) == 1 then
+-				goto next
+-			end
+-
+-			local file_stat = vim.uv.fs_stat(filepath)
+-			for _, lib in ipairs(libs) do
+-				if lib.name == filepath then
+-					local updated_at = parse_iso_date(lib.updated_at or lib.created_at)
+-					if file_stat.mtime.sec &lt;= updated_at then
+-						log.debug(filepath .. " is up to date, skipping.")
+-						M.cache[filepath] = {
+-							id = lib.id,
+-							hash = lib.hash,
+-							creation_time = lib.created_at
+-							    .sec
+-						}
+-						goto next
+-					end
+-					break
+-				end
+-			end
+-
+-			log.debug("Scheduling upload of " .. filepath .. " with delay of " .. i * 8)
+-			vim.defer_fn(function()
+-				log.info("Uploading " .. filepath)
+-				M.upload_file(filepath, function(_, err)
+-					if err then
+-						log.error("Failed to upload: " .. filepath .. " - " .. err)
+-					end
+-				end)
+-			end, i * 8000)
+-
+-			::next::
+-		end
+-
+-		--TODO: delete files
+-	end)
+-end
+-
+ return M
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index a91f6f0..20fe0f7 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -208,20 +208,6 @@ function M.extract_fields(message)
+ 	return fields, nil
+ end
+ 
+--- Decode tool call arguments if they are JSON strings
+-function M.decode_tool_call_arguments(calls)
+-	if not calls then return end
+-	for _, call in ipairs(calls) do
+-		local args = call["function"].arguments
+-		if type(args) == "string" then
+-			local decoded = vim.json.decode(args)
+-			if decoded then
+-				call["function"].arguments = decoded
+-			end
+-		end
+-	end
+-end
+-
+ -- Streaming HTTP client using vim.uv process
+ -- Reads curl output line-by-line for true streaming support
+ function M.make_streaming_http_call(url, api_key, body_json, on_chunk, on_complete)
+diff --git a/lua/tai/tests/subtask_test.lua b/lua/tai/tests/subtask_test.lua
+new file mode 100644
+index 0000000..7290cd4
+--- /dev/null
++++ b/lua/tai/tests/subtask_test.lua
+@@ -0,0 +1,96 @@
++-- subtask_test.lua
++-- Run: nvim --headless -u NONE --noplugin -c "set rtp+=." -c "luafile lua/tai/tests/subtask_test.lua" -c "qa!"
++
++local passed, failed = 0, 0
++
++local function assert_eq(a, b, msg)
++	if a == b then passed = passed + 1; print("  OK " .. msg)
++	else failed = failed + 1; print("  FAIL " .. msg .. " exp=" .. vim.inspect(a) .. " got=" .. vim.inspect(b)) end
++end
++local function assert_true(v, msg)
++	if v then passed = passed + 1; print("  OK " .. msg)
++	else failed = failed + 1; print("  FAIL " .. msg) end
++end
++local function assert_match(pat, s, msg)
++	if type(s) == "string" and s:find(pat) then passed = passed + 1; print("  OK " .. msg)
++	else failed = failed + 1; print("  FAIL " .. msg) end
++end
++
++package.loaded["tai.config"] = {
++	root = "/tmp/test-project",
++	provider = "mock",
++	model = "test",
++	use_tools = true,
++	stream = false,
++	rpm = 60,
++	context = { enabled = false },
++	get_allowed_commands = function() return { ls = true } end,
++}
++package.loaded["tai.log"] = {
++	debug = function() end, info = function() end,
++	warning = function() end, error = function() end, set_level = function() end, DEBUG = 0,
++}
++
++-- force reload
++package.loaded["tai.tools.subtask"] = nil
++package.loaded["tai.tools"] = nil
++package.loaded["tai.agent"] = nil
++
++local tools = require("tai.tools")
++local agent = require("tai.agent")
++local mem = require("tai.tools.subtask")
++
++print("\n=== subtask tool schema ===")
++assert_true(tools.defs.subtask ~= nil, "subtask exists")
++assert_true(tools.defs.complete == nil, "complete tool removed")
++assert_true(tools.defs.coder == nil, "coder removed")
++assert_true(tools.defs.planner == nil, "planner removed")
++local p = tools.defs.subtask["function"].parameters
++assert_true(vim.tbl_contains(p.required, "goal"), "goal required")
++assert_true(vim.tbl_contains(p.required, "tools"), "tools required")
++assert_true(p.properties.system_prompt ~= nil, "system_prompt optional field")
++assert_true(p.properties.notes ~= nil, "notes optional field")
++
++print("\n=== agent frames ===")
++local main = agent.new_frame({ profile = "main" })
++assert_eq("MAIN", main.label, "main label")
++assert_true(vim.tbl_contains(main.tools, "subtask"), "main has subtask")
++assert_true(vim.tbl_contains(main.tools, "edit"), "main has edit")
++
++local child = agent.new_frame({
++	profile = "subtask",
++	system_prompt = "You are a reviewer only.",
++	tools = { "read", "shell", "subtask", "edit" }, -- subtask should be stripped
++	goal = "Review foo",
++	notes = "seed note",
++})
++assert_eq("SUBTASK", child.label, "subtask label")
++assert_eq("You are a reviewer only.", child.system_prompt, "custom system_prompt")
++assert_eq("seed note", child.notes, "seed notes")
++assert_true(not vim.tbl_contains(child.tools, "subtask"), "no nested subtask tool")
++assert_true(vim.tbl_contains(child.tools, "edit"), "edit allowed")
++assert_eq("Review foo", child.history[2].content, "goal as user message")
++
++print("\n=== live context injection ===")
++local empty = mem.render_memory({ notes = "", todos = {} })
++assert_eq("", empty, "empty memory is empty string")
++
++local frame = { notes = "plan: fix x", todos = { { id = 1, text = "a", status = "pending" } } }
++local live = mem.render_memory(frame)
++assert_match("Live Context", live, "has Live Context banner")
++assert_match("plan: fix x", live, "has notes")
++assert_match("#1 %[pending%] a", live, "has todos")
++
++local payload = mem.format_complete("ok", "done", frame)
++assert_match("summary: done", payload, "format_complete summary")
++assert_match("plan: fix x", payload, "format_complete notes")
++
++print("\n=== notes/todos mutate ===")
++local f = { notes = "", todos = {}, todos_next_id = 1 }
++assert_match("updated", mem.run_notes({ action = "write", content = "hi" }, f), "write notes")
++assert_eq("hi", f.notes, "notes stored")
++assert_match("Added", mem.run_todos({ action = "add", text = "t1" }, f), "add todo")
++assert_eq(1, #f.todos, "one todo")
++
++print(string.format("\n%d passed, %d failed", passed, failed))
++if failed &gt; 0 then os.exit(1) end
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 18d1f2e..2c2987e 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -56,15 +56,15 @@ M.defs = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "shell",
+-			description =
+-			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;), and chaining (;) are allowed. Redirects (&gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc.) are NOT allowed. Returns the stdout and stderr of the command.",
++		description =
++			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;), and chaining (;) are allowed. Redirects (&gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc.) are NOT allowed. Returns the stdout and stderr of the command. The shell runs in the project's root directory.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc. 2&gt;&amp;1 is added to the end of the command."
++						"The pipeline to be interpreted by the shell in the project's folder. All paths are relative to the project's folder. Avoid redirections like &gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc. 2&gt;&amp;1 is added to the end of the command."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -77,26 +77,39 @@ M.defs = {
+ 		["function"] = {
+ 			name = "subtask",
+ 			description =
+-			"Run a child agent with its own history and notes/todos. Profiles: plan (read-only planning), code (implement). Optional initial notes/todos seed the child. Returns when the child calls complete (summary + its notes/todos).",
++			"Spawn a focused subtask with its own history so the main chat stays clean. "
++				.. "When it finishes (final text reply), only that summary plus its notes/todos "
++				.. "return as the tool result. Provide goal, tools, and optionally system_prompt, "
++				.. "notes, and todos to seed the child.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					goal = {
+ 						type = "string",
+-						description = "Short task charter for the child agent.",
++						description =
++						"What the subtask must accomplish. Include all context it needs "
++							.. "(paths, lines, constraints). It cannot see prior conversation.",
++					},
++					tools = {
++						type = "array",
++						items = { type = "string" },
++						description =
++						"Tools for the child. Read-only: [\"read\",\"shell\",\"send_image\",\"todos\",\"notes\"]. "
++							.. "Read-write: add \"edit\",\"write\". Minimal set preferred.",
+ 					},
+-					profile = {
++					system_prompt = {
+ 						type = "string",
+-						description = "Agent profile: plan or code.",
+-						enum = { "plan", "code" },
++						description =
++						"Optional system prompt override (persona/constraints). "
++							.. "Defaults to the focused subtask agent prompt.",
+ 					},
+ 					notes = {
+ 						type = "string",
+-						description = "Initial notes for the child (e.g. plan snapshot).",
++						description = "Optional initial notes for the child (e.g. plan snapshot).",
+ 					},
+ 					todos = {
+ 						type = "array",
+-						description = "Initial todo items (strings or {text, status}).",
++						description = "Optional initial todos (strings or {text, status}).",
+ 						items = {
+ 							type = "object",
+ 							properties = {
+@@ -110,31 +123,7 @@ M.defs = {
+ 					},
+ 				},
+ 				additionalProperties = false,
+-				required = { "goal", "profile" },
+-			},
+-		},
+-	},
+-	complete = {
+-		type = "function",
+-		["function"] = {
+-			name = "complete",
+-			description =
+-			"Finish a subtask and return control to the parent. Pass a short summary; notes and todos are attached automatically.",
+-			parameters = {
+-				type = "object",
+-				properties = {
+-					summary = {
+-						type = "string",
+-						description = "What the parent needs to know (outcome, files, blockers).",
+-					},
+-					status = {
+-						type = "string",
+-						description = "Outcome status.",
+-						enum = { "ok", "blocked", "partial" },
+-					},
+-				},
+-				additionalProperties = false,
+-				required = { "summary" },
++				required = { "goal", "tools" },
+ 			},
+ 		},
+ 	},
+diff --git a/lua/tai/tools/subtask.lua b/lua/tai/tools/subtask.lua
+index cda9381..1ddd216 100644
+--- a/lua/tai/tools/subtask.lua
++++ b/lua/tai/tools/subtask.lua
+@@ -1,6 +1,6 @@
+ local M = {}
++local log = require("tai.log")
+ 
+--- Export helper functions
+ function M.format_todos(todos)
+ 	if not todos or #todos == 0 then
+ 		return "(none)"
+@@ -16,7 +16,7 @@ end
+ function M.format_notes(notes, max_chars)
+ 	notes = notes or ""
+ 	if notes == "" then
+-		return "(empty)"
++		return ""
+ 	end
+ 	max_chars = max_chars or 6000
+ 	if #notes &lt;= max_chars then
+@@ -28,25 +28,33 @@ function M.format_notes(notes, max_chars)
+ 		.. notes:sub(#notes - half + 1)
+ end
+ 
+---- Working memory block appended to the system prompt each request (not stored in history).
++--- Live context injected into the system prompt each request (never stored in history).
++--- Returns "" when empty so callers can skip injection.
+ function M.render_memory(frame)
+-	return table.concat({
+-		"## Working memory (auto-injected; mutate via notes/todos tools)",
+-		"### Todos",
+-		M.format_todos(frame.todos),
+-		"### Notes",
+-		M.format_notes(frame.notes),
+-	}, "\n")
++	local parts = {}
++	if frame.todos and #frame.todos &gt; 0 then
++		table.insert(parts, "## Current Todos\n" .. M.format_todos(frame.todos))
++	end
++	local notes = M.format_notes(frame.notes)
++	if notes ~= "" then
++		table.insert(parts, "## Notes\n" .. notes)
++	end
++	if #parts == 0 then
++		return ""
++	end
++	return "--- Live Context (updated every turn, not part of history) ---\n"
++		.. table.concat(parts, "\n\n")
++		.. "\n--- End Live Context ---"
+ end
+ 
+---- Payload returned to parent on subtask complete.
++--- Payload returned to parent when a subtask finishes (final text + child memory).
+ function M.format_complete(status, summary, frame)
+ 	return table.concat({
+ 		"status: " .. (status or "ok"),
+-		"summary: " .. (summary or ""),
++		"summary: " .. (summary or "(no output)"),
+ 		"",
+ 		"## Subtask notes",
+-		(frame.notes ~= "" and frame.notes) or "(empty)",
++		(frame.notes and frame.notes ~= "" and frame.notes) or "(empty)",
+ 		"",
+ 		"## Subtask todos",
+ 		M.format_todos(frame.todos),
+diff --git a/lua/tai/ui/core.lua b/lua/tai/ui/core.lua
+index 9e7e39f..263d756 100644
+--- a/lua/tai/ui/core.lua
++++ b/lua/tai/ui/core.lua
+@@ -36,7 +36,13 @@ end
+ local function prepare_messages(frame)
+ 	local msgs = vim.deepcopy(frame.history)
+ 	if msgs[1] and msgs[1].role == "system" then
+-		msgs[1].content = frame.system_prompt .. "\n\n" .. tools_subtask.render_memory(frame)
++		local live = tools_subtask.render_memory(frame)
++		if live ~= "" then
++			-- Single system message (providers that allow only one); never stored in history.
++			msgs[1].content = frame.system_prompt .. "\n\n" .. live
++		else
++			msgs[1].content = frame.system_prompt
++		end
+ 	end
+ 	return msgs
+ end
+@@ -450,7 +456,7 @@ local function finish_subtask(status, summary)
+ 	end
+ 	local child = top()
+ 	local result = tools_subtask.format_complete(status, summary, child)
+-	M.append(string.format("\n[complete %s] %s\n}}}\n", status or "ok", summary or ""))
++	M.append(string.format("\n[subtask %s] %s\n}}}\n", status or "ok", summary or ""))
+ 	refresh_and_close_folds()
+ 	table.remove(stack)
+ 	local parent = top()
+@@ -576,51 +582,51 @@ local function run_tools(tool_calls, frame, start_index, on_done)
+ 			if not args.goal or args.goal == "" then
+ 				M.append("{{{ Subtask failed: no goal.\n}}}\n")
+ 				res.content = "missing goal"
++			elseif type(args.tools) ~= "table" or #args.tools == 0 then
++				M.append("{{{ Subtask failed: tools list required.\n}}}\n")
++				res.content = "missing tools list"
+ 			elseif #stack &gt;= (agent.MAX_DEPTH or 2) then
+ 				M.append("{{{ Subtask failed: max depth.\n}}}\n")
+ 				res.content = "max subtask depth reached"
+ 			else
+-				local profile = args.profile or "code"
+-				if profile ~= "plan" and profile ~= "code" then
+-					profile = "code"
++				local child_tools = agent.sanitize_subtask_tools(args.tools)
++				if #child_tools == 0 then
++					M.append("{{{ Subtask failed: no valid tools after sanitize.\n}}}\n")
++					res.content = "no valid tools"
++				else
++					local label = args.system_prompt and "custom" or "default"
++					M.append("{{{ SUBTASK (" .. label .. ")\nGoal: " .. args.goal
++						.. "\nTools: " .. table.concat(child_tools, ", ") .. "\n")
++					local child = agent.new_frame({
++						profile = "subtask",
++						system_prompt = args.system_prompt,
++						tools = child_tools,
++						goal = args.goal,
++						notes = args.notes or "",
++						todos = args.todos,
++						depth = #stack,
++						parent_call_id = call.id,
++					})
++					table.insert(stack, child)
++					stop = true
++					M.update_chat_name()
++					update_input_name()
++					maybe_auto_save()
++					M.continue()
++					on_done(true)
++					return
+ 				end
+-				M.append("{{{ SUBTASK " .. profile .. "\nGoal: " .. args.goal .. "\n")
+-				local child = agent.new_frame({
+-					profile = profile,
+-					goal = args.goal,
+-					notes = args.notes or "",
+-					todos = args.todos,
+-					depth = #stack,
+-					parent_call_id = call.id,
+-				})
+-				table.insert(stack, child)
+-				stop = true
+-				M.update_chat_name()
+-				update_input_name()
+-				maybe_auto_save()
+-				M.continue()
+-				on_done(true)
+-				return
+-			end
+-		elseif name == "complete" then
+-			if #stack &lt;= 1 then
+-				M.append("{{{ complete only valid inside a subtask\n}}}\n")
+-				res.content = "complete only valid inside a subtask"
+-			else
+-				res.content = "handed back to parent"
+-				table.insert(history, res)
+-				finish_subtask(args.status or "ok", args.summary or "")
+-				on_done(true)
+-				return
+ 			end
+ 		elseif name == "todos" then
+ 			local out = tools_subtask.run_todos(args, frame)
+ 			res.content = out
+-			M.append("{{{ Todos (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
++			local todos_content = tools_subtask.format_todos(frame.todos)
++			M.append("{{{ Todos (" .. (args.action or "?") .. ")\nAction result: " .. out .. "\n\nCurrent todos:\n" .. todos_content .. "\n}}}\n")
+ 		elseif name == "notes" then
+ 			local out = tools_subtask.run_notes(args, frame)
+ 			res.content = out
+-			M.append("{{{ Notes (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
++			local notes_content = frame.notes ~= "" and frame.notes or "(empty)"
++			M.append("{{{ Notes (" .. (args.action or "?") .. ")\nAction result: " .. out .. "\n\nNotes content:\n" .. notes_content .. "\n}}}\n")
+ 		elseif name == "send_image" then
+ 			if not args.file then
+ 				M.append("{{{ Adding image failed: no file field.\n}}}")
+@@ -826,9 +832,9 @@ function M.continue()
+ 	update_input_name()
+ 
+ 	local function on_idle_no_tools(content)
+-		-- Subtask ended without complete → auto-handback
++		-- Subtask finished: final assistant text (+ notes/todos) returns to parent
+ 		if #stack &gt; 1 then
+-			finish_subtask("partial", content or "(no summary)")
++			finish_subtask("ok", content or "(no output)")
+ 			return
+ 		end
+ 		current_state = "idle"
+diff --git a/lua/tai/ui/tools.lua b/lua/tai/ui/tools.lua
+index 52071a8..e6d07da 100644
+--- a/lua/tai/ui/tools.lua
++++ b/lua/tai/ui/tools.lua
+@@ -104,7 +104,7 @@ function M.finish_subtask(status, summary, M_core, M_session)
+ 	end
+ 	local child = M_session.get_stack()[#M_session.get_stack()]
+ 	local result = tools_module.format_complete(status, summary, child)
+-	M_core.append(string.format("\n[complete %s] %s\n}}}\n", status or "ok", summary or ""))
++	M_core.append(string.format("\n[subtask %s] %s\n}}}\n", status or "ok", summary or ""))
+ 	refresh_and_close_folds(M_core)
+ 	table.remove(M_session.get_stack())
+ 	local parent = M_session.get_stack()[#M_session.get_stack()]
+@@ -224,47 +224,44 @@ local function run_tools(tool_calls, frame, start_index, on_done, M_core, M_sess
+ 				M_core.append("{{{ " .. out .. "\n" .. args.content .. "\n}}}\n")
+ 			end
+ 		elseif name == "subtask" then
++			local agent = require("tai.agent")
+ 			if not args.goal or args.goal == "" then
+ 				M_core.append("{{{ Subtask failed: no goal.\n}}}\n")
+ 				res.content = "missing goal"
+-			elseif #M_session.get_stack() &gt;= (require("tai.agent").MAX_DEPTH or 2) then
++			elseif type(args.tools) ~= "table" or #args.tools == 0 then
++				M_core.append("{{{ Subtask failed: tools list required.\n}}}\n")
++				res.content = "missing tools list"
++			elseif #M_session.get_stack() &gt;= (agent.MAX_DEPTH or 2) then
+ 				M_core.append("{{{ Subtask failed: max depth.\n}}}\n")
+ 				res.content = "max subtask depth reached"
+ 			else
+-				local profile = args.profile or "code"
+-				if profile ~= "plan" and profile ~= "code" then
+-					profile = "code"
++				local child_tools = agent.sanitize_subtask_tools(args.tools)
++				if #child_tools == 0 then
++					M_core.append("{{{ Subtask failed: no valid tools.\n}}}\n")
++					res.content = "no valid tools"
++				else
++					local label = args.system_prompt and "custom" or "default"
++					M_core.append("{{{ SUBTASK (" .. label .. ")\nGoal: " .. args.goal
++						.. "\nTools: " .. table.concat(child_tools, ", ") .. "\n")
++					local child = agent.new_frame({
++						profile = "subtask",
++						system_prompt = args.system_prompt,
++						tools = child_tools,
++						goal = args.goal,
++						notes = args.notes or "",
++						todos = args.todos,
++						depth = #M_session.get_stack(),
++						parent_call_id = call.id,
++					})
++					table.insert(M_session.get_stack(), child)
++					stop = true
++					M_core.update_chat_name()
++					M_core.update_input_name()
++					M_session.maybe_auto_save(M_core)
++					M_core.continue()
++					on_done(true)
++					return
+ 				end
+-				M_core.append("{{{ SUBTASK " .. profile .. "\nGoal: " .. args.goal .. "\n")
+-				local child = require("tai.agent").new_frame({
+-					profile = profile,
+-					goal = args.goal,
+-					notes = args.notes or "",
+-					todos = args.todos,
+-					depth = #M_session.get_stack(),
+-					parent_call_id = call.id,
+-				})
+-				table.insert(M_session.get_stack(), child)
+-				stop = true
+-				-- Tool result delivered later via complete (finish_subtask)
+-				M_core.update_chat_name()
+-				M_core.update_input_name()
+-				M_session.maybe_auto_save(M_core)
+-				M_core.continue()
+-				on_done(true)
+-				return
+-			end
+-		elseif name == "complete" then
+-			if #M_session.get_stack() &lt;= 1 then
+-				M_core.append("{{{ complete only valid inside a subtask\n}}}\n")
+-				res.content = "complete only valid inside a subtask"
+-			else
+-				-- Record complete on child history, then hand back
+-				res.content = "handed back to parent"
+-				table.insert(history, res)
+-				M.finish_subtask(args.status or "ok", args.summary or "", M_core, M_session)
+-				on_done(true)
+-				return
+ 			end
+ 		elseif name == "todos" then
+ 			local out = tools_module.run_todos(args, frame)
+diff --git a/www/index.html b/www/index.html
+index 53b6e0b..a68e6d0 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -18,11 +18,13 @@ AI coding agents directly to your editor.
+ 
+ &lt;b&gt;features&lt;/b&gt;
+ 
+-- subtask harness: main orchestrates plan/code
+-  children with isolated history; only summaries
+-  return to the parent.
+-- working memory: per-agent notes + todos injected
+-  into the system prompt every turn.
++- subtask harness: main agent can implement or
++  spawn children with clean history; only the
++  final report (+ notes/todos) returns.
++- live context: per-agent notes + todos injected
++  into the system prompt every turn (not history).
++- flexible subtasks: goal, tools, optional
++  system_prompt and notes/todos seed.
+ - session persistence: auto-save/restore.
+ - file read/write, shell, image analysis.
+ - rate limiting (rpm/tpm).
+@@ -34,13 +36,22 @@ AI coding agents directly to your editor.
+ 
+ &lt;b&gt;harness&lt;/b&gt;
+ 
+-  MAIN ──subtask(plan)──► PLAN (fold)
+-       ◄── complete ──── notes/todos/summary
++  MAIN (edit/write + subtask)
+     │
+-    ├── merge memory, auth
++    ├── subtask(goal, tools, system_prompt?)
++    │      {{{ fold, own history + notes
++    │      final text reply
++    │   ◄── summary + notes + todos
+     │
+-    └──subtask(code)──► CODE (fold)
+-       ◄── complete ──── report
++    └── verify → answer user
++
++
++&lt;subtask params&gt;
++
++- goal           required charter for the child
++- tools          required tool allowlist
++- system_prompt  optional persona/constraints
++- notes, todos   optional seed memory
+ 
+ 
+ &lt;i&gt;providers&lt;/i&gt;
+@@ -65,11 +76,10 @@ AI coding agents directly to your editor.
+ 
+ - read       read files (with line ranges)
+ - shell      run commands in the project root
+-- edit       search-and-replace (code profile)
+-- write      create new files (code profile)
++- edit       search-and-replace (multi flag)
++- write      create new files
+ - send_image send images for visual analysis
+-- subtask    spawn plan/code child agent
+-- complete   finish subtask, return to parent
++- subtask    spawn child agent (goal + tools)
+ - todos      add/update todos (auto-injected)
+ - notes      write/append notes (auto-injected)
+ 
+@@ -86,7 +96,8 @@ AI coding agents directly to your editor.
+ &lt;b&gt;installation&lt;/b&gt;
+ 
+ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+-&lt;i&gt;~/.config/nvim/lua/&lt;/i&gt; and add keymaps to &lt;i&gt;init.lua&lt;/i&gt;:
++&lt;i&gt;~/.config/nvim/lua/&lt;/i&gt; and add keymaps to &lt;i&gt;init.lua&lt;/i&gt;.
++For :Tai commands, also install &lt;i&gt;plugin/tai.lua&lt;/i&gt;.
+ 
+   local tai = require("tai")
+   tai.setup({})
+@@ -98,7 +109,8 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+   vim.keymap.set("n", "&amp;lt;C-W&amp;gt;&amp;lt;C-T&amp;gt;",
+     tai.toggle_chat_window)
+ 
+-or use lazy.nvim, packer, vim-plug, etc.
++requires Neovim 0.10+, a project &lt;i&gt;.tai&lt;/i&gt; file, and
++an API key. or use lazy.nvim / packer / vim-plug.
+ 
+ 
+ &lt;b&gt;configuring&lt;/b&gt;
+@@ -119,6 +131,7 @@ in your project root:
+   (e.g., ["web_search"] for OpenAI)
+ - &lt;i&gt;system_prompt&lt;/i&gt;: override main system prompt
+ - &lt;i&gt;custom_prompt&lt;/i&gt;: append to main system prompt
++- &lt;i&gt;auto_approve&lt;/i&gt;: auto-approve unsafe shell cmds
+ - &lt;i&gt;allowed_commands&lt;/i&gt;: override allowed shell
+   commands (default: cat, grep, ag, rg, ls, head,
+   tail, wc, diff, sort, uniq, find, file, stat,
+</pre>

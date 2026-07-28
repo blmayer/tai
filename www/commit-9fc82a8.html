@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 9fc82a8</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 9fc82a8
+parent <a href=commit-ec27a7b.html>ec27a7b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-06-20T17:01:38-03:00
+
+    updated docs
+
+<a href=tree-9fc82a8.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index 63ad326..01932a4 100644
+--- a/README.md
++++ b/README.md
+@@ -2,47 +2,57 @@
+ 
+ ![tai.nvim in action](www/screenshot.png)
+ 
+-&gt; This project contains a **simple Neovim plugin** to send text selections or prompts and receive responses, enabling **interactive workflows** from within Neovim.
++&gt; A minimal, dependency-free Neovim plugin that brings AI coding agents directly
++&gt; into your editor. It features a **planner/coder** dual-agent architecture,
++&gt; session persistence, in-memory task tracking, and support for many LLM
++&gt; providers.
+ 
+ &lt;a href="https://dotfyle.com/plugins/blmayer/tai"&gt;
+ 	&lt;img src="https://dotfyle.com/plugins/blmayer/tai/shield?style=flat" /&gt;
+ &lt;/a&gt;
+ 
+-## Providers
+-
+-Tai supports the following providers. Set the corresponding environment variable for your chosen provider:
+-
+-| Provider | Config value | Environment variable |
+-|---|---|---|
+-| Gemini | `gemini` | `GEMINI_API_KEY` |
+-| Groq | `groq` | `GROQ_API_KEY` |
+-| Minimax | `minimax` | `MINIMAX_API_KEY` |
+-| Mistral | `mistral` | `MISTRAL_API_KEY` |
+-| Ollama (local) | `ollama` | — |
+-| llama.cpp (local) | `llama_cpp` | — |
+-| OpenAI | `openai_responses` | `OPENAI_API_KEY` |
+-| OpenRouter | `openrouter` | `OPENROUTER_API_KEY` |
+-| StepFun | `stepfun` | `STEPFUN_API_KEY` |
+-| xAI | `xai` | `XAI_API_KEY` |
+-| Z.AI | `z_ai` | `ZAI_API_KEY` |
+-| Custom | `custom` | — |
+-
+-Local providers (Ollama, llama.cpp) don't need an API key. The custom provider uses the URL from `options.url` in your `.tai` file.
++## Features
+ 
++- **Dual-agent architecture** — a planner agent coordinates work and a coder
++  agent implements changes. Each has independent history and can delegate to the
++  other.
++- **Session persistence** — conversations are automatically saved and restored
++  between Neovim sessions (stored as `.tai-session.json` in your project root).
++- **In-memory task tracking** — agents can use `todos` and `notes` tools to
++  stay organized during long multi-step tasks.
++- **Tool use** — agents can read/write files, run shell commands, edit code,
++  and send images for analysis.
++- **Rate limiting** — configurable requests-per-minute (`rpm`) and
++  tokens-per-minute (`tpm`) limits to stay within API quotas.
++- **Streaming and non-streaming** — supports both modes for all providers.
++- **Code folding** — tool output and thinking blocks are folded in the chat
++  buffer for readability.
++- **Provider-side tools** — pass-through support for provider tools like
++  `web_search` or `web_browser`.
++- **Configurable shell safety** — allowlist of shell commands the agent can run
++  without confirmation.
+ 
+-## Features
++## Providers
+ 
+-- **Side panel UI** — responses display in a split buffer with code folding
+-- **Planner + Coder agents** — an architect agent plans tasks, a coder agent implements them
+-- **Tool use** — agents can read/write files, run shell commands, and send images
+-- **In-memory todos &amp; notes** — agents track progress and record discoveries during long tasks
+-- **Rate limiting** — configurable requests-per-minute (`rpm`) and tokens-per-minute (`tpm`)
+-- **Streaming** — optional streaming responses for real-time output
+-- **Extended thinking** — reasoning/thinking support for compatible models
+-- **Provider tools** — server-side tools like `web_search` (provider-dependent)
+-- **Safety validation** — shell commands go through an allow-list before execution
+-- **Minimal, dependency-free** Lua code for Neovim
++tai supports the following providers out of the box:
+ 
++| Provider | Environment Variable | Notes |
++|---|---|---|
++| Gemini | `GEMINI_API_KEY` | |
++| Groq | `GROQ_API_KEY` | |
++| Minimax | `MINIMAX_API_KEY` | |
++| Mistral | `MISTRAL_API_KEY` | |
++| Ollama | *(none)* | Local, `localhost:11434` |
++| llama.cpp | *(none)* | Local, `localhost:8080` |
++| OpenAI | `OPENAI_API_KEY` | Chat Completions API |
++| OpenAI Responses | `OPENAI_API_KEY` | Responses API |
++| OpenRouter | `OPENROUTER_API_KEY` | |
++| StepFun | `STEPFUN_API_KEY` | |
++| xAI | `XAI_API_KEY` | |
++| Z.AI | `Z_AI_API_KEY` | |
++| Custom | *(via `options.url`)* | Any OpenAI-compatible endpoint |
++
++Set the corresponding environment variable for your chosen provider.
+ 
+ ## Installation
+ 
+@@ -52,7 +62,6 @@ Local providers (Ollama, llama.cpp) don't need an API key. The custom provider u
+ - curl (for API calls)
+ - An API key for your chosen provider
+ 
+-
+ ### Plugin Managers
+ 
+ #### [lazy.nvim](https://github.com/folke/lazy.nvim)
+@@ -61,7 +70,6 @@ Local providers (Ollama, llama.cpp) don't need an API key. The custom provider u
+ return {
+   "blmayer/tai",
+   opts = {},
+-  -- Optional: keybindings
+   keys = {
+     { "&lt;leader&gt;tt", "&lt;cmd&gt;Tai chat&lt;cr&gt;", desc = "Open Tai chat" },
+     { "&lt;leader&gt;tc", "&lt;cmd&gt;Tai reload&lt;cr&gt;", desc = "Reload Tai config" },
+@@ -84,73 +92,59 @@ use("blmayer/tai")
+ Plug "blmayer/tai"
+ ```
+ 
+-#### Native Installation
++#### Native / Manual Installation
+ 
+-For a minimal setup without plugin managers, add to your `init.lua`:
++Clone or place `lua/tai/` into your Neovim config directory and add to `init.lua`:
+ 
+ ```lua
+--- Clone the plugin to your nvim config
+--- git clone https://github.com/blmayer/tai.git ~/.config/nvim/lua/tai
+-
+ local tai = require("tai")
+ tai.setup({})
+ 
+--- Optional: keybindings
++-- Recommended keybindings
+ vim.keymap.set("n", "&lt;leader&gt;tt", tai.chat, { noremap = true })
+ vim.keymap.set("n", "&lt;leader&gt;tc", tai.reload, { noremap = true })
+ vim.keymap.set("n", "&lt;leader&gt;ta", tai.switch_agent, { noremap = true })
+ vim.keymap.set("n", "&lt;leader&gt;tr", tai.clear_history, { noremap = true })
+ vim.keymap.set("n", "&lt;leader&gt;ts", tai.stop, { noremap = true })
+-
+ vim.keymap.set("n", "&lt;C-W&gt;&lt;C-T&gt;", tai.toggle_chat_window, { noremap = true })
+ ```
+ 
+-#### Manual Installation
+-
+-Place the plugin code at:
+-
+-    ~/.config/nvim/lua/tai/
+-
+-and load it in your `init.lua`:
+-
+-    local tai = require("tai")
+-    tai.setup({})
+-
+ ## Project Configuration
+ 
+-Tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
++tai reads configuration from a `.tai` JSON file in your project root:
+ 
+-| Option | Type | Default | Description |
++| Key | Type | Default | Description |
+ |---|---|---|---|
+-| `model` | string | — | Model used for chat completions (e.g., `"grok-4.3"`, `"gemini-2.0-flash"`) |
+-| `provider` | string | — | API provider (see Providers table above) |
+-| `options` | object | `{}` | Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`) |
+-| `provider_tools` | array | `nil` | Provider-side tools (e.g., `["web_search"]`) |
+-| `use_tools` | boolean | `true` | Enable/disable agent tools (read, write, edit, shell, todos, notes) |
+-| `think` | string | `nil` | Enable extended thinking/reasoning (`"low"`, `"medium"`, `"high"`) |
+-| `stream` | boolean | `false` | Enable streaming responses for real-time output |
+-| `rpm` | number | `60` | Rate limit: max requests per minute |
+-| `tpm` | number | `nil` | Rate limit: max tokens per minute |
+-| `system_prompt` | string | `nil` | Custom system prompt (replaces the default agent instructions) |
+-| `custom_prompt` | string | `nil` | Additional prompt appended to the system prompt |
+-| `allowed_commands` | object | (see below) | Override allowed shell commands |
+-| `auto_approve` | boolean | `false` | Automatically approve and run *all* shell commands without the interactive y/n/s confirmation prompt (bypasses `allowed_commands`). Use with caution. |
+-
+-Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
++| `provider` | string | — | Provider name (see table above) |
++| `model` | string | — | Model identifier (e.g. `"gemini-2.0-flash"`) |
++| `options` | object | `{}` | Provider-specific options (`temperature`, `max_tokens`, etc.) |
++| `stream` | boolean | `false` | Enable streaming responses |
++| `use_tools` | boolean | `true` | Enable/disable agent tools |
++| `think` | string | — | Reasoning effort level for supporting models |
++| `rpm` | number | `60` | Max requests per minute |
++| `tpm` | number | — | Max tokens per minute |
++| `provider_tools` | array | — | Provider-side tools (e.g. `["web_search"]`) |
++| `system_prompt` | string | — | Override the default planner system prompt |
++| `custom_prompt` | string | — | Extra instructions appended to the system prompt |
++| `allowed_commands` | object | *(defaults)* | Map of allowed shell commands (`{"git": true, ...}`) |
++
++Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`,
++`wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`,
++`pwd`, `which`, `type`.
+ 
+ Example `.tai` file:
+ 
+ ```json
+ {
+-	"provider": "xai",
+-	"model": "grok-4.3",
++	"provider": "groq",
++	"model": "llama-3.1-70b-versatile",
++	"stream": true,
++	"rpm": 30,
+ 	"options": {
+ 		"temperature": 0.7,
+ 		"max_tokens": 4096
+ 	},
+-	"stream": true,
+ 	"use_tools": true,
+-	"rpm": 30,
+ 	"custom_prompt": "Prefer using rust over python for performance-critical code.",
+ 	"allowed_commands": {
+ 		"git": true,
+@@ -162,23 +156,26 @@ Example `.tai` file:
+ 
+ ## Agent Tools
+ 
+-Tai agents have access to the following tools:
++The agents have access to these tools:
+ 
+ | Tool | Available to | Description |
+ |---|---|---|
+-| `read` | Planner, Coder | Read file contents with optional line range |
+-| `shell` | Planner, Coder | Run shell commands (allow-listed) |
+-| `edit` | Coder | Edit existing files via old/new text replacement |
+-| `write` | Coder | Create new files |
+-| `send_image` | Planner, Coder | Send images for visual analysis |
+-| `coder` | Planner | Delegate implementation tasks to the coder agent (pass prompt); receives immediate "coder is working on the task." ack. Coder uses independent history. |
+-| `planner` | Coder | Hand off at end of task: coder calls planner with detailed report (prompt); receives immediate ack. Planner uses independent history and receives the report as context. |
+-| `todos` | Planner, Coder | In-memory todo list to track multi-step progress |
+-| `notes` | Planner, Coder | In-memory scratchpad for discoveries and context |
+-
+-The **todos** tool supports actions: `add`, `update`, `list`. Items have statuses: `pending`, `in_progress`, `done`, `cancelled`.
+-
+-The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
++| `read` | planner, coder | Read file contents (with optional line range) |
++| `shell` | planner, coder | Run shell commands in the project root |
++| `edit` | coder | Edit files with search-and-replace (supports `multi` flag) |
++| `write` | coder | Create new files |
++| `send_image` | planner, coder | Send images for visual analysis |
++| `coder` | planner | Delegate implementation tasks to the coder agent |
++| `planner` | coder | Escalate back to the planner for guidance |
++| `todos` | planner, coder | Manage an in-memory todo list (add/update/list) |
++| `notes` | planner, coder | Read/write a scratchpad for discoveries and context |
++
++## Running Tests
++
++```sh
++nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_edit.lua" -c "qa!"
++nvim --headless -u NONE -c "set rtp+=." -c "luafile tests/test_persist.lua" -c "qa!"
++```
+ 
+ ## Screenshots
+ 
+@@ -186,7 +183,7 @@ The **notes** tool supports actions: `read`, `write` (overwrite), `append`.
+ - ![side panel](www/2025-08-05-174307_1372x1415_scrot.png)
+ - ![side panel with folding](www/folding.png)
+ 
+-
+ ## License
+ 
+ This project is licensed under the MIT License.
++
+diff --git a/www/index.html b/www/index.html
+index 9ba3bba..bf62204 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -9,8 +9,8 @@
+ &lt;i&gt;&lt;b&gt;tai.nvim&lt;/b&gt;&lt;/i&gt;
+ &lt;img src="screenshot.png" alt="tai.nvim in action"&lt;/img&gt;
+ 
+-a minimal Neovim plugin built to bring AI coding
+-agents directly to your editor.
++a minimal, dependency-free Neovim plugin that brings
++AI coding agents directly to your editor.
+ 
+ &lt;a href="https://dotfyle.com/plugins/blmayer/tai"&gt;
+ &lt;img src="https://dotfyle.com/plugins/blmayer/tai/shield?style=flat" /&gt;
+@@ -18,36 +18,58 @@ agents directly to your editor.
+ 
+ &lt;b&gt;features&lt;/b&gt;
+ 
+-- planner + coder agents for complex tasks
+-- read/write files and run shell commands
+-- in-memory todos &amp;amp; notes for tracking progress
+-- rate limiting (rpm/tpm)
+-- streaming responses
+-- extended thinking/reasoning support
+-- provider-side tools (e.g. web_search)
+-- safety validation for shell commands
+-- code folding in the chat buffer
++- dual-agent architecture: planner coordinates,
++  coder implements. each has independent history.
++- session persistence: conversations auto-save and
++  restore between Neovim sessions.
++- task tracking: agents use todos and notes tools
++  to stay organized on long tasks.
++- file read/write, shell commands, image analysis.
++- rate limiting (rpm/tpm) to stay within API quotas.
++- streaming and non-streaming modes.
++- code folding in the chat buffer.
++- provider-side tool pass-through (web_search etc).
++- configurable shell command safety allowlist.
+ 
+ 
+ &lt;i&gt;providers&lt;/i&gt;
+ 
+-- gemini
+-- groq
+-- minimax
+-- mistral
+-- ollama / llama.cpp (local)
+-- openai
+-- openrouter
+-- stepfun
+-- xai
+-- z.ai
+-- custom
++- gemini         GEMINI_API_KEY
++- groq           GROQ_API_KEY
++- minimax        MINIMAX_API_KEY
++- mistral        MISTRAL_API_KEY
++- ollama         (local, localhost:11434)
++- llama.cpp      (local, localhost:8080)
++- openai         OPENAI_API_KEY
++- openai resp.   OPENAI_API_KEY (Responses API)
++- openrouter     OPENROUTER_API_KEY
++- stepfun        STEPFUN_API_KEY
++- xai            XAI_API_KEY
++- z.ai           Z_AI_API_KEY
++- custom         (set options.url)
++
++
++&lt;b&gt;agent tools&lt;/b&gt;
++
++- read       read files (with line ranges)
++- shell      run commands in the project root
++- edit       search-and-replace (with multi flag)
++- write      create new files
++- send_image send images for visual analysis
++- coder      planner delegates to coder agent
++- planner    coder escalates to planner agent
++- todos      in-memory todo list (add/update/list)
++- notes      scratchpad for discoveries/context
+ 
+ 
+ &lt;b&gt;keybindings&lt;/b&gt;
+ 
+-&amp;lt;leader&amp;gt;ti 	- prompt input and send
+-&amp;lt;leader&amp;gt;tr 	- reset the chat history
++&amp;lt;leader&amp;gt;tt  - open tai chat
++&amp;lt;leader&amp;gt;tc  - reload config
++&amp;lt;leader&amp;gt;ta  - switch agent
++&amp;lt;leader&amp;gt;tr  - clear history
++&amp;lt;leader&amp;gt;ts  - stop
++&amp;lt;C-W&amp;gt;&amp;lt;C-T&amp;gt; - toggle chat window
+ 
+ 
+ &lt;b&gt;installation&lt;/b&gt;
+@@ -55,106 +77,81 @@ agents directly to your editor.
+ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+ &lt;i&gt;~/.config/nvim/lua/&lt;/i&gt; and add keymaps to &lt;i&gt;init.lua&lt;/i&gt;:
+ 
+-  vim.g.mapleader = " "
+-
+   local tai = require("tai")
++  tai.setup({})
+ 
+-  vim.keymap.set("n", "gT", function()
+-    vim.cmd("set operatorfunc=v:lua.tai_operator_send")
+-    vim.api.nvim_feedkeys("g@", "n", false)
+-  end)
++  vim.keymap.set("n", "&amp;lt;leader&amp;gt;tt", tai.chat)
++  vim.keymap.set("n", "&amp;lt;leader&amp;gt;tc", tai.reload)
++  vim.keymap.set("n", "&amp;lt;leader&amp;gt;ta", tai.switch_agent)
++  vim.keymap.set("n", "&amp;lt;leader&amp;gt;tr", tai.clear_history)
++  vim.keymap.set("n", "&amp;lt;leader&amp;gt;ts", tai.stop)
++  vim.keymap.set("n", "&amp;lt;C-W&amp;gt;&amp;lt;C-T&amp;gt;",
++    tai.toggle_chat_window)
+ 
+-  vim.keymap.set("n", "gP", function()
+-    vim.cmd("set operatorfunc=v:lua.tai_operator_send_with_prompt")
+-    vim.api.nvim_feedkeys("g@", "n", false)
+-  end)
+-
+-  vim.keymap.set("v", "&amp;lt;leader&amp;gt;t", function()
+-    tai.operator_send("char")
+-  end, { noremap = true, silent = true })
+-
+-  vim.keymap.set("i", "&amp;lt;leader&amp;gt;ti", function()
+-    vim.schedule(tai.prompt_input)
+-  end, { noremap = true })
+-
+-  vim.keymap.set("i", "&amp;lt;leader&amp;gt;tf", function()
+-    vim.schedule(tai.prompt_full_file)
+-  end, { noremap = true })
++or use lazy.nvim, packer, vim-plug, etc.
+ 
+ 
+ &lt;b&gt;configuring&lt;/b&gt;
+ 
+ tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file
+-in your project root. the following options are
+-supported:
++in your project root:
+ 
+-- &lt;i&gt;model&lt;/i&gt;: the model for chat completions
+-- &lt;i&gt;provider&lt;/i&gt;: see providers list above
++- &lt;i&gt;provider&lt;/i&gt;: provider name (see list above)
++- &lt;i&gt;model&lt;/i&gt;: model identifier
+ - &lt;i&gt;options&lt;/i&gt;: provider-specific options passed
+-  to the API (e.g., temperature, max_tokens)
+-- &lt;i&gt;provider_tools&lt;/i&gt;: array of provider-side
+-  tools (e.g., ["web_search"])
+-- &lt;i&gt;use_tools&lt;/i&gt;: enable/disable agent tools
+-  (default: true)
+-- &lt;i&gt;stream&lt;/i&gt;: enable streaming responses
+-  (default: false)
+-- &lt;i&gt;think&lt;/i&gt;: extended thinking/reasoning level
+-  ("low", "medium", "high")
+-- &lt;i&gt;rpm&lt;/i&gt;: max requests per minute (default: 60)
++  to the API (temperature, max_tokens, etc.)
++- &lt;i&gt;stream&lt;/i&gt;: enable streaming (default false)
++- &lt;i&gt;use_tools&lt;/i&gt;: enable agent tools (default true)
++- &lt;i&gt;think&lt;/i&gt;: reasoning effort for supporting models
++- &lt;i&gt;rpm&lt;/i&gt;: max requests per minute (default 60)
+ - &lt;i&gt;tpm&lt;/i&gt;: max tokens per minute
+-- &lt;i&gt;system_prompt&lt;/i&gt;: replace default agent prompt
+-- &lt;i&gt;custom_prompt&lt;/i&gt;: append to default prompt
++- &lt;i&gt;provider_tools&lt;/i&gt;: provider-side tools array
++  (e.g., ["web_search"] for OpenAI)
++- &lt;i&gt;system_prompt&lt;/i&gt;: override planner system prompt
++- &lt;i&gt;custom_prompt&lt;/i&gt;: append to system prompt
+ - &lt;i&gt;allowed_commands&lt;/i&gt;: override allowed shell
+-  commands
+-- &lt;i&gt;auto_approve&lt;/i&gt;: if true, auto-run shell commands
+-  without the y/n/s confirmation prompt (use with care)
+-
+-
+-&lt;b&gt;agent tools&lt;/b&gt;
+-
+-- &lt;i&gt;read&lt;/i&gt;: read files with optional line range
+-- &lt;i&gt;shell&lt;/i&gt;: run allow-listed shell commands
+-- &lt;i&gt;edit&lt;/i&gt;: edit files via old/new replacement
+-- &lt;i&gt;write&lt;/i&gt;: create new files
+-- &lt;i&gt;send_image&lt;/i&gt;: send images for analysis
+-- &lt;i&gt;coder&lt;/i&gt;: (for planner) delegate to coder agent with prompt (gets "coder is working..." ack; coder has own history)
+-- &lt;i&gt;planner&lt;/i&gt;: (for coder) hand back report to planner at end of task (gets ack; planner receives report in its history)
+-- &lt;i&gt;todos&lt;/i&gt;: in-memory todo list (add/update/list)
+-  with statuses: pending, in_progress, done, cancelled
+-- &lt;i&gt;notes&lt;/i&gt;: in-memory scratchpad (read/write/append)
+-  for tracking discoveries and context
+-
++  commands (default: cat, grep, ag, rg, ls, head,
++  tail, wc, diff, sort, uniq, find, file, stat,
++  date, echo, tree, pwd, which, type)
+ 
+ example .tai file:
+ 
+ {
+-	"provider": "xai",
+-	"model": "grok-4.3",
+-	"options": {
+-		"temperature": 0.7,
+-		"max_tokens": 4096
+-	},
+-	"stream": true,
+-	"use_tools": true,
+-	"rpm": 30,
+-	"custom_prompt": "Prefer rust for performance.",
+-	"allowed_commands": {
+-		"git": true,
+-		"npm": true,
+-		"cargo": true
+-	}
++  "provider": "groq",
++  "model": "llama-3.1-70b-versatile",
++  "stream": true,
++  "rpm": 30,
++  "options": {
++    "temperature": 0.7,
++    "max_tokens": 4096
++  },
++  "use_tools": true,
++  "allowed_commands": {
++    "git": true,
++    "npm": true,
++    "make": true
++  }
+ }
+ 
+ 
++&lt;b&gt;usage&lt;/b&gt;
+ 
++1. set the correct env var for your provider.
++2. create a .tai file at the root of your project.
++3. open any file in that project to start tai.
++4. use the keybindings to chat, switch agents, etc.
+ 
+-&lt;b&gt;usage&lt;/b&gt;
++sessions are automatically saved and restored, so
++you can close Neovim and pick up where you left off.
++use &lt;i&gt;:Tai clear&lt;/i&gt; to start fresh.
++
++
++&lt;b&gt;testing&lt;/b&gt;
+ 
+-make sure the correct env var is set for your provider:
+-&lt;i&gt;XAI_API_KEY&lt;/i&gt;, &lt;i&gt;GROQ_API_KEY&lt;/i&gt;, &lt;i&gt;GEMINI_API_KEY&lt;/i&gt;, etc.
+-create a .tai file at the root or your project.
+-editting any file in that project should start tai.
+-then just use the keybindings above.
++nvim --headless -u NONE -c "set rtp+=." \
++  -c "luafile tests/test_edit.lua" -c "qa!"
++nvim --headless -u NONE -c "set rtp+=." \
++  -c "luafile tests/test_persist.lua" -c "qa!"
+ 
+ 
+ &lt;i&gt;screenshots&lt;/i&gt;
+</pre>

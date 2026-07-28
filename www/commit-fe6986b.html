@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai fe6986b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit fe6986b
+parent <a href=commit-4aac1f6.html>4aac1f6</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-18T14:45:18-03:00
+
+    general improvements
+
+    - improved shell tool validation
+    - cleanup on send_image
+    - improved tools description
+    - drastically reduced system prompt
+    - fixed folds getting closed
+
+<a href=tree-fe6986b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 3d0dce0..2a62ddc 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -11,177 +11,11 @@ local provider = require('tai.' .. config.provider)
+ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+-You are a deployed coding agent operating in a live code execution session.
+-Users will inquire you to implement coding tasks or answer general questions.
+-Project root: ]] .. config.root .. "\n" .. [[
+-Machine: ]] .. host.machine .. " " .. host.sysname .. [[
++You are a coding agent working in a project. You have read/write access to the
++project's codebase in the current folder: ]] .. config.root .. [[
+ 
+-Output rules:
+-- Do not use Markdown.
+-- If there is no meaningful text to return, return an empty string. Do not
+-  return just "\n" or similar.
+-
+-Workflow:
+-- Decompose the request into explicit requirements, unclear areas, and hidden
+-  assumptions.
+-  - If you can't continue because the task is unclear ask for clarification.
+-- Map the scope: identify the important codebase regions, files, functions,
+-  or libraries likely involved. If unknown, plan and perform targeted searches.
+-  - Use `grep` or `find` to locate relevant files BEFORE reading them.
+-  - Use `ls -Rl` to explore directory structure when needed.
+-  - If you find an agents file (e.g. AGENTS.md), read it.
+-- BEFORE reading any file, verify it is directly relevant to the current task:
+-  - Check imports, references, or function calls that suggest relevance
+-  - Use grep to search for relevant symbols/functions
+-  - Read specific line ranges (e.g. function definition) rather than entire files
+-- AVOID reading files that are not directly needed for the current task.
+-  - Unnecessary file reads waste context and reduce accuracy.
+-- Formulate an execution plan: research steps, implementation sequence, and
+-  testing strategy in your own words and refer to it as you work through the
+-  task.
+-- BEFORE you start the implementating the task inform the user of your design
+-  decisions and the coding plan and ASK IF YOU SHOULD PROCEED.
+-- Be file oriented and keep the user informed of your choices during the process.
+-- If you edit code: keep changes minimal and consistent, ignore unrelated issues,
+-  update docs if user-facing and keep the style consistent.
+-- Routinely verify your code works as you work through the task, especially any
+-  deliverables to ensure they run properly.
+-- In the final response present a summary.
+-]]
+-
+-if config.use_tools == false then
+-	M.system_prompt = M.system_prompt .. [[
+-# Tools
+-You do NOT have access to tools in this session.
+-
+-- Do NOT emit tool calls.
+-- Instead, instruct the user what commands to run and what files/lines to change.
+-- Be explicit and copy-pasteable in your instructions.
++Please work on the tasks given by the user.
+ ]]
+-else
+-	M.system_prompt = M.system_prompt .. [[
+-# Tools
+-
+-You have access to tools that run in the project's root folder. Their results
+-are returned to you after execution.
+-
+-When a tool is needed, you MUST emit a tool call using the native tool calling
+-mechanism of the model runtime.
+-
+-CRITICAL RULES:
+-- Tool calls MUST NOT appear inside normal text.
+-- Tool calls MUST NOT be written using XML, markdown, or pseudo-code.
+-- NEVER simulate a tool call.
+-- NEVER print things like &lt;tool_call&gt;, &lt;function=...&gt;, or JSON examples.
+-- If a tool is needed, emit the tool call directly.
+-- Do NOT explain the tool call before or after emitting it.
+-
+-If a tool is not required, respond with normal assistant text.
+-
+-If you accidentally output a tool call as text, immediately correct yourself
+-by emitting the proper tool call.
+-
+-
+-# Tool Selection Rules
+-
+-Use tools whenever the task requires:
+-
+-- reading files
+-- writing files
+-- modifying files
+-- executing shell commands
+-- exploring the repository
+-
+-Prefer tools over guessing file contents.
+-
+-
+-# Available Tools
+-
+-## track_file
+-
+-Use `track_file` to track files that are actively worked on.
+-
+-It behaves similarly to `cat -n`, but keeps the file connected so its content
+-remains updated as changes occur.
+-
+-Use this when:
+-- editing a file
+-- repeatedly referencing a file
+-- verifying patches
+-
+-
+-## patch
+-
+-Use `patch` to modify files.
+-
+-Arguments:
+-
+-{
+-  "name": "&lt;name for the patch&gt;",
+-  "file": "&lt;path/to/file&gt;",
+-  "changes": [
+-    {
+-      "operation": "&lt;add|change|delete&gt;",
+-      "lines": "&lt;range of lines&gt;",
+-      "content": "&lt;new content&gt;"
+-    }
+-  ]
+-}
+-
+-Rules:
+-
+-- ALWAYS generate the smallest possible patch.
+-- NEVER include unchanged context lines.
+-- Multiple patches can be sent in one response.
+-- Each change sees the file in its current state.
+-- After applying a patch, verify the file if necessary.
+-- Stop after 3 failed attempts.
+-
+-Never use shell to edit files.
+-
+-
+-## shell
+-
+-Use `shell` to run commands in the project root.
+-
+-Arguments:
+-
+-{
+-  "command": "shell pipeline"
+-}
+-
+-Use this tool for:
+-
+-- reading files
+-- searching the codebase
+-- running builds
+-- file operations
+-- inspecting directories
+-
+-Do NOT use shell to edit files.
+-
+-Each execution runs in a clean environment.
+-
+-Working directory:
+-]] .. vim.uv.cwd() .. [[
+-
+-## summarize
+-Use the `summarize` tool when you think the conversation context is getting too
+-large. This tool will summarize the entire conversation history and replace it
+-with a concise summary, reducing the context size. Use this tool proactively
+-when you notice the conversation is becoming lengthy, especially before starting
+-new and unrelated tasks.
+-
+-## send_image
+-Use the `send_image` tool to send images to the agent so it can see and interpret
+-screenshots, diagrams, UI mockups, error messages, or any visual content. This is
+-useful for debugging, understanding UI issues, or reviewing designs.
+-
+-- The image will be sent to the AI model which can then analyze it
+-- You can optionally provide a prompt to guide what to look for
+-- Supported formats: PNG, JPG, JPEG, GIF, WebP, BMP
+-]]
+-end
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+ 
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index f0ce291..c31570d 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -20,13 +20,13 @@ M.defs = {
+ 		["function"] = {
+ 			name = "track_file",
+ 			description =
+-			"Adds a file's content to the conversation and keeps it updated with the current state. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
++			"Use this to track a file's content that are being actively worked on - the content will automatically refresh when changes are made.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					file = {
+ 						type = "string",
+-						description = "The path to the file to read."
++						description = "The path to the file to read. Relative to the project's folder."
+ 					},
+ 					range = {
+ 						type = "string",
+@@ -44,7 +44,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "patch",
+ 			description =
+-			"Edits files using line-based operations. All 'lines' values are 1-based and reference the current file state. So a patch is affected by previous ones. All changes in a patch the the same file state.",
++			"Use this tool if you need to edit a file. All 'lines' values are 1-based and reference the current file state.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -61,25 +61,25 @@ M.defs = {
+ 					changes = {
+ 						type = "array",
+ 						description =
+-						"List of changes to be made. All changes will use the ORIGINAL state of the file.",
++						"List of changes to be made. All changes will use the ORIGINAL state of the file. Create ONLY the smallest necessary patch.",
+ 						items = {
+ 							type = "object",
+ 							properties = {
+ 								operation = {
+ 									type = "string",
+ 									description =
+-									"Operation of this change: add will append new content after the line; change will substitute the range with the new content; delete will erase the lines in range.",
++									"Operation of this change: add will append new content after the line or interval; change will substitute the range with the new content; delete will erase the lines in range.",
+ 									enum = { "add", "change", "delete" }
+ 								},
+ 								lines = {
+ 									type = "string",
+ 									description =
+-									"1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first)",
++									"Range of lines this operation affects. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
+ 								},
+ 								content = {
+ 									type = "string",
+ 									description =
+-									"New content (empty for delete operation)",
++									"New content (empty for delete operation). NEVER include unchanged lines.",
+ 								}
+ 							},
+ 							additionalProperties = false,
+@@ -97,14 +97,14 @@ M.defs = {
+ 		["function"] = {
+ 			name = "shell",
+ 			description =
+-			"Runs commands in a shell in the current working folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Returns the otput of the command.",
++			"Use this tool when you need to run commands in a shell in the project's folder, use it for running builds, exploring the codebase etc. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;), and chaining (;) are allowed. Redirects (&gt;, &gt;&gt;, &lt;, &lt;&lt;, 2&gt;&amp;1 etc.) are NOT allowed. Returns the stdout and stderr of the command.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					command = {
+ 						type = "string",
+ 						description =
+-						"The pipeline to be interpreted by the shell in the user's machine, usually bash."
++						"The pipeline to be interpreted by the shell in the user's machine. All paths are relative to the project's folder."
+ 					}
+ 				},
+ 				additionalProperties = false,
+@@ -130,13 +130,13 @@ M.defs = {
+ 		["function"] = {
+ 			name = "send_image",
+ 			description =
+-			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content.",
++			"Use this tool to send images to the agent so it can see and interpret screenshots, diagrams, UI mockups, error messages, or any visual content. Make sure you select the correct image file.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+ 					file = {
+ 						type = "string",
+-						description = "The path to the image file to send."
++						description = "The path to the image file to send. Relative to the project's folder."
+ 					},
+ 					prompt = {
+ 						type = "string",
+@@ -286,6 +286,12 @@ end
+ 
+ function M.exec_command(cmd)
+ 	log.debug("Executing `" .. cmd .. "`")
++	-- Check for disallowed redirect operators
++	if cmd:match('[&gt;&lt;]') then
++		log.debug("Command contains redirects, which are not allowed: " .. cmd)
++		return "[sys] Redirects (&gt;, &lt;, &gt;&gt;, &lt;&lt;, etc.) are not allowed."
++	end
++
+ 
+ 	local env = {}
+ 	for _, name in ipairs({ "PATH" }) do
+@@ -458,6 +464,9 @@ function M.image_data_url(image_path)
+ 
+ 	-- Detect MIME type from extension
+ 	local ext = image_path:match("%.(%w+)$")
++	if not ext then
++		return nil, "File has no extension, cannot determine image type"
++	end
+ 	local mime_types = {
+ 		png = "image/png",
+ 		jpg = "image/jpeg",
+@@ -466,7 +475,10 @@ function M.image_data_url(image_path)
+ 		webp = "image/webp",
+ 		bmp = "image/bmp",
+ 	}
+-	local mime = mime_types[ext:lower()] or "image/png"
++	local mime = mime_types[ext:lower()]
++	if not mime then
++		return nil, "Unsupported image format: " .. ext .. ". Supported formats: png, jpg, jpeg, gif, webp, bmp."
++	end
+ 
+ 	-- Read file and encode to base64 using curl
+ 	local cmd = string.format("base64 -i '%s' | tr -d '\n'", full_path)
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 1ee956a..4987e48 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -146,6 +146,7 @@ end
+ local function run_tools(tool_calls)
+ 	local results = {}
+ 	local stop = false
++	local inputs = {}
+ 
+ 	for _, call in ipairs(tool_calls or {}) do
+ 		local name = call["function"].name
+@@ -281,8 +282,31 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			end
+ 
++			local image_url, err = tools.image_data_url(args.file)
++			if not image_url then
++				M.append_to_buffer("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
++				res.content = "[sys] Error: " .. err
++				goto continue
++			end
+ 			res.content = "[sys] Image " .. args.file .. " added."
+ 			M.append_to_buffer("{{{ Adding image " .. args.file .. "\n}}}")
++
++			if args.prompt then
++				table.insert(inputs, {
++					role = "user",
++					content = {
++						type = "text",
++						text = args.prompt
++					}
++				})
++			end
++			table.insert(inputs, {
++				role = "user",
++				content = {
++					type = "image_url",
++					image_url = { url = image_url }
++				}
++			})
+ 		else
+ 			local err_msg = "[sys] Invalid tool name: " .. name
+ 			M.append_to_buffer("{{{ Invalid tool call\n}}}")
+@@ -296,22 +320,9 @@ local function run_tools(tool_calls)
+ 
+ 
+ 	-- Second pass is needed for image inputs
+-	for _, call in ipairs(tool_calls or {}) do
+-		local name = call["function"].name
+-		local args = call["function"].arguments
+-
+-		local res = {
+-			role = "user",
+-		}
+-		if name == "send_image" then
+-			local image_url = tools.image_data_url(args.file)
+-			res.content = {
+-				{
+-					type = "image_url",
+-					image_url = { url = image_url }
+-				}
+-			}
+-			table.insert(results, res)
++	if #inputs &gt; 0 then
++		for _, i in ipairs(inputs) do
++			table.insert(results, i)
+ 		end
+ 	end
+ 	return results, stop
+@@ -404,19 +415,24 @@ function M.open()
+ 			input_win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
+ 			vim.api.nvim_win_set_height(input_win, 8)
++
++			-- Folding is window-local; configure it here so tool output/details can be collapsed.
++			if chat_win and vim.api.nvim_win_is_valid(chat_win) then
++				vim.wo[chat_win].foldmethod = "marker"
++				vim.wo[chat_win].foldenable = true
++				vim.wo[chat_win].foldlevel = 0
++			end
+ 		else
+ 			chat_win = vim.fn.win_getid(chat_window_nr)
+ 			local input_window_nr = vim.fn.bufwinnr(M.input_buffer_nr)
+ 			if input_window_nr ~= -1 then
+ 				input_win = vim.fn.win_getid(input_window_nr)
+ 			end
+-		end
+-
+-		-- Folding is window-local; configure it here so tool output/details can be collapsed.
+-		if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+-			vim.wo[chat_win].foldmethod = "marker"
+-			vim.wo[chat_win].foldenable = true
+-			vim.wo[chat_win].foldlevel = 0
++			-- Ensure foldmethod and foldenable are set (but don't reset foldlevel)
++			if chat_win and vim.api.nvim_win_is_valid(chat_win) then
++				vim.wo[chat_win].foldmethod = "marker"
++				vim.wo[chat_win].foldenable = true
++			end
+ 		end
+ 	end)
+ end
+</pre>

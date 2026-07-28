@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 6d48dca</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 6d48dca
+parent <a href=commit-ccd644b.html>ccd644b</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-14T07:09:40-03:00
+
+    added hard stop shortcut
+
+    - improved tool call functions
+
+<a href=tree-6d48dca.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/TODO.md b/TODO.md
+index 008d85f..48c9d6b 100644
+--- a/TODO.md
++++ b/TODO.md
+@@ -1,9 +1,11 @@
+ # TODO
+ 
+-[ ] fix patch tool's poor performance
++[X] make tool output into a separate message
++[X] fix patch tool's poor performance
+     [ ] test a bit more
+-[ ] add folding for displaying patches
+-
+-
+-# DONE
+-- make tool output into a separate message
++[X] add folding for displaying patches
++[ ] only fold the new added message, leave others unchanged, users like to open some
++[X] implement a hard stop command:
++    - map it to a key
++    - it sets a global variable
++    - add checks in some places like, before running tool calls and before sending a request
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index 672777c..9df8b22 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -48,6 +48,7 @@ Workflow:
+   deliverables to ensure they run properly.
+ - In the final response present a summary.
+ ]]
++
+ if config.use_tools == false then
+ 	M.system_prompt = M.system_prompt .. [[
+ # Tools
+@@ -62,19 +63,12 @@ else
+ # Tools
+ You have access to tools that runs in the project's root folder, their result
+ is sent back to you. Choose the most appropriate tool based on the task and the
+-tool descriptions provided. Use your native tool-calling mechanism. Do not
+-confuse it with output text or your tool calls will not be executed.
+-
+-All file paths must be relative to the project's directory and don't start
+-paths with `/` or `./`.
+-
+-Format for the range: \\d: single line; \\d:\\d: inclusive range; $: last line;
+-Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
+-lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
+-last 5 lines: -5:$.",
++tool descriptions provided. Use your native tool-calling mechanism to emit the
++tool calls. Do not confuse it with output or reasoning text or your tool calls
++will not be executed.
+ 
+-## connect_file
+-Use `connect_file` to track files that are being actively worked on. It works
++## track_file
++Use `track_file` to track files that are being actively worked on. It works
+ like `cat -n` but keeps the file connected so its content stays updated in
+ the conversation as you make changes. This is useful for files you're editing
+ or referencing frequently throughout a task. The content will automatically
+@@ -97,7 +91,7 @@ tool, you should call the tool with the following structure:
+ IMPORTANT:
+ - ALWAYS generate the smallest possible patch, don't include unchanged
+ (context) lines, only the new lines.
+-- You can also send multiple patches in the same response, so you send many
++- You can also send multiple patches in the same response, so send many
+   small changes.
+ - Each change gets the files at the current state, so later changes or patches
+   are affected by previous ones.
+@@ -108,15 +102,14 @@ IMPORTANT:
+ ## shell
+ To run commands ALWAYS use the `shell` tool. You can use this tool to explore
+ the codebase, read files, run builds, do file operations like renaming,
+-changing permissions, etc. Don't use this tool to edit files.
+-To use it call the `shell` tool with the parameters:
++changing permissions, etc. To use it call the `shell` tool with the parameters:
+ {
+ 	"command": "shell pipeline"
+ }
+ 
++- Don't use this tool to edit files. 
+ - Each tool execution gives you a clean env and paths are set to the current
+-  working folder: ]] .. vim.uv.cwd() .. [[ .
+-- Don't use absolute paths.
++  working folder: ]] .. vim.uv.cwd() .. [[ 
+ 
+ ## summarize
+ Use the `summarize` tool when you think the conversation context is getting too
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 136807e..e757c7b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -12,13 +12,37 @@ while vim.fn.filereadable(M.root .. "/.tai") == 0 do
+ 	M.root = parent
+ end
+ 
+-if M.root then
+-	log.debug("Root is " .. M.root)
+-end
+-
+ if not M.root then
+ 	return M
+ end
++log.debug("Root is " .. M.root)
++
++-- Provider-side tools (e.g., web_browser for OpenAI)
++M.provider_tools = nil
++
++-- Default allowed shell commands
++M.default_allowed_commands = {
++	cat = true,
++	grep = true,
++	ag = true,
++	rg = true,
++	ls = true,
++	head = true,
++	tail = true,
++	wc = true,
++	diff = true,
++	sort = true,
++	uniq = true,
++	find = true,
++	file = true,
++	stat = true,
++	date = true,
++	echo = true,
++	tree = true,
++	pwd = true,
++	which = true,
++	type = true,  -- bash built-in
++}
+ 
+ function M.reload()
+ 	if not M.root then
+@@ -50,35 +74,6 @@ function M.reload()
+ 	return true
+ end
+ 
+-M.reload()
+-
+--- Provider-side tools (e.g., web_browser for OpenAI)
+-M.provider_tools = nil
+-
+--- Default allowed shell commands
+-M.default_allowed_commands = {
+-	cat = true,
+-	grep = true,
+-	ag = true,
+-	rg = true,
+-	ls = true,
+-	head = true,
+-	tail = true,
+-	wc = true,
+-	diff = true,
+-	sort = true,
+-	uniq = true,
+-	find = true,
+-	file = true,
+-	stat = true,
+-	date = true,
+-	echo = true,
+-	tree = true,
+-	pwd = true,
+-	which = true,
+-	type = true,  -- bash built-in
+-}
+-
+ -- Get effective allowed commands (user config or defaults)
+ function M.get_allowed_commands()
+ 	if M.allowed_commands == nil then
+@@ -88,4 +83,6 @@ function M.get_allowed_commands()
+ 	return M.allowed_commands
+ end
+ 
++M.reload()
++
+ return M
+diff --git a/lua/tai/gemini.lua b/lua/tai/gemini.lua
+index 5416bf1..443ad73 100644
+--- a/lua/tai/gemini.lua
++++ b/lua/tai/gemini.lua
+@@ -41,8 +41,7 @@ function M.request(model_config, msgs, format, callback)
+ 	}
+ 
+ 	if config.use_tools ~= false then
+-		local agent_tools = provider_common.build_agent_tools(model_config)
+-		body.tools = agent_tools
++		body.tools = provider_common.build_request_tools("chat_completions")
+ 	end
+ 
+ 	if format then
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 211a5f8..714b83d 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -31,4 +31,8 @@ function M.chat()
+ 	ui.focus_input()
+ end
+ 
++function M.stop()
++	ui.stop()
++end
++
+ return M
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index 7f841f8..3ad1287 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -30,47 +30,47 @@ function M.clear_history()
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-    for _, msg in ipairs(msgs) do
+-        M.add_to_history(msg)
+-    end
++	for _, msg in ipairs(msgs) do
++		M.add_to_history(msg)
++	end
+ 
+-    local agent_tools = provider_common.build_agent_tools(model_config)
+-    local body = {
+-        model = model_config.model,
+-        messages = history,
+-        stream = false,
+-        tools = agent_tools,
+-    }
+-    if format then
+-        body.format = format
+-    end
+-    if model_config.think ~= nil then
+-        body.think = model_config.think
+-    end
+-    if model_config.options then
+-        body.options = model_config.options
+-    end
++	local agent_tools = provider_common.build_request_tools("chat_completions")
++	local body = {
++		model = model_config.model,
++		messages = history,
++		stream = false,
++		tools = agent_tools,
++	}
++	if format then
++		body.format = format
++	end
++	if model_config.think ~= nil then
++		body.think = model_config.think
++	end
++	if model_config.options then
++		body.options = model_config.options
++	end
+ 
+-    local request_body = vim.json.encode(body)
++	local request_body = vim.json.encode(body)
+ 
+-    log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
++	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+ 	provider_common.make_http_call(url, "", request_body, function(parsed, err)
+ 		if err then
+ 			return callback(nil, err)
+ 		end
+ 
+-            log.debug("Request response: " .. vim.inspect(parsed))
++		log.debug("Request response: " .. vim.inspect(parsed))
+ 
+-            if parsed.error then
+-                return callback(nil, "Received error: " .. parsed.error.message)
+-            end
++		if parsed.error then
++			return callback(nil, "Received error: " .. parsed.error.message)
++		end
+ 
+ 		local fields, extract_err = provider_common.extract_fields(parsed, format)
+ 		if extract_err then
+ 			return callback(nil, extract_err)
+ 		end
+-            callback(fields, nil)
+-        end)
++		callback(fields, nil)
++	end)
+ end
+ 
+ return M
+diff --git a/lua/tai/minimax.lua b/lua/tai/minimax.lua
+index 7cdb703..fec1c3f 100644
+--- a/lua/tai/minimax.lua
++++ b/lua/tai/minimax.lua
+@@ -41,7 +41,7 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = provider_common.build_agent_tools(model_config)
++	local agent_tools = provider_common.build_request_tools("chat_completions")
+ 
+ 	local body = {
+ 		model = model_config.model,
+diff --git a/lua/tai/mistral.lua b/lua/tai/mistral.lua
+index 771d560..c6eecb4 100644
+--- a/lua/tai/mistral.lua
++++ b/lua/tai/mistral.lua
+@@ -35,7 +35,7 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = provider_common.build_agent_tools(model_config)
++	local agent_tools = provider_common.build_request_tools("chat_completions")
+ 
+ 	local body = {
+ 		model = model_config.model,
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index 0a36530..4f4ab18 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -3,6 +3,7 @@ local M = {}
+ local log = require("tai.log")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
++local provider_common = require("tai.provider_common")
+ 
+ local responses_url = "https://api.openai.com/v1/responses"
+ 
+@@ -108,34 +109,11 @@ function M.request(model_config, msgs, format, callback)
+ 	}
+ 
+ 	if config.use_tools ~= false then
+-		-- Responses API expects tools to include a top-level `name`.
+-		-- Reuse our Chat Completions tool defs but add `name`.
+-		local function to_responses_tool(def)
+-			local t = vim.deepcopy(def)
+-			if t and t["function"] then
+-				t = t["function"]
+-				t.type = "function"
+-				t.strict = true
+-				t.additionalProperties = false
+-			end
+-			return t
+-		end
+-
+-		body.tools = {
+-			to_responses_tool(tools.defs["read_file"]),
+-			to_responses_tool(tools.defs["shell"]),
+-			to_responses_tool(tools.defs["patch"]),
+-			to_responses_tool(tools.defs["summarize"]),
+-			to_responses_tool(tools.defs["send_image"]),
+-		}
+-
+-		if config.provider_tools then
+-			for _, tool in ipairs(config.provider_tools) do
+-				table.insert(body.tools, { type = tool })
+-			end
+-		end
++		-- Use provider_common to build tools for Responses API format
++		body.tools = provider_common.build_request_tools("responses")
+ 	end
+ 
++
+ 	-- Best-effort: only enable strict JSON output if format was requested.
+ 	-- (This plugin historically uses `format` as a flag that content is JSON.)
+ 	if format ~= nil then
+diff --git a/lua/tai/openrouter.lua b/lua/tai/openrouter.lua
+index 89ac779..cd80809 100644
+--- a/lua/tai/openrouter.lua
++++ b/lua/tai/openrouter.lua
+@@ -46,9 +46,8 @@ function M.request(model_config, msgs, format, callback)
+ 	}
+ 
+ 	if config.use_tools ~= false then
+-		body.tools = provider_common.build_agent_tools(model_config)
++		body.tools = provider_common.build_request_tools("chat_completions")
+ 	end
+-
+ 	body.messages = provider_common.filter_messages(history)
+ 
+ 	if format == "json_object" then
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index c79d9fc..14e79fe 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -1,11 +1,7 @@
+ local M = {}
+ 
+ local tools = require("tai.tools")
+-
+--- Build agent tools from model_config
+-function M.build_agent_tools(model_config)
+-	return tools.defs
+-end
++local config = require("tai.config")
+ 
+ -- Filter a single message to remove internal fields
+ function M.filter_message(msg)
+@@ -27,6 +23,48 @@ function M.filter_messages(messages)
+ 	return filtered
+ end
+ 
++-- Build tools for request, including provider tools
++-- api_format: "responses" for OpenAI Responses API, "chat_completions" for Chat Completions API
++function M.build_request_tools(api_format)
++	local request_tools = {}
++
++	-- Add local tools based on API format
++	if api_format == "responses" then
++		-- OpenAI Responses API: tools need `name` at top level
++		local function to_responses_tool(def)
++			local t = vim.deepcopy(def)
++			if t and t["function"] then
++				t = t["function"]
++				t.type = "function"
++				t.strict = true
++				t.additionalProperties = false
++			end
++			return t
++		end
++
++		request_tools = {
++			to_responses_tool(tools.defs["read_file"]),
++			to_responses_tool(tools.defs["shell"]),
++			to_responses_tool(tools.defs["patch"]),
++			to_responses_tool(tools.defs["summarize"]),
++			to_responses_tool(tools.defs["send_image"]),
++		}
++	else
++		-- Chat Completions API: use standard tool format
++		request_tools = vim.deepcopy(tools.defs)
++	end
++
++	-- Add provider-side tools (e.g., web_search)
++	if config.provider_tools then
++		for _, tool in ipairs(config.provider_tools) do
++			table.insert(request_tools, { type = tool })
++		end
++	end
++
++	return request_tools
++end
++
++-- Make HTTP request using curl.
+ -- Make HTTP request using curl. use_temp_file = true writes body to temp file first.
+ -- callback receives (parsed, error)
+ function M.make_http_call(url, api_key, body_json, callback)
+@@ -107,7 +145,6 @@ function M.extract_fields(parsed, format)
+ 		if message.reasoning_details then
+ 			fields.reasoning_details = message.reasoning_details
+ 		end
+-
+ 	end
+ 
+ 	if message.tool_calls and message.tool_calls ~= vim.NIL then
+diff --git a/lua/tai/stepfun.lua b/lua/tai/stepfun.lua
+index 9ea4949..37d6c6f 100644
+--- a/lua/tai/stepfun.lua
++++ b/lua/tai/stepfun.lua
+@@ -34,7 +34,7 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-	local agent_tools = provider_common.build_agent_tools(model_config)
++	local agent_tools = provider_common.build_request_tools("chat_completions")
+ 
+ 	local body = {
+ 		model = model_config.model,
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 58359cc..f0ce291 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -18,9 +18,9 @@ M.defs = {
+ 	{
+ 		type = "function",
+ 		["function"] = {
+-			name = "connect_file",
++			name = "track_file",
+ 			description =
+-			"Adds a file's content to the conversation and keeps it updated. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
++			"Adds a file's content to the conversation and keeps it updated with the current state. Use this to track files that are being actively worked on - the content will automatically refresh when changes are made.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -97,7 +97,7 @@ M.defs = {
+ 		["function"] = {
+ 			name = "shell",
+ 			description =
+-			"Runs commands in a shell in the current folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Don't use this for reading or writing files, use read_file and patch tools respectively. Returns the otput of the command.",
++			"Runs commands in a shell in the current working folder and returns the output. Use relative paths (don't start with /). Arguments, pipes (|), conditionals (||, &amp;&amp;) and chaining (;)  are allowed. Returns the otput of the command.",
+ 			parameters = {
+ 				type = "object",
+ 				properties = {
+@@ -318,19 +318,32 @@ function M.exec_command(cmd)
+ end
+ 
+ function M.apply_patch(name, file, changes)
+-
++	-- First, check if the file is already open in a buffer
+ 	local buf = nil
+-	local is_open = false
++	for _, b in ipairs(vim.api.nvim_list_bufs()) do
++		if vim.api.nvim_buf_is_loaded(b) then
++			local buf_name = vim.api.nvim_buf_get_name(b)
++			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
++				buf = b
++				break
++			end
++		end
++	end
+ 
++	-- Check if buffer is visible in any window
++	local win = nil
+ 	if buf then
+-		for _, win in ipairs(vim.api.nvim_list_wins()) do
+-			if vim.api.nvim_win_get_buf(win) == buf then
+-				is_open = true
++		for _, w in ipairs(vim.api.nvim_list_wins()) do
++			if vim.api.nvim_win_get_buf(w) == buf then
++				win = w
+ 				break
+ 			end
+ 		end
+ 	end
+-	if not is_open or not buf then
++
++	-- If buffer exists but not visible, we can still modify it directly
++	-- No need to open a new window
++	if not buf then
+ 		-- File not loaded yet, create new buffer and window
+ 		vim.cmd("topleft vnew " .. file)
+ 		buf = vim.api.nvim_get_current_buf()
+@@ -367,12 +380,19 @@ function M.apply_patch(name, file, changes)
+ 		-- Parse line range
+ 		local start, end_line = parse_lines(lines_str)
+ 
++		-- Convert negative indexes (relative to end) to 0-based absolute indexes
++		if start &lt; 0 then
++			start = total_lines + start
++		end
++		if end_line &lt; 0 then
++			end_line = total_lines + end_line
++		end
++
+ 		-- Adjust for line shift from previous changes
+ 		local adjusted_start = start + line_shift
+ 		local adjusted_end = end_line + line_shift
+ 
+ 		-- Clamp to valid ranges
+-		if end_line == -1 then adjusted_end = -1 end
+ 		if adjusted_start &lt; 0 then adjusted_start = 0 end
+ 		if adjusted_end &gt;= total_lines then adjusted_end = total_lines - 1 end
+ 
+@@ -392,12 +412,14 @@ function M.apply_patch(name, file, changes)
+ 			local old_line_count = adjusted_end - adjusted_start + 1
+ 			local new_line_count = #new_lines
+ 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, new_lines)
++
+ 			-- Track the net change for subsequent changes
+ 			line_shift = line_shift + (new_line_count - old_line_count)
+ 		elseif operation == "delete" then
+ 			-- Remove lines
+ 			local old_line_count = adjusted_end - adjusted_start + 1
+ 			vim.api.nvim_buf_set_lines(buf, adjusted_start, adjusted_end + 1, false, {})
++
+ 			-- Track the deletion for subsequent changes
+ 			line_shift = line_shift - old_line_count
+ 		end
+@@ -467,7 +489,7 @@ function M.refresh_connected_files(history)
+ 	local latest = {}
+ 	for i = #history, 1, -1 do
+ 		local msg = history[i]
+-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
++		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
+ 			local key = msg.file_path .. "::" .. (msg.file_range or "")
+ 			if latest[key] then
+ 				msg.content = "[sys] content shown in newer call"
+@@ -481,7 +503,7 @@ function M.refresh_connected_files(history)
+ 
+ 	-- Refresh remaining (latest) connect_file messages.
+ 	for _, msg in ipairs(history or {}) do
+-		if msg and msg.role == "tool" and msg.name == "connect_file" and msg.file_path then
++		if msg and msg.role == "tool" and msg.name == "track_file" and msg.file_path then
+ 			msg.content = M.read_file(msg.file_path, msg.file_range or "")
+ 		end
+ 	end
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index eecf499..1ee956a 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -10,15 +10,8 @@ local input_bufname = "tai-chat-input"
+ local chat_win
+ local input_win
+ 
+-function M.update_chat_name()
+-	local name = bufname_prefix
+-	if config and config.provider and config.model then
+-		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
+-	end
+-	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
+-		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
+-	end
+-end
++-- Global stop flag for hard stop command
++local hard_stop = false
+ 
+ local function update_token_display(token_count)
+ 	local name = input_bufname
+@@ -38,6 +31,16 @@ vim.bo[M.input_buffer_nr].swapfile = false
+ vim.bo[M.input_buffer_nr].filetype = "text"
+ vim.bo[M.input_buffer_nr].modifiable = true
+ 
++function M.update_chat_name()
++	local name = bufname_prefix
++	if config and config.provider and config.model then
++		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
++	end
++	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
++		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
++	end
++end
++
+ M.buffer_nr = vim.api.nvim_create_buf(false, true)
+ M.update_chat_name()
+ vim.bo[M.buffer_nr].buftype = "nofile"
+@@ -98,6 +101,13 @@ function M.append_to_buffer(content)
+ 	end
+ end
+ 
++function M.focus_input()
++       vim.schedule(function()
++               vim.api.nvim_set_current_win(input_win)
++               vim.cmd("startinsert")
++       end)
++end
++
+ local function scroll_down()
+ 	vim.schedule(function()
+ 		if not chat_win or not vim.api.nvim_win_is_valid(chat_win) then
+@@ -126,8 +136,10 @@ local function refresh_and_close_folds()
+ 	end
+ 
+ 	vim.api.nvim_win_call(chat_win, function()
+-		pcall(vim.cmd, "silent! normal! zx")
+-		pcall(vim.cmd, "silent! normal! zM")
++		-- Move to last line and close fold there (the fold we just added)
++		local last_line = vim.api.nvim_buf_line_count(M.buffer_nr)
++		vim.api.nvim_win_set_cursor(chat_win, { last_line, 0 })
++		pcall(vim.cmd, "silent! normal! zc")
+ 	end)
+ end
+ 
+@@ -144,15 +156,13 @@ local function run_tools(tool_calls)
+ 			name = name,
+ 			tool_call_id = call.id,
+ 		}
++		--
++		-- Check for hard stop before each tool
++		if hard_stop then
++			goto continue
++		end
+ 
+ 		if name == "shell" then
+-			if not args.command then
+-				M.append_to_buffer("{{{ Running command failed: no command field.\n}}}")
+-				res.content = "[sys] missing command field"
+-				goto continue
+-			end
+-
+-			-- Check if command is in allowlist
+ 			local _, is_allowed = tools.check_command(args.command)
+ 
+ 			if is_allowed then
+@@ -202,14 +212,14 @@ local function run_tools(tool_calls)
+ 				stop = true
+ 			end
+ 			M.append_to_buffer("}}}")
+-		elseif name == "connect_file" then
++		elseif name == "track_file" then
+ 			if not args.file then
+-				M.append_to_buffer("{{{ Connecting file failed: no file field.\n}}}")
++				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
+ 
+-			M.append_to_buffer("{{{ Connecting " .. args.file .. "\n")
++			M.append_to_buffer("{{{ Attaching " .. args.file .. "\n")
+ 			res.content = tools.read_file(args.file, args.range)
+ 			res.file_path = args.file
+ 			res.file_range = args.range
+@@ -260,7 +270,7 @@ local function run_tools(tool_calls)
+ 
+ 					res.content = summ.content
+ 					tai.clear_history()
+-					tai.add_to_history({res})
++					tai.add_to_history({ res })
+ 				end
+ 			)
+ 			return nil
+@@ -324,8 +334,10 @@ local function process_response(fields)
+ 		vim.schedule(function() refresh_and_close_folds() end)
+ 	end
+ 
+-	if fields.content and fields.content ~= "" then
+-		M.append_to_buffer(fields.content .. "\n")
++	if fields.content then
++		if fields.content ~= vim.NIL and fields.content ~= "" then
++			M.append_to_buffer(fields.content .. "\n")
++		end
+ 	end
+ 	if not fields.tool_calls or #fields.tool_calls == 0 then
+ 		return
+@@ -333,7 +345,7 @@ local function process_response(fields)
+ 
+ 	vim.schedule(function()
+ 		local res, stop = run_tools(fields.tool_calls)
+-		if stop then
++		if stop or hard_stop then
+ 			tai.add_to_history(res)
+ 			return
+ 		end
+@@ -342,6 +354,11 @@ local function process_response(fields)
+ end
+ 
+ local function send_input()
++	-- reset hard stop when user sends a message
++	if hard_stop then
++		hard_stop = false
++	end
++
+ 	vim.schedule(function()
+ 		scroll_down()
+ 		local input = table.concat(
+@@ -364,29 +381,13 @@ local function send_input()
+ 	end)
+ end
+ 
+-vim.keymap.set("n", "&lt;CR&gt;", send_input, { buffer = M.input_buffer_nr })
+-vim.keymap.set("i", "&lt;S-CR&gt;", send_input, { buffer = M.input_buffer_nr })
+-
+-function M.toggle_chat_window()
+-	local winid = vim.fn.bufwinnr(M.buffer_nr)
+-	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
+-	if winid ~= -1 then
+-		-- Close the window
+-		vim.api.nvim_win_close(chat_win, false)
+-		if input_winid ~= -1 then
+-			vim.api.nvim_win_close(input_win, false)
+-		end
+-	else
+-		M.open()
+-	end
++function M.stop()
++	hard_stop = true
++	M.append_to_buffer("[tai] Stopped by user\n")
+ end
+ 
+-function M.focus_input()
+-	vim.schedule(function()
+-		vim.api.nvim_set_current_win(input_win)
+-		vim.cmd("startinsert")
+-	end)
+-end
++vim.keymap.set("n", "&lt;CR&gt;", send_input, { buffer = M.input_buffer_nr })
++vim.keymap.set("i", "&lt;S-CR&gt;", send_input, { buffer = M.input_buffer_nr })
+ 
+ function M.open()
+ 	vim.schedule(function()
+@@ -420,6 +421,20 @@ function M.open()
+ 	end)
+ end
+ 
++function M.toggle_chat_window()
++	local winid = vim.fn.bufwinnr(M.buffer_nr)
++	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
++	if winid ~= -1 then
++		-- Close the window
++		vim.api.nvim_win_close(chat_win, false)
++		if input_winid ~= -1 then
++			vim.api.nvim_win_close(input_win, false)
++		end
++	else
++		M.open()
++	end
++end
++
+ function M.clear()
+ 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
+ 	tai.clear_history()
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+index d33acc3..574870f 100644
+--- a/lua/tai/z_ai.lua
++++ b/lua/tai/z_ai.lua
+@@ -18,7 +18,7 @@ local history = nil
+ 
+ function M.add_to_history(message)
+ 	if not history then
+-		history = {message}
++		history = { message }
+ 		return
+ 	end
+ 	table.insert(history, message)
+@@ -36,17 +36,17 @@ function M.request(model_config, msgs, format, callback)
+ 	-- Keep connected files up to date in history before sending.
+ 	tools.refresh_connected_files(history)
+ 
+-    local agent_tools = provider_common.build_agent_tools(model_config)
++	local agent_tools = provider_common.build_request_tools("chat_completions")
+ 	local body = {
+ 		model = model_config.model,
+-        messages = provider_common.filter_message(history) or {},
++		messages = provider_common.filter_message(history) or {},
+ 		tools = agent_tools,
+ 	}
+ 	if format then
+ 		body.format = format
+ 	end
+-    if config.use_tools ~= false and #agent_tools &gt; 0 then
+-        body.tools = agent_tools
++	if config.use_tools ~= false and #agent_tools &gt; 0 then
++		body.tools = agent_tools
+ 	end
+ 	if model_config.think ~= nil then
+ 		body.reasoning_effort = model_config.think
+@@ -105,8 +105,8 @@ function M.request(model_config, msgs, format, callback)
+ 				end
+ 			end
+ 
+-            fields.tool_calls = message.tool_calls
+-            provider_common.decode_tool_call_arguments(fields.tool_calls)
++			fields.tool_calls = message.tool_calls
++			provider_common.decode_tool_call_arguments(fields.tool_calls)
+ 			callback(fields, nil)
+ 		end)
+ end
+</pre>

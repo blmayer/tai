@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai d444628</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit d444628
+parent <a href=commit-60467fb.html>60467fb</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-07-19T20:28:47-03:00
+
+    improved logs and prompts
+
+<a href=tree-d444628.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/ide-mode.go b/ide-mode.go
+index d15a09e..126b903 100644
+--- a/ide-mode.go
++++ b/ide-mode.go
+@@ -21,9 +21,17 @@ var (
+ // describing the file structure.
+ func InitProjectPrompt() error {
+ 	fmt.Println("Starting project")
++	dir, err := os.Getwd()
++	if err != nil {
++        	return err
++    	}
+ 
+-	prompt = "The project contains the following files and structure:\n"
+-	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
++	prompt = fmt.Sprintf(
++		"You are managing a project at %s, which contains the following files and structure:\n",
++		dir,
++	)
++
++	err = filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+ 		if err != nil {
+ 			return err
+ 		}
+@@ -135,7 +143,7 @@ func process(message string) (string, error) {
+ 
+ 	messages := []ChatMessage{
+ 		{Role: "system", Content: prompt},
+-		{Role: "system", Content: "Your answear must me a valid MIME message. Dont include anything outside the MIME message."},
++		{Role: "system", Content: "Your answear must me a valid MIME message, start with MIME-version, and create a valid boundary. For code changes you must send it in the path format, do it in a separate part in me MIMEv format. Don't include anything outside the MIME message like backticks or other formating things."},
+ 		{Role: "user", Content: message},
+ 	}
+ 
+diff --git a/main.go b/main.go
+index caa6e57..c829249 100644
+--- a/main.go
++++ b/main.go
+@@ -4,6 +4,7 @@ import (
+ 	"golang.org/x/term"
+ 
+ 	"fmt"
++	"log"
+ 	"io"
+ 	"os"
+ 	"strings"
+@@ -62,7 +63,7 @@ func pipelineMode(model string) {
+ }
+ 
+ func interactiveMode(model string) {
+-	fmt.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
++	log.Println("tai: interactive mode (type 'exit' to quit). Powered by Groq.")
+ 	messages := []ChatMessage{
+ 		{Role: "system", Content: "You are 'tai', a command-line AI assistant running in interactive mode."},
+ 	}
+@@ -82,7 +83,6 @@ func interactiveMode(model string) {
+ 			fmt.Fprintln(os.Stderr, "error:", err)
+ 			break
+ 		}
+-		fmt.Println(resp)
+ 		messages = append(messages, ChatMessage{Role: "assistant", Content: resp})
+ 	}
+ }
+@@ -94,7 +94,7 @@ func ideMode(model string) {
+ 		os.Exit(1)
+ 	}
+ 
+-	fmt.Println("Socket ready")
++	log.Println("Socket ready")
+ 	taiSocket(sockPath)
+ }
+ 
+</pre>

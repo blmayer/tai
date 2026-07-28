@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 05d0b93</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 05d0b93
+parent <a href=commit-15cd173.html>15cd173</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-21T07:53:18-03:00
+
+    added minimax provider to index page
+
+<a href=tree-05d0b93.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/www/index.html b/www/index.html
+index 53040a7..7dfd9ca 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -21,15 +21,16 @@ agents directly to your editor.
+ 
+ &lt;i&gt;providers&lt;/i&gt;
+ 
+-- groq
+ - gemini
++- groq
++- minimax
+ - mistral
+-- ollama
+-- z.ai
+ - local
++- ollama
+ - openai
+ - openrouter
+ - stepfun
++- z.ai
+ 
+ 
+ &lt;b&gt;keybindings&lt;/b&gt;
+@@ -78,7 +79,10 @@ this structure:
+ 
+ {
+ 	"provider": string,
+-	"model": string
++	"model": string,
++	"options": { // optional configs for provider
++		...
++	}
+ }
+ 
+ 
+</pre>

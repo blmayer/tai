@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai ee5ac47</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit ee5ac47
+parent <a href=commit-36f1419.html>36f1419</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-07-18T19:57:14-03:00
+
+    nvim: added selection with prompt options
+
+<a href=tree-ee5ac47.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/tai.lua b/nvim-tai/tai.lua
+index c4c6150..1127e4f 100644
+--- a/nvim-tai/tai.lua
++++ b/nvim-tai/tai.lua
+@@ -99,10 +99,10 @@ end
+ function tai.prompt_input()
+   vim.ui.input({ prompt = "Tai Input:" }, function(input)
+     if input and input ~= "" then
+-      if tai.sock then
++      if sock then
+ 	local filename = vim.fn.expand("%:p")                -- absolute path
+ 	local preamble = string.format("I'm edditing %s, please consider:\n", filename)
+-        tai.sock:write(preamble .. input .. "\n")
++        tai.send_text(preamble .. input .. "\n")
+       else
+         vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+       end
+@@ -128,8 +128,8 @@ function tai.prompt_full_file()
+     local preamble = string.format("I'm edditing %s with cursor at %s, please consider my demand:\n", filename, location)
+     local payload = preamble .. "\n" .. input .. "\n***\nFile content:\n\n" .. text
+ 
+-    if tai.sock then
+-      tai.sock:write(payload .. "\n")
++    if sock then
++      tai.send_text(payload .. "\n")
+     else
+       vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
+     end
+@@ -163,6 +163,37 @@ function tai.operator_send(type)
+   tai.send_text(preamble .. text)
+ end
+ 
++function tai.operator_send_with_prompt(type)
++  -- Get the selected text range (like operator_send)
++  local start_pos = vim.api.nvim_buf_get_mark(0, "[")
++  local end_pos = vim.api.nvim_buf_get_mark(0, "]")
++  local start_row = start_pos[1] - 1
++  local start_col = start_pos[2]
++  local end_row = end_pos[1] - 1
++  local end_col = end_pos[2] + 1 -- inclusive
++
++  local lines = vim.api.nvim_buf_get_text(0, start_row, start_col, end_row, end_col, {})
++  local text = table.concat(lines, "\n")
++
++  -- Prompt user for input, then send combined
++  vim.ui.input({ prompt = "Tai Input:" }, function(input)
++    if not input or input == "" then return end
++
++    local filename = vim.fn.expand("%:p")
++    local location = string.format("# From line %d, col %d to line %d, col %d",
++    start_pos[1], start_pos[2] + 1, end_pos[1], end_pos[2] + 1)
++
++    local payload = string.format("I'm edditing %s at %s, consider the selection:\n\n%s\n\nAnd the input:\n%s",
++    filename, location, text, input)
++
++    if sock then
++      tai.send_text(payload .. "\n")
++    else
++      vim.notify("[tai] Socket not connected", vim.log.levels.ERROR)
++    end
++  end)
++end
++
+ tai.connect()
+ 
+ return tai
+</pre>

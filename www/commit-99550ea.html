@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 99550ea</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 99550ea
+parent <a href=commit-9f9969e.html>9f9969e</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-02-03T14:38:44-03:00
+
+    added option to reload the config on runtime
+
+    also added the provider/model to the chat panel name
+    updated readme and agents files
+    moved the provider part to agent.lua file
+
+<a href=tree-99550ea.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 8b6d688..d5449b5 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -5,14 +5,6 @@ This repo also includes a small static website under `www/`.
+ 
+ These notes are intended for **automated coding agents** working in this repository.
+ 
+-## Golden rules
+-
+-- Make the *smallest, most focused* change that solves the user’s request.
+-- Prefer root-cause fixes over surface patches.
+-- Keep style consistent with surrounding code.
+-- Run a relevant check (tests/lint or a minimal smoke run) before finishing.
+-- When modifying behavior, update docs (`README.md`) if the user-facing contract changes.
+-
+ ## Repository layout
+ 
+ - `lua/tai/` — Neovim plugin implementation (all core logic)
+@@ -59,11 +51,4 @@ These notes are intended for **automated coding agents** working in this reposit
+ - Prefer explicit, readable code over cleverness.
+ - Avoid adding new dependencies unless necessary.
+ 
+-## Quick sanity checks
+-
+-There may not be a formal test suite. At minimum:
+-
+-- Ensure Lua files parse (no syntax errors).
+-- If you can, run Neovim and load the plugin to smoke-test the affected flow.
+-
+ (Agent reminder) You are editing the Tai plugin’s own code—double-check changes for regressions.
+diff --git a/README.md b/README.md
+index 68ef677..f2cef8e 100644
+--- a/README.md
++++ b/README.md
+@@ -4,7 +4,7 @@
+ 
+ ## Providers
+ 
+-This project is compatible with the Groq, Gemini, Mistral, Z.AI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
++This project is compatible with the Groq, Gemini, Mistral, Z.AI, OpenAI, and Local (Ollama) APIs for processing requests. Make sure to set the correct environment variable:
+ 
+        GROQ_API_KEY=your_api_key_here
+ 
+@@ -14,11 +14,13 @@ for Groq, or:
+ 
+ for Gemini, or:
+ 
+-for Mistral, or:
+-
+        ZAI_API_KEY=your_api_key_here
+ 
+-for Z.AI, or configure a local Ollama server (localhost:11434).
++for Z.AI, or:
++
++       OPENAI_API_KEY=your_api_key_here
++
++for OpenAI, or configure a local Ollama server (localhost:11434).
+ 
+ Mistral support is in progress (their API is flaky ATM).
+ 
+@@ -92,16 +94,8 @@ The default mappings will give you:
+ 
+ The .tai file supports the following fields:
+ - model: The model used for chat completions.
+-- summary_model: The model used for summaries.
+-- complete_model: The model used for complete tasks.
+ - provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
+-- skip_cache: A flag to skip caching.
+-- planner: Configuration for the planner model (model, options, tools, think).
+-- coder: Configuration for the coder model.
+-- patcher: Configuration for the patcher model.
+-- writer: Configuration for the writer model.
+-- tai: Configuration for the all-rounder model.
+-- allowed_commands: A list of allowed commands (e.g., 'cat', 'echo', 'find', 'grep', 'head', 'ls', 'make', 'sort', 'tail', 'wc').
++- options: Options sent to the model, specific for each provider.
+ 
+ 
+ ## License
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index ac84ca6..c7cdc9e 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -1,19 +1,18 @@
+ local M = {}
+ 
+--- Import necessary modules
+ local config = require('tai.config')
+ local log = require('tai.log')
+-local provider = require('tai.provider')
+-local tools = require('tai.tools')
+ 
+ if not config.root then
+ 	return M
+ end
++local provider = require('tai.' .. config.provider)
+ 
+ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+ You are a deployed coding agent operating in a live code execution session.
++Users will inquire you to implement coding tasks or answear general questions.
+ Project root: ]] .. config.root .. [[
+ Shell CWD: ]] .. vim.uv.cwd() .. [[
+ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
+@@ -23,13 +22,24 @@ Output rules:
+ - Do not wrap content in quotes/backticks or escape it unless the user asked.
+ 
+ Workflow:
+-- Use `ls -Rl` to explore the repo.
+-- If you find an agents file (e.g. AGENTS.md), read it.
+-- If you edit code: fix root cause, keep changes minimal and consistent, ignore
+-  unrelated issues, update docs if user-facing.
+-- After edits: run a relevant check/smoke test.
+-- In the final answer (plain text): summarize changes in brief bullet points.
+-
++- Decompose the request into explicit requirements, unclear areas, and hidden
++  assumptions.
++- Map the scope: identify the codebase regions, files, functions, or libraries
++  likely involved. If unknown, plan and perform targeted searches.
++  - Use `ls -Rl`, `find` or similar command to start exploring the repo.
++  - If you find an agents file (e.g. AGENTS.md), read it.
++- Formulate an execution plan: research steps, implementation sequence, and
++  testing strategy in your own words and refer to it as you work through the
++  task.
++- If you edit code: keep changes minimal and consistent, ignore unrelated issues,
++  update docs if user-facing and keep the style consistent.
++- Keep the user informed of your choices during the process.
++- Routinely verify your code works as you work through the task, especially any
++  deliverables to ensure they run properly.
++- After applying a patch you should re-read afected files to ensure the patch was
++  applied correctly. Don't run commands if you didn't verify the patch.
++  - Stop after 3 attempts with failure.
++- In the final response present a summary.
+ ]]
+ if config.use_tools == false then
+ 	M.system_prompt = M.system_prompt .. [[
+@@ -78,12 +88,13 @@ structure:
+ 			"operation": "&lt;add|change|delete&gt;",
+ 			"lines": "&lt;range of lines&gt;",
+ 			"content": "&lt;new content&gt;"
+-		}
++}
+ 	]
+ }
+-IMPORTANT: ALWAYS generate the smallest possible patch, so that you change just
++IMPORTANT: ALWAYS generate the smallest possible patch, so that you change ONLY
+ the needed lines. You can also send multiple patches, so you change multiple
+ places individualy.
++Also send a short text explaining the change and why.
+ 
+ ## shell
+ To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+@@ -105,31 +116,6 @@ with a concise summary, reducing the context size. Use this tool proactively
+ when you notice the conversation is becoming lengthy, especially before making
+ additional tool calls that might fail due to context limits. Calling it will
+ end the current conversation, so it's better to call it after the task is done.
+-
+-# Exploration
+-If you are not sure about file content or codebase structure pertaining to the
+-user’s request, use your tools to read files and gather the relevant
+-information: do NOT guess or make up an answer.
+-Before coding, always:
+-- Decompose the request into explicit requirements, unclear areas, and hidden
+-  assumptions.
+-- Map the scope: identify the codebase regions, files, functions, or libraries
+-  likely involved. If unknown, plan and perform targeted searches.
+-- Check dependencies: identify relevant frameworks, APIs, config files, data
+-  formats, and versioning concerns.
+-- Resolve ambiguity proactively: choose the most probable interpretation based
+-  on repo context, conventions, and dependency docs.
+-- Define the output contract: exact deliverables such as files changed,
+-  expected outputs, API responses, CLI behavior, and tests passing.
+-- Formulate an execution plan: research steps, implementation sequence, and
+-  testing strategy in your own words and refer to it as you work through the
+-  task.
+-
+-# Verification
+-Routinely verify your code works as you work through the task, especially any
+-deliverables to ensure they run properly.
+-After applying a patch you should re-read afected files to ensure the patch was
+-applied correctly. But stop after 3 attempts.
+ ]]
+ end
+ 
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 714b72b..6b782c0 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -43,4 +43,31 @@ if file then
+ 	end
+ end
+ 
++function M.reload()
++	if not M.root then
++		return false, "no tai root found"
++	end
++
++	local f = io.open(M.root .. "/.tai", "r")
++	if not f then
++		return false, "failed to open .tai"
++	end
++
++	local ok, data = pcall(vim.fn.json_decode, f:read("*a"))
++	f:close()
++	if not ok or type(data) ~= "table" then
++		return false, "failed to parse .tai"
++	end
++
++	M.model = data.model or M.model
++	M.provider = data.provider or M.provider
++	M.use_tools = data.use_tools
++	if M.use_tools == nil then
++		M.use_tools = true
++	end
++	M.options = data.options
++	M.think = data.think or nil
++
++	return true
++end
+ return M
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 21d6ec6..af8a024 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -2,11 +2,22 @@ local M = {}
+ 
+ local log = require("tai.log")
+ local ui = require("tai.ui")
++local config = require("tai.config")
+ 
+ function M.setup(opts)
+ 	log.set_level(opts.log_level or log.DEBUG)
+ end
+ 
++function M.reload(opts)
++	local ok, err = config.reload()
++	if not ok then
++		vim.notify("tai: failed to reload config: " .. (err or ""), vim.log.levels.ERROR)
++		return
++	end
++	ui.update_chat_name()
++	vim.notify("tai: config reloaded", vim.log.levels.INFO)
++end
++
+ function M.toggle_chat_window()
+ 	ui.toggle_chat_window()
+ end
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index e907e21..c47775d 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -3,7 +3,9 @@ local M = {}
+ local log = require("tai.log")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
+-local url = "https://api.openai.com/v1/chat/completions"
++
++local chat_url = "https://api.openai.com/v1/chat/completions"
++local responses_url = "https://api.openai.com/v1/responses"
+ 
+ local api_key = os.getenv("OPENAI_API_KEY")
+ if not api_key then
+@@ -14,24 +16,69 @@ end
+ 
+ local history = nil
+ 
++local function add_history_message(message)
++	if not history then
++		history = {}
++	end
++	table.insert(history, vim.deepcopy(message))
++end
++
++local function to_responses_input(msg)
++	log.debug(vim.inspect(msg))
++	-- Map chat-style messages into Responses API "input" items.
++	-- For tool messages, keep the tool_call_id.
++	if msg.role == "user" or msg.role == "system" or msg.role == "developer" then
++		return { {
++			role = msg.role,
++			content = {
++				{ type = "input_text", text = msg.content or "" },
++			},
++		} }
++	elseif msg.role == "assistant" then
++		local res = { {
++			role = "assistant",
++			content = {
++				{ type = "output_text", text = msg.content or "" },
++			},
++		} }
++
++		if msg.tool_calls then
++			for _, call in ipairs(msg.tool_calls) do
++				table.insert(res,
++					{
++						type = "function_call",
++						name = call["function"].name,
++						call_id = call.id,
++						arguments = call["function"].arguments,
++					}
++				)
++			end
++		end
++		return res
++	elseif msg.role == "tool" then
++		return { {
++			type = "function_call_output", output = msg.content or "", call_id = msg.tool_call_id
++		} }
++	end
++end
++
+ function M.add_to_history(message)
++	-- For Chat Completions tool_calls, arguments must be JSON strings.
+ 	local msg = vim.deepcopy(message)
+ 	for _, call in ipairs(msg.tool_calls or {}) do
+ 		local args = call["function"].arguments
+-		call["function"].arguments = vim.json.encode(args)
+-	end
+-	if not history then
+-		history = { msg }
+-		return
++		if type(args) ~= "string" then
++			call["function"].arguments = vim.json.encode(args)
++		end
+ 	end
+-	table.insert(history, msg)
++	add_history_message(msg)
+ end
+ 
+ function M.clear_history()
+ 	history = nil
+ end
+ 
+-function M.request(model_config, msgs, format, callback)
++local function request_chat_completions(model_config, msgs, format, callback)
+ 	for _, msg in ipairs(msgs) do
+ 		M.add_to_history(msg)
+ 	end
+@@ -49,7 +96,8 @@ function M.request(model_config, msgs, format, callback)
+ 			tools.defs["summarize"],
+ 		}
+ 	end
+-	for _, message in ipairs(history) do
++
++	for _, message in ipairs(history or {}) do
+ 		local new_message = {}
+ 		for key, value in pairs(message) do
+ 			if key ~= "file_path" then
+@@ -71,61 +119,212 @@ function M.request(model_config, msgs, format, callback)
+ 
+ 	local request_body = vim.json.encode(body)
+ 
+-	log.debug("Requesting " .. url .. " with " .. vim.inspect(body))
+-	vim.system(
+-		{
+-			"curl", "-s", "-X", "POST", url,
+-			"-H", "Authorization: Bearer " .. api_key,
+-			"-H", "Content-Type: application/json",
+-			"-d", request_body,
+-		}, { text = true }, function(obj)
+-			if obj.code ~= 0 then
+-				local err_msg = "curl returned code " .. obj.code
+-				callback(nil, err_msg)
+-				return
+-			end
++	log.debug("Requesting " .. chat_url .. " with " .. vim.inspect(body))
++	vim.system({
++		"curl", "-s", "-X", "POST", chat_url,
++		"-H", "Authorization: Bearer " .. api_key,
++		"-H", "Content-Type: application/json",
++		"-d", request_body,
++	}, { text = true }, function(obj)
++		if obj.code ~= 0 then
++			local err_msg = "curl returned code " .. obj.code
++			callback(nil, err_msg)
++			return
++		end
++
++		if not obj.stdout or obj.stdout == "" then
++			return callback(nil, "Received empty response from OpenAI")
++		end
+ 
+-			if not obj.stdout or obj.stdout == "" then
+-				return callback(nil, "Received empty response from Gemini")
++		local parsed = vim.json.decode(obj.stdout)
++		if not parsed then
++			return callback(nil, "Failed to decode JSON response")
++		end
++		log.debug("Request response: " .. vim.inspect(parsed))
++
++		if parsed and parsed.error then
++			return callback(nil, "Received error: " .. parsed.error.message)
++		end
++
++		local message = parsed.choices[1].message
++		local content = message.content
++		local fields = {}
++		if content and content ~= vim.NIL then
++			log.debug("response content: " .. (content or ""))
++			if format ~= nil then
++				log.debug("parsing JSON content")
++				fields.content = vim.json.decode(content)
++				if not fields.content then
++					return callback(nil, "Failed to decode message")
++				end
++			else
++				fields.content = content
+ 			end
++		end
+ 
+-			local parsed = vim.json.decode(obj.stdout)
+-			if not parsed then
+-				return callback(nil, "Failed to decode JSON: " .. parsed)
++		fields.tool_calls = message.tool_calls
++		for _, call in ipairs(fields.tool_calls or {}) do
++			local args = call["function"].arguments
++			if type(args) == "string" then
++				call["function"].arguments = vim.json.decode(args)
+ 			end
+-			log.debug("Request response: " .. vim.inspect(parsed))
++		end
++		callback(fields, nil)
++	end)
++end
+ 
+-			if parsed and parsed.error then
+-				return callback(nil, "Received error: " .. parsed.error.message)
++local function request_responses(model_config, msgs, format, callback)
++	-- Preserve existing chat history behavior but translate to Responses API.
++	for _, msg in ipairs(msgs) do
++		add_history_message(vim.deepcopy(msg))
++	end
++
++	local input = {}
++	for _, msg in ipairs(history or {}) do
++		-- strip file_path (internal)
++		local new_msg = {}
++		for k, v in pairs(msg) do
++			if k ~= "file_path" then
++				new_msg[k] = v
+ 			end
++		end
++		local inputs = to_responses_input(new_msg)
++		for _, inp in ipairs(inputs) do
++			table.insert(input, inp)
++		end
++	end
++
++	local body = {
++		model = model_config.model,
++		input = input,
++		store = false,
++	}
+ 
+-			if parsed.error then
+-				return callback(nil, parsed.error)
++	if config.use_tools ~= false then
++		-- Responses API expects tools to include a top-level `name`.
++		-- Reuse our Chat Completions tool defs but add `name`.
++		local function to_responses_tool(def)
++			local t = vim.deepcopy(def)
++			if t and t["function"] then
++				t = t["function"]
++				t.type = "function"
++				t.strict = true
++				t.additionalProperties = false
+ 			end
++			return t
++		end
++
++		body.tools = {
++			to_responses_tool(tools.defs["read_file"]),
++			to_responses_tool(tools.defs["shell"]),
++			to_responses_tool(tools.defs["patch"]),
++			to_responses_tool(tools.defs["summarize"]),
++		}
++	end
++
++	-- Best-effort: only enable strict JSON output if format was requested.
++	-- (This plugin historically uses `format` as a flag that content is JSON.)
++	if format ~= nil then
++		body.text = { format = { type = "json_object" } }
++	end
++
++	if model_config.options then
++		for k, v in pairs(model_config.options) do
++			body[k] = v
++		end
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("Requesting " .. responses_url .. " with " .. vim.inspect(body))
++	vim.system({
++		"curl", "-s", "-X", "POST", responses_url,
++		"-H", "Authorization: Bearer " .. api_key,
++		"-H", "Content-Type: application/json",
++		"-d", request_body,
++	}, { text = true }, function(obj)
++		if obj.code ~= 0 then
++			local err_msg = "curl returned code " .. obj.code
++			callback(nil, err_msg)
++			return
++		end
++
++		if not obj.stdout or obj.stdout == "" then
++			return callback(nil, "Received empty response from OpenAI")
++		end
+ 
+-			local message = parsed.choices[1].message
+-			local content = message.content
+-			local fields = {}
+-			if content and content ~= vim.NIL then
+-				log.debug("response content: " .. content or "")
+-				if format ~= nil then
+-					log.debug("parsing JSON content")
+-					fields.content = vim.json.decode(content)
+-					if not fields.content then
+-						return callback(nil, "Failed to decode message")
++		local parsed = vim.json.decode(obj.stdout)
++		if not parsed then
++			return callback(nil, "Failed to decode JSON response")
++		end
++		log.debug("Request response: " .. vim.inspect(parsed))
++
++		if parsed and parsed.error ~= vim.NIL then
++			return callback(nil, "Received error: " .. parsed.error.message)
++		end
++
++		local fields = {}
++
++		-- Extract final output text.
++		local output_text = parsed.output_text
++		if (not output_text or output_text == vim.NIL) and parsed.output then
++			local chunks = {}
++			for _, item in ipairs(parsed.output) do
++				if item and item.content then
++					for _, c in ipairs(item.content) do
++						if c.type == "output_text" and c.text then
++							table.insert(chunks, c.text)
++						end
+ 					end
+-				else
+-					fields.content = content
+ 				end
+ 			end
++			output_text = table.concat(chunks, "")
++		end
+ 
+-			fields.tool_calls = message.tool_calls
+-			for _, call in ipairs(fields.tool_calls or {}) do
+-				local args = call["function"].arguments
+-				call["function"].arguments = vim.json.decode(args)
++		if output_text and output_text ~= vim.NIL then
++			if format ~= nil then
++				fields.content = vim.json.decode(output_text)
++				if not fields.content then
++					return callback(nil, "Failed to decode message")
++				end
++			else
++				fields.content = output_text
++			end
++		end
++
++		-- Extract tool calls (function calls) from output.
++		fields.tool_calls = {}
++		if parsed.output then
++			for _, item in ipairs(parsed.output) do
++				if item and (item.type == "function_call" or item.type == "tool_call") then
++					local args = item.arguments
++					if type(args) == "string" then
++						local decoded = vim.json.decode(args)
++						if decoded then
++							args = decoded
++						end
++					end
++
++					local tool_call = {
++						id = item.call_id,
++						type = "function",
++						["function"] = {
++							name = item.name,
++							arguments = args or {},
++						},
++					}
++					table.insert(fields.tool_calls, tool_call)
++				end
+ 			end
+-			callback(fields, nil)
+-		end)
++		end
++
++		callback(fields, nil)
++	end)
++end
++
++function M.request(model_config, msgs, format, callback)
++	-- return request_chat_completions(model_config, msgs, format, callback)
++	return request_responses(model_config, msgs, format, callback)
+ end
+ 
+ return M
+diff --git a/lua/tai/provider.lua b/lua/tai/provider.lua
+deleted file mode 100644
+index 52db208..0000000
+--- a/lua/tai/provider.lua
++++ /dev/null
+@@ -1,5 +0,0 @@
+-local config = require('tai.config')
+-
+-if not config.provider then return nil end
+-return require('tai.' .. config.provider)
+-
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 9e230c6..794945a 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -34,7 +34,8 @@ M.defs = {
+ 						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+ 					}
+ 				},
+-				required = { "file_path" }
++				additionalProperties = false,
++				required = { "file_path", "range" }
+ 			}
+ 		}
+ 	},
+@@ -78,14 +79,16 @@ M.defs = {
+ 								content = {
+ 									type = "string",
+ 									description =
+-									"New content (omit for delete operation)",
++									"New content (empty for delete operation)",
+ 								}
+ 							},
+-							required = { "operation", "lines" }
++							additionalProperties = false,
++							required = { "operation", "lines", "content" }
+ 						}
+ 					}
+ 				},
+-				required = { "file", "changes" }
++				additionalProperties = false,
++				required = { "file", "changes", "name" }
+ 			}
+ 		}
+ 	},
+@@ -104,6 +107,7 @@ M.defs = {
+ 						"The pipeline to be interpreted by the shell in the user's machine, usually bash."
+ 					}
+ 				},
++				additionalProperties = false,
+ 				required = { "command" }
+ 			}
+ 		}
+@@ -114,6 +118,11 @@ M.defs = {
+ 			name = "summarize",
+ 			description =
+ 			"Summarizes the chat history to reduce context size. This should be used when the conversation is getting too long and the context is becoming too large. Calling this function will replace the history.",
++			parameters = {
++				type = "object",
++				properties = vim.empty_dict(),
++				additionalProperties = false
++			}
+ 		}
+ 	}
+ }
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 82454fb..62e6255 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -2,13 +2,24 @@ local M = {}
+ local log = require("tai.log")
+ local tai = require("tai.agent")
+ local tools = require("tai.tools")
++local config = require("tai.config")
+ 
+-local bufname = "tai-chat"
++local bufname_prefix = "tai-chat"
+ local input_bufname = "tai-chat-input"
+ 
+ local chat_win
+ local input_win
+ 
++function M.update_chat_name()
++	local name = bufname_prefix
++	if config and config.provider and config.model then
++		name = string.format("%s (%s/%s)", bufname_prefix, config.provider, config.model)
++	end
++	if M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
++		pcall(vim.api.nvim_buf_set_name, M.buffer_nr, name)
++	end
++end
++
+ M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+ vim.bo[M.input_buffer_nr].buftype = 'nofile'
+@@ -18,7 +29,7 @@ vim.bo[M.input_buffer_nr].filetype = 'text'
+ vim.bo[M.input_buffer_nr].modifiable = true
+ 
+ M.buffer_nr = vim.api.nvim_create_buf(false, true)
+-vim.api.nvim_buf_set_name(M.buffer_nr, bufname)
++M.update_chat_name()
+ vim.bo[M.buffer_nr].buftype = "nofile"
+ vim.bo[M.buffer_nr].bufhidden = "hide" -- keep content when hidden
+ vim.bo[M.buffer_nr].swapfile = false
+</pre>

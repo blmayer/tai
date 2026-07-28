@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai c52f430</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit c52f430
+parent <a href=commit-9c73488.html>9c73488</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-11-21T16:16:40-03:00
+
+    added z.ai support
+
+    - improved patch ui
+    - fixed patch line ranges
+
+<a href=tree-c52f430.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 62b7996..bbfdfa5 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -19,8 +19,6 @@ elseif config.provider == 'gemini' then
+ elseif config.provider == 'local' then
+ 	provider = require('tai.providers.local')
+ elseif config.provider == "mistral" then
+-	return M
+-elseif config.provider == nil then
+ 	-- do nothing
+ else
+ 	error('Unknown chat provider: ' .. config.provider)
+diff --git a/lua/tai/agents/tai.lua b/lua/tai/agents/tai.lua
+index 58df640..233dccd 100644
+--- a/lua/tai/agents/tai.lua
++++ b/lua/tai/agents/tai.lua
+@@ -14,9 +14,9 @@ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+ SYSTEM
+-You are a Tai, an excelent coding agent. You are in charge of implementing
+-the tasks requested in the current project code base. You will receive high
+-level feature requests or general questions. Your job is to address them.
++You are a Tai, an excelent coding agent. You will receive high level feature
++requests or general questions. Your job is to address/implement them in the
++current project code base.
+ 
+ The project is in ]] .. config.root .. [[, the shell's current folder is ]] ..
+     vim.uv.cwd() .. [[, you have full access to the home folder, in a ]] ..
+@@ -31,14 +31,17 @@ Understand the user's request and gather all the knowledge/context needed.
+ If the demand is specific to the current project then:
+ - Explore the code base before delivering the solution:
+   - Use the tools available to understand the code base.
+-  - A good starter is `ls -R` or `find`, reading AGENTS.md and README.md helps.
++  - A good starter is `ls -R` or `find`.
++  - Read AGENTS.md if found.
+   - The imports help you understand the code organization and structure.
+ If code changes are needed:
+ - Patches need precise line numbering, you must know the files you're changing.
+   - Be consistent with the code base's style.
+ - Don't use the run tool to change files unless explicitly told to.
+ - Call the patch tool to implement the changes you want.
+-Text must be &lt; 80cols ASCII/ANSI text, this is shown verbatim to the user.
++
++RESPONSE FORMAT
++For text use ASCII/ANSI, be concise, avoid lines &gt; 60cols, don't escape anything.
+ ]]
+ 
+ provider.add_to_history({ role = "system", content = M.system_prompt })
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index 3a72a5d..9e982b5 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -262,7 +262,7 @@ local function apply_patch(name, changes)
+ 	for _, change in ipairs(changes) do
+ 		local file = change.file
+ 
+-		vim.cmd("vsplit " .. file)
++		vim.cmd("topleft vnew " .. file)
+ 		local buf = vim.api.nvim_get_current_buf()
+ 		-- local new_buf = vim.api.nvim_create_buf(0, false)
+ 
+@@ -281,7 +281,10 @@ local function apply_patch(name, changes)
+ 			if operation == "add" then
+ 				-- Insert content after the specified lines
+ 				local new_lines = vim.split(content, '\n')
+-				vim.api.nvim_buf_set_lines(buf, start, end_line+1, false, new_lines)
++				if lines_str ~= "0" then -- If not adding before the first line (which uses index 0)
++					start = start + 1
++				end
++				vim.api.nvim_buf_set_lines(buf, start, start, false, new_lines)
+ 			elseif operation == "change" then
+ 				-- Replace lines with new content
+ 				local new_lines = vim.split(content, '\n')
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 0168774..e3ddc7b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -10,6 +10,7 @@ M.allowed_commands = {
+ 	"find",
+ 	"grep",
+ 	"head",
++	"git",
+ 	"ls",
+ 	"make",
+ 	"sort",
+@@ -38,7 +39,7 @@ M.model = "devstral-medium-latest"
+ M.summary_model = "ministral-8b-latest"
+ M.complete_model = "llama-3.3-70b-versatile"
+ M.skip_cache = false
+-M.provider = "mistral"
++M.provider = "z_ai"
+ M.root = root_path
+ M.cache_dir = M.root .. "/.tai-cache/"
+ 
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index 38df271..0d63789 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -7,25 +7,26 @@ local project = require("tai.project")
+ function M.setup(opts)
+ 	log.set_level(log.DEBUG)
+ 	project.init()
+-end
++	ui.set_chat_callback(function(input)
++		if not input or input == "" then return end
+ 
+-function input_callback(input)
+-	if not input or input == "" then return end
+-	log.debug("Received user input: " .. input)
++		vim.schedule(function()
++			ui.add_sep()
++			ui.append_to_buffer(input .. "\n")
++		end)
+ 
+-	vim.schedule(function()
+-		ui.append_to_buffer("--------------------------\n&gt; " .. input .. "\n")
++		project.chat(input)
+ 	end)
+-
+-	project.chat(input)
+ end
+ 
+ function M.toggle_chat_window()
+-	ui.toggle_chat_window(input_callback)
++	ui.toggle_chat_window()
+ end
+ 
+ function M.chat()
+-	ui.open(input_callback)
++	ui.open()
++	ui.scroll_down()
++	ui.focus_input()
+ end
+ 
+ function M.reset()
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 0d9b097..b98dea2 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -6,11 +6,12 @@ local input_bufname = "tai-chat-input"
+ 
+ local chat_win
+ local input_win
++local callback
+ 
+ M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+ vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+ vim.bo[M.input_buffer_nr].buftype = 'nofile'
+-vim.bo[M.input_buffer_nr].bufhidden = 'wipe'
++vim.bo[M.input_buffer_nr].bufhidden = 'hide'
+ vim.bo[M.input_buffer_nr].swapfile = false
+ vim.bo[M.input_buffer_nr].filetype = 'text'
+ vim.bo[M.input_buffer_nr].modifiable = true
+@@ -51,21 +52,61 @@ function M.append_to_buffer(content)
+ 	end)
+ end
+ 
+-function M.toggle_chat_window(callback)
++function M.scroll_down()
++	vim.schedule(function()
++		local original_win = vim.api.nvim_get_current_win()
++		vim.api.nvim_set_current_win(chat_win)
++		vim.api.nvim_win_set_cursor(chat_win, { vim.api.nvim_buf_line_count(M.buffer_nr), 0 })
++		vim.cmd("normal! zt")
++		vim.api.nvim_set_current_win(original_win)
++	end)
++end
++
++function M.add_sep()
++	local width = vim.api.nvim_win_get_width(chat_win)
++	local result = ""
++	for i = 1, width do
++		result = result .. "_"
++	end
++	M.append_to_buffer(result .. "\n")
++end
++
++function M.set_chat_callback(cb)
++	callback = cb
++end
++
++local function send_input()
++	vim.schedule(function()
++		M.scroll_down()
++		local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
++			'\n')
++		vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
++		callback(input)
++	end)
++end
++
++function M.toggle_chat_window()
+ 	local winid = vim.fn.bufwinnr(M.buffer_nr)
+ 	local input_winid = vim.fn.bufwinnr(M.input_buffer_nr)
+ 	if winid ~= -1 then
+ 		-- Close the window
+-		vim.api.nvim_win_close(winid, false)
++		vim.api.nvim_win_close(chat_win, false)
+ 		if input_winid ~= -1 then
+-			vim.api.nvim_win_close(input_winid, false)
++			vim.api.nvim_win_close(input_win, false)
+ 		end
+ 	else
+-		M.open(callback)
++		M.open()
+ 	end
+ end
+ 
+-function M.open(callback)
++function M.focus_input()
++	vim.schedule(function()
++		vim.api.nvim_set_current_win(input_win)
++		vim.cmd("startinsert")
++	end)
++end
++
++function M.open()
+ 	vim.schedule(function()
+ 		local chat_window_nr = vim.fn.bufwinnr(M.buffer_nr)
+ 		if chat_window_nr == -1 then
+@@ -73,23 +114,16 @@ function M.open(callback)
+ 			chat_win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(chat_win, M.buffer_nr)
+ 			vim.api.nvim_win_set_width(chat_win, 80)
++			vim.api.nvim_win_set_config(chat_win, { fixed = true })
+ 
+ 			-- Open input buffer in horizontal split below the output
+ 			vim.cmd("below split") -- horizontal split below
+ 			input_win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
+-			vim.api.nvim_win_set_height(input_win, 6) -- 6 lines for input
+-
+-			vim.keymap.set('n', '&lt;CR&gt;', function()
+-				local input = table.concat(vim.api.nvim_buf_get_lines(M.input_buffer_nr, 0, -1, false),
+-					'\n')
+-				vim.api.nvim_buf_set_lines(M.input_buffer_nr, 0, -1, false, {})
+-				callback(input)
+-			end, { buffer = M.input_buffer_nr })
+-			vim.cmd("startinsert")
+-		else
+-			vim.api.nvim_set_current_win(input_win)
+-			vim.cmd("startinsert")
++			vim.api.nvim_win_set_height(input_win, 8) -- 8 lines for input
++
++			vim.keymap.set('n', '&lt;CR&gt;', send_input, { buffer = M.input_buffer_nr })
++			vim.keymap.set('i', '&lt;S-CR&gt;', send_input, { buffer = M.input_buffer_nr })
+ 		end
+ 	end)
+ end
+@@ -126,7 +160,8 @@ function M.show_response(fields)
+ 						else
+ 							content = content ..
+ 							    "\t" ..
+-							    hunk.operation .. " " .. hunk.lines .. ":\n" .. hunk.content
++							    hunk.operation ..
++							    " " .. hunk.lines .. ":\n" .. hunk.content .. "\n"
+ 						end
+ 					end
+ 				end
+diff --git a/lua/tai/z_ai.lua b/lua/tai/z_ai.lua
+new file mode 100644
+index 0000000..dc6e51d
+--- /dev/null
++++ b/lua/tai/z_ai.lua
+@@ -0,0 +1,112 @@
++local M = {}
++
++local log = require("tai.log")
++local tools = require("tai.agents.tools")
++
++local url = "https://api.z.ai/api/paas/v4/chat/completions"
++
++local api_key = os.getenv("Z_AI_API_KEY")
++if not api_key then
++	vim.schedule(function()
++		vim.notify("[tai] ❌ Missing Z_AI_API_KEY environment variable.", vim.log.levels.ERROR)
++	end)
++end
++
++local history = nil
++
++function M.add_to_history(message)
++	if not history then
++		history = {message}
++		return
++	end
++	table.insert(history, message)
++end
++
++function M.clear_history()
++	history = nil
++end
++
++function M.request(model_config, msg, format, callback)
++	M.add_to_history(msg)
++
++	local agent_tools = vim.tbl_map(
++		function(t)
++			return tools.defs[t]
++		end,
++		model_config.tools or {}
++	)
++	local body = {
++		model = model_config.model,
++		messages = history,
++		tools = agent_tools,
++	}
++	if format then
++		body.format = format
++	end
++	if model_config.think ~= nil then
++		body.reasoning_effort = model_config.think
++	end
++	if model_config.options then
++		body.extra_body = model_config.options
++	end
++
++	local request_body = vim.json.encode(body)
++
++	log.debug("Requesting " .. url .. " with " .. request_body)
++	vim.system(
++		{
++			"curl", "-s", "-X", "POST", url,
++			"-H", "Authorization: Bearer " .. api_key,
++			"-H", "Content-Type: application/json",
++			"-d", request_body,
++		}, { text = true }, function(obj)
++			if obj.code ~= 0 then
++				local err_msg = "curl returned code " .. obj.code
++				callback(nil, err_msg)
++				return
++			end
++
++			log.debug("Request response: " .. obj.stdout)
++			if not obj.stdout or obj.stdout == "" then
++				return callback(nil, "Received empty response from Gemini")
++			end
++
++			local parsed = vim.json.decode(obj.stdout)
++			if not parsed then
++				return callback(nil, "Failed to decode JSON: " .. parsed)
++			end
++
++			if parsed and parsed.error then
++				return callback(nil, "Received error: " .. parsed.error.message)
++			end
++
++			if parsed.error then
++				return callback(nil, parsed.error.message)
++			end
++
++			local message = parsed.choices[1].message
++			local content = message.content
++			local fields = {}
++			if content and content ~= "" then
++				log.debug("response content: " .. content)
++				if format ~= nil then
++					log.debug("parsing JSON content")
++					fields.content = vim.json.decode(content)
++					if not fields.content then
++						return callback(nil, "Failed to decode message")
++					end
++				else
++					fields.content = content
++				end
++			end
++
++			fields.tool_calls = message.tool_calls
++			for _, call in ipairs(fields.tool_calls or {}) do
++				local args = call["function"].arguments
++				call["function"].arguments = vim.json.decode(args)
++			end
++			callback(fields, nil)
++		end)
++end
++
++return M
+</pre>

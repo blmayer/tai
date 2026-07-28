@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 669de04</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 669de04
+parent <a href=commit-9b0c43e.html>9b0c43e</a> 
+author Brian Mayer &lt;brianmayer@Brians-MacBook-Pro.local&gt;
+date   2025-08-30T23:30:53-03:00
+
+    nvim: improved diff generation.
+
+    - removed mime file
+
+<a href=tree-669de04.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/chat.lua b/lua/tai/chat.lua
+index ab5aecb..ce92fc0 100644
+--- a/lua/tai/chat.lua
++++ b/lua/tai/chat.lua
+@@ -175,7 +175,6 @@ function M.send(model, messages)
+ 	end
+ 
+ 	local ok, fields = pcall(json.decode, parsed.choices[1].message.content)
+-	-- local fields, err = mime.parse(parsed.choices[1].message.content)
+ 	if not ok then
+ 		vim.notify("[tai] Failed to decode message: " .. response, vim.log.levels.ERROR)
+ 		return nil
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 355586e..1b15e4b 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -9,7 +9,7 @@ function M.load(path)
+ 	if not file then return end
+ 	local ok, data = pcall(vim.fn.json_decode, file:read("*a"))
+ 	file:close()
+-	if not ok then return end
++	if not data then return end
+ 	
+ 	M.model = data.model or M.model
+ 	M.summary_model = data.summary_model or M.summary_model
+diff --git a/lua/tai/mime.lua b/lua/tai/mime.lua
+deleted file mode 100644
+index 93997ed..0000000
+--- a/lua/tai/mime.lua
++++ /dev/null
+@@ -1,62 +0,0 @@
+-local M = {}
+-
+--- returns header, body
+-local function read_until_blank_line(chunk)
+-  local i, j = chunk:find("\r?\n\r?\n")
+-  if i and j then
+-    return chunk:sub(1, i - 1), chunk:sub(j+1)
+-  else
+-    return chunk, ""
+-  end
+-end
+-
+-
+-local function parse_mime_header_name(header)
+-  local name = header:match('filename="([^"]+)"')
+-  if name then
+-    return name
+-  else
+-    return nil
+-  end
+-end
+-
+-function M.parse(raw)
+-  local result = {}
+-
+-  local start, remaining = read_until_blank_line(raw)
+-  local boundary = start:match('Content%-Type:%s+multipart/mixed;%s+boundary="([^"]+)"')
+-  if not boundary then return nil, "No boundary found" end
+-  boundary = boundary:gsub("%-", "%%%-")
+-
+-  while 1 do
+-    local _, e = remaining:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+-    if not e then
+-      break
+-    end
+-    remaining = remaining:sub(e+1)
+-    if not remaining or remaining == "" then
+-      break
+-    end
+-
+-    local header, body = read_until_blank_line(remaining)
+-    if not header then
+-      return nil, "no header part"
+-    end
+-
+-    local name = parse_mime_header_name(header)
+-    if not name then
+-      break
+-    end
+-
+-    local s = body:find("\r?\n?%-%-" .. boundary .. "%-?%-?\r?\n?")
+-    if not s then
+-      break
+-    end
+-
+-    result[name] = body:sub(1, s)
+-  end
+-
+-  return result, nil
+-end
+-
+-return M
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 66bddae..5dea774 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -18,14 +18,17 @@ Users will send coding tasks/questions, your goal is to fullfill them with succe
+ Use the summary of the project in the system prompt to guide you.
+ ONLY propose changes that solves the issue, don't suppose anything.
+ 
+-1. **Diffs**: Use the patch field to propose code changes, the content **MUST** be a **VALID** patch file.
+-  - Diffs must be generated in unified format (aka patch).
+-  - Always use LF (`\n`) line endings, never CRLF.
++1. **Patches**: Use the patch field to propose code changes, the content **MUST** be a **VALID** diff file.
++  - Add a small description of the changes in the text field.
+   - Validate the patch so it can be applied with `patch -p0`.
+-  - Use relative file paths.
+   - Don't send this part if you need further information, i.e. need to read some file or some clarification.
+-  - Add a small description of the changes in the text field.
+-  - Generate the simplest possible patch.
++Diff format (unified diff) is line-oriented:
++  - Starts with --- old_file +++ new_file
++  - @@ -old_start,old_count +new_start,new_count @@ for each hunk
++  - Lines prefixed with - (removed), + (added), or space (unchanged)
++  - Context lines (unchanged) provide anchor points
++  - Each change is a contiguous block (hunk) with 3 lines of context by default
++  - Use relative paths, LF line endings
+ 2. **Commands**: Supply the list of commands to the executed on the user's machine in the `commands` field.
+   - Commands are run in a shell and their output will be sent to you.
+   - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
+@@ -158,7 +161,7 @@ function M.init()
+ 	cache = tai_root .. "/.tai-cache/"
+ 	
+ 	config.load(tai_root .. "/.tai")
+-	if config.skip_config then
++	if config.skip_cache then
+ 		return
+ 	end
+ 
+@@ -239,7 +242,6 @@ end
+ function M.process_request(prompt)
+ 	table.insert(history, { role = "user", content = prompt })
+ 	vim.schedule(function()
+-	vim.print(history)
+ end)
+ 	local reply = chat.send(config.model, history)
+ 	if not reply then return nil end
+</pre>

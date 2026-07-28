@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai f6c040b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit f6c040b
+parent <a href=commit-fda11b1.html>fda11b1</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-03-05T17:15:10-03:00
+
+    removed read_file tool
+
+    - added support for provider tools
+    - added allowed commands so it runs automaticaly
+    - updated readme and index page
+
+<a href=tree-f6c040b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/AGENTS.md b/AGENTS.md
+index 03b266d..2d84adf 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -43,6 +43,12 @@ These notes are intended for **automated coding agents** working in this reposit
+   - Consider UX impact (how results are shown) in `lua/tai/ui.lua`.
+ 
+ - **Change default behavior**
++
++- **Add provider-side tools (e.g., web_browser)**
++  - Tools that the provider runs on their side (not executed locally).
++  - Add the tool name to `config.provider_tools` in `.tai` file.
++  - Provider implementations add these tools to the request body.
++  - Update `README.md` and `www/index.html` to document the config field.
+   - Update defaults in `config.lua`.
+   - If user-facing, update `README.md`.
+ 
+diff --git a/README.md b/README.md
+index d173dee..69f44b7 100644
+--- a/README.md
++++ b/README.md
+@@ -71,34 +71,46 @@ and load it in your `init.lua`:
+     end, { noremap = true })
+ 
+     vim.keymap.set("n", "&lt;C-w&gt;&lt;C-t&gt;", function()
+-    	require("tai").toggle_chat_window()
++      vim.schedule(tai.toggle)
+     end, { noremap = true })
+ 
+-
+-## Usage
+-
+-The default mappings will give you:
+-
+-- Use `gT` plus a motion to send a text selection to the server.
+-- Use `gP` plus a motion to send a text selection **with** a prompted input.
+-- In normal mode `&lt;leader&gt;ti` to prompt input and send.
+-- To toggle the chat window use `Ctrl+w Ctrl+t`
+-- Use `&lt;leader&gt;tr` to clear history.
+-
++## Configuration
++
++tai reads configuration from a `.tai` JSON file in your project root. The following options are supported:
++
++- `model`: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").
++- `provider`: The API provider - one of: `groq`, `gemini`, `mistral`, `z_ai`, `openai`, `openrouter`, `stepfun`, `local`, `minimax`.
++- `options`: Provider-specific options passed to the API (e.g., `temperature`, `max_tokens`). See your provider's API docs.
++- `provider_tools`: Array of provider-side tools (e.g., `["web_browser"]` for OpenAI).
++- `use_tools`: Boolean to enable/disable agent tools. Default is `true`. When `false`, the agent will not have access to file read/write or shell command tools.
++- `think`: Enable extended thinking/reasoning for models that support it.
++- `allowed_commands`: Override the default list of allowed shell commands. By default, tai allows: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`, `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`, `pwd`, `which`, `type`.
++
++Example `.tai` file:
++
++```json
++{
++	"provider": "groq",
++	"model": "llama-3.1-70b-versatile",
++	"options": {
++		"temperature": 0.7,
++		"max_tokens": 4096
++	},
++	"use_tools": true,
++	"allowed_commands": {
++		"git": true,
++		"npm": true,
++		"cargo": true
++	}
++}
++```
+ 
+ ## Requirements
+ 
+-- A `.tai` JSON file in your project root, if not found tai will not work.
+-- Neovim 0.5 or newer
+-- Unix-like OS
+-- curl
+-
+-The .tai file supports the following fields:
+-- model: The model used for chat completions.
+-- provider: The API provider (e.g., 'mistral', 'groq', 'gemini', 'local').
+-- options: Options sent to the model, specific for each provider.
+-
++- Neovim 0.10+
++- curl (for API calls)
++- An API key for your chosen provider
+ 
+ ## License
+-This project is licensed under the MIT License.
+ 
++This project is licensed under the MIT License.
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index dfc4c28..de0f76c 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -12,9 +12,8 @@ local host = vim.uv.os_uname()
+ 
+ M.system_prompt = [[
+ You are a deployed coding agent operating in a live code execution session.
+-Users will inquire you to implement coding tasks or answear general questions.
++Users will inquire you to implement coding tasks or answer general questions.
+ Project root: ]] .. config.root .. "\n" .. [[
+-Shell CWD: ]] .. vim.uv.cwd() .. "\n" .. [[
+ Machine: ]] .. host.machine .. " " .. host.sysname .. [[
+ 
+ Output rules:
+@@ -34,20 +33,19 @@ Workflow:
+ - BEFORE reading any file, verify it is directly relevant to the current task:
+   - Check imports, references, or function calls that suggest relevance
+   - Use grep to search for relevant symbols/functions
+-  - Read specific line ranges (e.g., function definition) rather than entire files
++  - Read specific line ranges (e.g. function definition) rather than entire files
+ - AVOID reading files that are not directly needed for the current task.
+   - Unnecessary file reads waste context and reduce accuracy.
+ - Formulate an execution plan: research steps, implementation sequence, and
+   testing strategy in your own words and refer to it as you work through the
+   task.
++- BEFORE you start the implementating the task inform the user of your design
++  decisions and the coding plan and ASK IF YOU SHOULD PROCEED.
++- Be file oriented and keep the user informed of your choices during the process.
+ - If you edit code: keep changes minimal and consistent, ignore unrelated issues,
+   update docs if user-facing and keep the style consistent.
+-- Keep the user informed of your choices during the process.
+ - Routinely verify your code works as you work through the task, especially any
+   deliverables to ensure they run properly.
+-- After applying a patch you should check the affected files to ensure the patch
+-  was applied correctly.
+-  - Stop after 3 attempts with failure.
+ - In the final response present a summary.
+ ]]
+ if config.use_tools == false then
+@@ -75,15 +73,9 @@ Negative numbers are counted from the end: -\\d:$: get last lines. Examples:
+ lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$;
+ last 5 lines: -5:$.",
+ 
+-## read_file
+-To read files ALWAYS use the `read_file` tool. `read_file` reads the full
+-content of a file from the file system, or if given, a range of lines, and
+-returns the content. DO NOT re-read files unnecessarily. If you need the same
+-file many times better to use `connect_file`.
+-
+ ## connect_file
+ Use `connect_file` to track files that are being actively worked on. It works
+-like `read_file` but keeps the file connected so its content stays updated in
++like `cat -n` but keeps the file connected so its content stays updated in
+ the conversation as you make changes. This is useful for files you're editing
+ or referencing frequently throughout a task. The content will automatically
+ refresh when you make changes to the file.
+@@ -108,27 +100,24 @@ IMPORTANT:
+ (context) lines, only the new lines.
+ - You can also send multiple patches in the same response, so you send many
+   small changes.
+-- Changes consider the files in the same original state of the patch.
+-- Each patch gets the files at the current state, so later patches are affected
+-  by previous ones.
+-- After a patch files remain unsaved, so the user can approve or reject.
++- Each change gets the files at the current state, so later changes or patches
++  are affected by previous ones.
++- After applying a patch you should check the affected files to ensure the patch
++  was applied correctly.
++  - Stop after 3 attempts with failure.
+ 
+ ## shell
+-To run commands ALWAYS use the `shell` tool. `shell` runs the command in the
+-project's root directory. You can use this tool to explore the codebase, run
+-builds, do file operations like renaming, changing permissions, etc. To use
+-it call the `shell` tool with the parameters:
++To run commands ALWAYS use the `shell` tool. You can use this tool to explore
++the codebase, read files, run builds, do file operations like renaming,
++changing permissions, etc. Don't use this tool to edit files.
++To use it call the `shell` tool with the parameters:
+ {
+ 	"command": "shell pipeline"
+ }
+ 
+-- Each tool execution gives you a clean env, so paths are reset to the project's
+-  folder and any set variables are cleared.
+-- NEVER USE this tool for reading or writing to files, to read files ALWAYS use
+-  the `read_file` tool, and for writing use the `patch` tool.
++- Each tool execution gives you a clean env and paths are set to the current
++  working folder: ]] .. vim.uv.cwd() .. [[ .
+ - Don't use absolute paths.
+-- If there are unsaved files ask the user to save them before running commands
+-  that need the files.
+ 
+ ## summarize
+ Use the `summarize` tool when you think the conversation context is getting too
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index de1254a..136807e 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -44,10 +44,48 @@ function M.reload()
+ 	end
+ 	M.options = data.options
+ 	M.think = data.think or nil
++	M.allowed_commands = data.allowed_commands
++	M.provider_tools = data.provider_tools
+ 
+ 	return true
+ end
+ 
+ M.reload()
+ 
++-- Provider-side tools (e.g., web_browser for OpenAI)
++M.provider_tools = nil
++
++-- Default allowed shell commands
++M.default_allowed_commands = {
++	cat = true,
++	grep = true,
++	ag = true,
++	rg = true,
++	ls = true,
++	head = true,
++	tail = true,
++	wc = true,
++	diff = true,
++	sort = true,
++	uniq = true,
++	find = true,
++	file = true,
++	stat = true,
++	date = true,
++	echo = true,
++	tree = true,
++	pwd = true,
++	which = true,
++	type = true,  -- bash built-in
++}
++
++-- Get effective allowed commands (user config or defaults)
++function M.get_allowed_commands()
++	if M.allowed_commands == nil then
++		-- Use defaults
++		return M.default_allowed_commands
++	end
++	return M.allowed_commands
++end
++
+ return M
+diff --git a/lua/tai/openai.lua b/lua/tai/openai.lua
+index b869cc1..0a36530 100644
+--- a/lua/tai/openai.lua
++++ b/lua/tai/openai.lua
+@@ -128,6 +128,12 @@ function M.request(model_config, msgs, format, callback)
+ 			to_responses_tool(tools.defs["summarize"]),
+ 			to_responses_tool(tools.defs["send_image"]),
+ 		}
++
++		if config.provider_tools then
++			for _, tool in ipairs(config.provider_tools) do
++				table.insert(body.tools, { type = tool })
++			end
++		end
+ 	end
+ 
+ 	-- Best-effort: only enable strict JSON output if format was requested.
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index 1476215..c903acf 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -15,30 +15,6 @@ Summarize all our prompts so far, don't include any file content. Follow this:
+ }
+ 
+ M.defs = {
+-	{
+-		type = "function",
+-		["function"] = {
+-			name = "read_file",
+-			description =
+-			"Reads the full content of a file from the file system, or if given, a range of lines. And returns the content with numberred lines. Don't use `cat` command, use this tool. Returns the content of the file requested always at current state.",
+-			parameters = {
+-				type = "object",
+-				properties = {
+-					file = {
+-						type = "string",
+-						description = "The path to the file to read."
+-					},
+-					range = {
+-						type = "string",
+-						description =
+-						"Optional range of lines to read, starts at 1. Formats: \\d: single line; \\d:\\d: inclusive range; $: last line; Negative numbers are counted from the end: -\\d:$: get last lines. Examples: lines 1 throught 10: 1:10; fith line: 5; tenth to last: 10:$; last 5 lines: -5:$.",
+-					}
+-				},
+-				additionalProperties = false,
+-				required = { "file" }
+-			}
+-		}
+-	},
+ 	{
+ 		type = "function",
+ 		["function"] = {
+@@ -294,9 +270,23 @@ function M.read_file(file_path, range)
+ 	return numbered_content
+ end
+ 
+-function M.run_command(cmd)
++function M.check_command(cmd)
+ 	log.debug("Running `" .. cmd .. "`")
+ 
++	local config = require("tai.config")
++	local allowed = config.get_allowed_commands()
++
++	-- Extract the base command (first word)
++	local base_cmd = cmd:match("^%s*(%w+)")
++	local is_allowed = base_cmd and allowed[base_cmd]
++
++	-- Return the base command and whether it's allowed
++	return base_cmd, is_allowed
++end
++
++function M.exec_command(cmd)
++	log.debug("Executing `" .. cmd .. "`")
++
+ 	local env = {}
+ 	for _, name in ipairs({ "PATH" }) do
+ 		env[#env + 1] = name .. "=" .. (os.getenv(name) or "")
+@@ -306,7 +296,7 @@ function M.run_command(cmd)
+ 	for _, v in ipairs(env) do
+ 		local name, value = v:match("^([^=]+)=(.*)$")
+ 		if name and value then
+-			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\''") .. "' "
++			env_prefix = env_prefix .. name .. "='" .. value:gsub("'", "'\\\\'") .. "' "
+ 		end
+ 	end
+ 
+@@ -328,19 +318,6 @@ function M.run_command(cmd)
+ end
+ 
+ function M.apply_patch(name, file, changes)
+-	log.debug("Patching " .. #changes .. " changes in " .. file)
+-
+-	-- Check if file is already open in a buffer
+-	local buf = nil
+-	for _, b in ipairs(vim.api.nvim_list_bufs()) do
+-		if vim.api.nvim_buf_is_loaded(b) then
+-			local buf_name = vim.api.nvim_buf_get_name(b)
+-			if buf_name:match("^.*/" .. file .. "$") or buf_name == file then
+-				buf = b
+-				break
+-			end
+-		end
+-	end
+ 
+ 	local is_open = false
+ 	if buf then
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 43ce2da..1af3ea8 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -152,26 +152,44 @@ local function run_tools(tool_calls)
+ 				goto continue
+ 			end
+ 
+-			log.debug("Asking for confirmation")
+-			local input = vim.fn.confirm("Run " .. args.command .. "?", "&amp;Y\n&amp;n\n&amp;s (stop)", 1)
++			-- Check if command is in allowlist
++			local _, is_allowed = tools.check_command(args.command)
++
++			if is_allowed then
++				-- Allowed command: execute directly without confirmation
++				log.debug("Executing allowed command: " .. args.command)
++				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
++				local out = tools.exec_command(args.command)
++				M.append_to_buffer((out or "") .. "\n")
++				M.append_to_buffer("}}}")
++				res.content = out
++				goto continue
++			end
++
++			-- Unknown command: ask for confirmation
++			log.debug("Asking for confirmation for: " .. args.command)
++			local input = vim.fn.confirm(
++				"Run `" .. args.command .. "`?",
++				"&amp;Y\n&amp;n\n&amp;s (stop)",
++				1
++			)
+ 			if input == 1 then
+ 				log.debug("Confirmed")
+ 				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+-				local out = tools.run_command(args.command)
++				local out = tools.exec_command(args.command)
+ 				M.append_to_buffer((out or "") .. "\n")
+-				M.append_to_buffer("}}}")
+ 				res.content = out
+ 			elseif input == 2 then
+ 				log.debug("Declined")
+ 				local comment = vim.fn.input("Comment (optional): ")
+ 				M.append_to_buffer("{{{ Declined " .. args.command .. "\n")
+ 				if comment and comment ~= "" then
+-					res.content = "[sys] User declined running this command. Comment: " .. comment
++					res.content = "[sys] User declined running this command. Comment: " ..
++					    comment
+ 					M.append_to_buffer("Comment: " .. comment .. "\n")
+ 				else
+ 					res.content = "[sys] User declined running this command"
+ 				end
+-				M.append_to_buffer("}}}")
+ 			else
+ 				local comment = vim.fn.input("Comment (optional): ")
+ 				M.append_to_buffer("{{{ Stopped at " .. args.command .. "\n")
+@@ -181,21 +199,8 @@ local function run_tools(tool_calls)
+ 				else
+ 					res.content = "[sys] User stopped the task"
+ 				end
+-				M.append_to_buffer("}}}")
+ 				stop = true
+ 			end
+-		elseif name == "read_file" then
+-			if not args.file then
+-				M.append_to_buffer("{{{ Reading file failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
+-				goto continue
+-			end
+-
+-			M.append_to_buffer("{{{ Reading " .. args.file .. "\n")
+-			res.content = tools.read_file(args.file, args.range)
+-			res.file_path = args.file
+-			res.file_range = args.range
+-			M.append_to_buffer(res.content .. "\n")
+ 			M.append_to_buffer("}}}")
+ 		elseif name == "connect_file" then
+ 			if not args.file then
+diff --git a/www/index.html b/www/index.html
+index 7dfd9ca..4b85eb8 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -73,15 +73,32 @@ clone or place &lt;i&gt;lua/tai/&lt;/i&gt; into your Neovim config dir
+ 
+ &lt;b&gt;configuring&lt;/b&gt;
+ 
+-tai only needs a simple config file located at the
+-root of your project, create a file named .tai with
+-this structure:
++tai reads configuration from a &lt;i&gt;.tai&lt;/i&gt; JSON file in your project root. The following options are supported:
++
++&lt;ul&gt;
++&lt;li&gt;&lt;i&gt;model&lt;/i&gt;: The model used for chat completions (e.g., "llama-3.1-70b-versatile", "gemini-2.0-flash").&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;provider&lt;/i&gt;: The API provider - one of: groq, gemini, mistral, z_ai, openai, openrouter, stepfun, local, minimax.&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;options&lt;/i&gt;: Provider-specific options passed to the API (e.g., temperature, max_tokens). See your provider's API docs.&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;provider_tools&lt;/i&gt;: Array of provider-side tools (e.g., ["web_browser"] for OpenAI).&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;use_tools&lt;/i&gt;: Boolean to enable/disable agent tools. Default is true. When false, the agent will not have access to file read/write or shell command tools.&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;think&lt;/i&gt;: Enable extended thinking/reasoning for models that support it.&lt;/li&gt;
++&lt;li&gt;&lt;i&gt;allowed_commands&lt;/i&gt;: Override the default list of allowed shell commands. By default, tai allows: cat, grep, ag, rg, ls, head, tail, wc, diff, sort, uniq, find, file, stat, date, echo, tree, pwd, which, type.&lt;/li&gt;
++&lt;/ul&gt;
++
++Example .tai file:
+ 
+ {
+-	"provider": string,
+-	"model": string,
+-	"options": { // optional configs for provider
+-		...
++	"provider": "groq",
++	"model": "llama-3.1-70b-versatile",
++	"options": {
++		"temperature": 0.7,
++		"max_tokens": 4096
++	},
++	"use_tools": true,
++	"allowed_commands": {
++		"git": true,
++		"npm": true,
++		"cargo": true
+ 	}
+ }
+ 
+</pre>

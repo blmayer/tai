@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai cd8a3bf</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit cd8a3bf
+parent <a href=commit-7e4d9b5.html>7e4d9b5</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-10-17T10:33:15-03:00
+
+    nvim: fixed format and tool calls responses
+
+<a href=tree-cd8a3bf.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+index 11b7787..0aefbe3 100644
+--- a/lua/tai/agents/coder.lua
++++ b/lua/tai/agents/coder.lua
+@@ -6,7 +6,7 @@ local M = {}
+ local config = require('tai.config')
+ local log = require('tai.log')
+ local ui = require('tai.ui')
+-local tools = require('tai.tools')
++local tools = require('tai.agents.tools')
+ 
+ if not config.root then
+ 	return M
+@@ -28,31 +28,33 @@ else
+ end
+ 
+ M.system_prompt = [[
+-You are a Coder Tai, an excelent coding agent. Your goal is to execute coding tasks."
++SYSTEM
++You are a Coder Tai, an excelent coding agent. You are in charge of implementing
++the tasks requested in the current project. You will receive high level
++instructions from the software architect that should be a starting point for
++the implementation. Your job is to correctly implement the code changes in the
++code base.
+ 
+-INSTRUCTIONS
+-You will receive the task definition, your job is to implement them in the
+-user's codebase. For that think like an experienced programmer:
+-- read the files you need
+-- consider the imports to understand the organization
+-- implement the task considering the constraints
+-- communicate the patcher agent of your changes
+-
+-COMPLEX TASKS
+-Sometimes the task will be too complex to be solved at once, in those cases you
+-can inform the writer agent of the need, you can also ask the user to run commands
+-on its machine to send you the output.
++You have full access to the project's code base, and a terminal in your machine,
++but you can't apply code changes.
+ 
+-TOOLS
+-You also have access to tools that will help you implement the code changes:
+-- read_file &lt;file_name&gt;: will send you the content of the file &lt;file_name&gt;
+-- run &lt;command&gt;: asks the user to run &lt;command&gt; in a shell and returns the output.
+-
+-You have access to other agents that will help you fullfil the user's goal:
+-- patcher: takes code changes and formats them in the correct format.
++You have access to other agents that will help you fullfil the task:
++- patcher: will take your code changes and apply them in the code base.
+ - writer: will inform the user what you want.
+ After figuring out the needed code changes generate intructions to the patcher
+ agent so it can correctly apply the changes in the original files.
++
++]] .. tools.pretty_info(config.coder.tools) .. [[
++
++INSTRUCTIONS
++Consider these guiding tips:
++- Understand the code base by reading files and running commands you need.
++- Consider the imports to understand the code organization.
++- Implement the task considering the constraints given.
++- Before finishing ask yourself if you correctly implemented the task.
++- Separate the changes by file making it clear what have changed.
++- Communicate the patcher agent of your changes.
++- If you receive a plan, stick to it, but you can add more detailed steps.
+ The patcher agent will create an ed script from the code changes you send. So
+ make sure to explain your changes, including:
+ - the file name
+@@ -60,7 +62,14 @@ make sure to explain your changes, including:
+ - the new content
+ Only use the patcher to implement code changes that are complete, don't issue
+ partial solutions.
+-To the writer agent you can pass intructions about what the user needs to do, eg. executing commands, or general comments.
++To the writer agent you can pass intructions about what the user needs to do,
++eg. executing commands that are not allowed, or general comments/details.
++
++COMPLEX TASKS
++Sometimes the task will be too complex to be solved at once, in those cases you
++can inform the writer agent of the need, you can also ask the user to run commands
++on its machine to send you the output.
++
+ 
+ RESPONSE FORMAT
+ Return ONLY a JSON object, no markdown, no code fences (```), with the format:
+@@ -91,29 +100,38 @@ function M.task(task, callback)
+ 		{ role = "system", content = M.system_prompt },
+ 		{ role = "user", content = task },
+ 	}
++	provider.request(
++		config.coder,
++		messages,
++		response_format,
++		function(data, err) callback(data, err) end
++	)
++end
++
++function M.run_tools(tool_calls, callback)
++	log.info("Planner running tooks")
++
++	local out = tools.run(tool_calls)
++	local messages = {
++		{ role = "system", content = M.system_prompt },
++		{ role = "tool", content = out },
++	}
++
+ 	provider.request(
+ 		config.coder,
+ 		messages,
+ 		response_format,
+ 		function(data, err)
+-			if data.tools then
+-				ui.show_tool_calls(data.tools)
+-				local out = tools.run(data.tools)
+-				table.insert(messages, { role = "tool", content = out })
+-
+-				provider.request(
+-					config.coder,
+-					messages,
+-					response_format,
+-					function(data, err)
+-						callback(data, err)
+-					end
+-				)
+-				return
+-			end
++			table.insert(
++				history,
++				{
++					role = "assistant",
++					content = vim.json.encode(data.content),
++					tool_calls = data.tool_calls,
++				}
++			)
+ 			callback(data, err)
+ 		end
+ 	)
+ end
+-
+ return M
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+index 13541ef..af6d4b8 100644
+--- a/lua/tai/agents/planner.lua
++++ b/lua/tai/agents/planner.lua
+@@ -47,32 +47,42 @@ After your response the other agents will be called.
+ 
+ INSTRUCTIONS
+ These are general guiding tips you should follow while working:
+-- Understand the user request, the problem and the context
+-- Examinate the code base if you need, use the tools you have access to help
+-- Think on the path to the solution and the constraints, and elaborate a plan
+-If code changes are needed:
+-- Generate a detailed set of instructions to the coder agent so that:
+-  - The agent can know what the user wants
+-  - You will facilitate its job by giving more context and pointing to files
+-- Don't use other tools or agents to make changes, only the coder can do it
++- Understand the user request, the problem and the context.
++- Evaluate if the user wants to implement something in the code base.
++- Examinate the code base if you need, use the tools you have access to help.
++- Think on the path to the solution and the constraints, and elaborate a plan.
++If code changes are needed send instructions for the coder agent:
++- Make sure you have concrete evidence that your plan will implement the demand.
++- Generate a detailed set of instructions to the coder agent:
++  - Indicate the files that are a good starting point.
++  - Give tips about the implementation, like imports, good pratices and style.
++  - Include a description of the user's task.
++  - Try to facilitate its job by giving more context and pointing to files.
++- Don't use other tools or agents to make changes, only the coder can do it.
+ In any case:
+ - Write to the writer agent the text for the user.
++- Include the plan (if any) so agents can follow.
++- The writer agent only shows text to the user, don't use it for anything else.
++- Before giving an answer ask yourself if it actualy solves the user's demand.
+ 
+ USING PLANS
+ For solutions that will need many steps, generate a step by step plan and
+-send it to the agents, so they can keep track of progress.
++send it to the agents, so they can keep track of progress. Be explicit about
++the plan so agents can understand it.
++- use [ ] and [X] for todo and done steps
++- use identation to make sub steps
+ 
+ RESPONSE FORMAT
+ Return ONLY a JSON object, no code fences (```), no markdown, with the format:
+ {
+-	"coder": "instructions to the coder agent (optional)",
+-	"writer": "instructions or text to the writer agent (required)"
++	"coder": string,
++	"writer": string
+ }
+-Note: don't add the field "coder" if unecessary.
++IMPORTANT: Never send empty responses and ALWAYS format it correctly.
+ ]]
+ 
++
+ local response_format = {
+-	name = "planner response",
+ 	type = "object",
+ 	properties = {
+ 		coder = {
+@@ -97,7 +107,7 @@ function M.plan(prompt, callback)
+ 	provider.request(
+ 		config.planner,
+ 		history,
+-		response_format,
++		"json",
+ 		function(data, err)
+ 			table.insert(
+ 				history,
+diff --git a/lua/tai/agents/tools.lua b/lua/tai/agents/tools.lua
+index 8ca3b77..132bff4 100644
+--- a/lua/tai/agents/tools.lua
++++ b/lua/tai/agents/tools.lua
+@@ -46,7 +46,7 @@ function M.pretty_info(tools)
+ 		return ""
+ 	end
+ 
+-	local pre = "You also can use tools (depending on user configuration):\n"
++	local pre = "You also can use the following tool calls:\n"
+ 	local tools_desc = vim.tbl_map(
+ 		function(t)
+ 			local desc = M.defs[t]["function"].description
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+index 5f93f67..960e705 100644
+--- a/lua/tai/agents/writer.lua
++++ b/lua/tai/agents/writer.lua
+@@ -33,7 +33,8 @@ user-facing text in the `text` field.
+ - Use maximum of 80 characters per line.
+ - You can include ASCII tables, diagrams, art etc if needed.
+ - Format the commands and plan as lists on the respective fields.
+-Collect the plan steps (if any), and format then correctly in the `plan` field:
++Collect the plan steps (if any), agents will be explicit about plans, don't
++assume anything, and format then correctly in the `plan` field:
+ - use [ ] and [X] for todo and done steps
+ - don't add numbering
+ - use identation to make sub steps
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index db46650..e526b98 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -19,9 +19,7 @@ function M.prompt_input()
+ 		log.debug("Received user input: " .. input)
+ 
+ 		local path = vim.fn.expand("%")
+-		local row, col = unpack(vim.api.nvim_win_get_cursor(0))
+-		local location = string.format("line %d, column %d", row, col)
+-		local prompt = string.format("I'm edditing %s with cursor at %s. Q: %s", path, location, input)
++		local prompt = string.format("I'm looking at %s. Q: %s", path, input)
+ 
+ 		ui.append_to_buffer("=====================================\n&gt; " .. input)
+ 
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 66430d5..8ce46d9 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -64,17 +64,33 @@ local function handle_coder_req(req, cb)
+ 	log.debug("handling coder request: " .. req)
+ 	coder.task(
+ 		req,
+-		function(data, err)
+-			if data.content.patcher then
+-				log.debug("coder reply to patcher: " .. data.content.patcher)
++		function(reply, err)
++			if reply.tool_calls then
++				ui.show_tool_calls(reply.tool_calls)
++				coder.run_tools(
++					reply.tool_calls,
++					function(data, err)
++						if err then
++							ui.show_response({ error = err })
++							return
++						end
++						return handle_coder_req(data.content.coder, cb)
++					end
++				)
++				return
++			end
++			if reply.content.patcher then
++				log.debug("coder reply to patcher: " .. reply.content.patcher)
+ 				patcher.create_patch(
+-					data.content.patcher,
++					reply.content.patcher,
+ 					function(p, err) 
+ 						log.debug("patcher reply: " .. p)
+-						cb(data.content.writer, p)
++						cb({ content = { writer = reply.content.writer, patcher = p } }, nil)
+ 					end
+ 				)
++				return
+ 			end
++			cb({ content = { writer = reply.content.writer } }, nil)
+ 		end
+ 	)
+ end
+@@ -97,12 +113,13 @@ local function handle_planner_reply(reply)
+ 		return
+ 	end
+ 
+-	if not reply.content.writer then
+-		log.error("planner did not sent writer field")
+-		ui.show_response({ error = "[tai] Planner did not sent writer field" })
+-		return
+-	end
+ 	if not reply.content.coder then
++		if not reply.content.writer then
++			log.error("planner did not sent writer field")
++			ui.show_response({ error = "[tai] Planner did not sent writer field" })
++			return
++		end
++
+ 		log.debug("calling writer after planner: " .. reply.content.writer)
+ 		writer.write(
+ 			reply.content.writer,
+@@ -122,13 +139,16 @@ local function handle_planner_reply(reply)
+ 	handle_coder_req(
+ 		reply.content.coder,
+ 		function(res, err)
++			if reply.content.writer then
++				res.content.writer = reply.content.writer .. "\n\n" .. res.content.writer
++			end
+ 			writer.write(
+-				reply.content.writer .. res.text,
++				res.content.writer,
+ 				function(data, err)
+ 					ui.show_response(
+ 						{
+ 							unpack(data),
+-							patch = res.patch
++							patch = res.content.patcher
+ 						}
+ 					)
+ 				end
+@@ -160,6 +180,7 @@ function M.process_request(prompt)
+ 		function(reply, err)
+ 			if err then
+ 				log.error("received error from planner: " .. err)
++				ui.show_response({ error = err })
+ 				return
+ 			end
+ 
+diff --git a/lua/tai/providers/local.lua b/lua/tai/providers/local.lua
+index e674957..3f51013 100644
+--- a/lua/tai/providers/local.lua
++++ b/lua/tai/providers/local.lua
+@@ -19,7 +19,7 @@ function M.request(model_config, messages, format, callback)
+ 		tools = agent_tools,
+ 	}
+ 	if format then
+-		body.response_format = format
++		body.format = format
+ 	end
+ 	if model_config.think ~= nil then
+ 		body.think = model_config.think
+</pre>

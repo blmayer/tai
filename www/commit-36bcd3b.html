@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 36bcd3b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 36bcd3b
+parent <a href=commit-f385ae4.html>f385ae4</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-07-30T14:39:27-03:00
+
+    nvim: added trace logs
+
+<a href=tree-36bcd3b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/nvim-tai/chat.lua b/nvim-tai/chat.lua
+index a983477..f6a665e 100644
+--- a/nvim-tai/chat.lua
++++ b/nvim-tai/chat.lua
+@@ -71,6 +71,7 @@ function M.send_chat(messages)
+ 		end)
+ 		return nil
+ 	end
++	vim.notify("[tai] Groq response: " .. response, vim.log.levels.TRACE)
+ 
+ 	local ok, parsed = pcall(json.decode, response)
+ 	if not ok then
+diff --git a/nvim-tai/project.lua b/nvim-tai/project.lua
+index 8f6ca0a..20c4163 100644
+--- a/nvim-tai/project.lua
++++ b/nvim-tai/project.lua
+@@ -73,15 +73,15 @@ function M.request_file_prompt(filepath, prompt)
+ end
+ 
+ function M.process_request(prompt)
+-	vim.notify("[tai] processing request: " .. prompt)
++	vim.notify("[tai] processing request: " .. prompt, vim.log.levels.TRACE)
+ 	local messages = vim.deepcopy(history)
+ 	table.insert(messages, { role = "user", content = prompt })
+ 
+ 	local reply = chat.send_chat(messages)
+ 	if not reply then return nil end
++	vim.notify("[tai] received response: text: " .. reply.text or "" .. "\npatch: " .. reply.patch or "", vim.log.levels.TRACE)
+ 
+ 	table.insert(history, { role = "assistant", content = reply })
+-	print(reply)
+ 	return reply
+ end
+ 
+diff --git a/nvim-tai/ui.lua b/nvim-tai/ui.lua
+index 3d17b1d..1f82f56 100644
+--- a/nvim-tai/ui.lua
++++ b/nvim-tai/ui.lua
+@@ -11,8 +11,8 @@ function M.show_response(fields)
+   vim.schedule(function()
+     vim.cmd("vnew")
+     local new_win = vim.api.nvim_get_current_win()
++    vim.api.nvim_win_set_width(new_win, 60)
+     local bufnr = vim.api.nvim_get_current_buf()
+-    vim.api.nvim_win_set_width(new_win, 40)
+ 
+     -- Set buffer options to make it a scratch window
+     vim.bo[bufnr].buftype = "nofile"
+</pre>

@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai df2c009</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit df2c009
+parent <a href=commit-b939464.html>b939464</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2026-04-20T00:22:13-03:00
+
+    added division of labor: plaaner and coder agents
+
+<a href=tree-df2c009.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/lua/tai/agent.lua b/lua/tai/agent.lua
+index abf9669..93943b2 100644
+--- a/lua/tai/agent.lua
++++ b/lua/tai/agent.lua
+@@ -8,40 +8,98 @@ end
+ 
+ local host = vim.uv.os_uname()
+ 
+-local default_system_prompt = [[
++local tool_usage = [[
++You can use tools to help on your task.
++
++- Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
++  file in sequence is useless.
++- Do NOT guess file paths — verify they exist with directory listing or `find`
++  commands before trying to read or edit them.
++- The shell tool already starts at the project's root folder. **Do NOT prepend
++  commands with `cd ... &amp;&amp;`** — it is unnecessary and can lead to errors.
++- ALWAYS use relative paths.
++- Avoid unnecessary redirections or complex shell pipelines unless required for
++  the task. But be carefull of commands that can have enourmous output.
++- The output of tool calls are sent to you, so you can keep iterating on the
++  task, if you need input from the user or when you are done, don't emit tool
++  calls.
++]]
++
++M.planner_system_prompt = [[
++You are a software architect agent. You have read only access to the project's
++codebase in the current folder: ]] .. config.root .. [[
++
++Your job is to receive user's requests and coordinate the implementation with
++the coder agent. NEVER attempt to implement tasks, or write to files, only the
++coder agent is allowed.
++
++Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
++
++## Guidelines
++
++- For general questions answer right away.
++- For questions about the current project: explore the project for the answer.
++- If coding is needed: 
++  1. Make sure you scrutinized the issue and explored the codebase so you are
++     confident you understood it deeply and the solution will work. You don't
++     need to ask permission at this stage. Explore at will.
++  2. Generate a detailed list of changes (if needed), separated by file, with
++     instructions of what to change, including file names, line numbers,
++     function names etc that builds up the solution like a dependency graph. Be
++     file/class/function oriented. You can also give any other information that
++     can help the agent to correcty implement the tasks. If changes are not
++     needed go to 6.
++  3. Show the plan and request authorization and in positive case call the
++     `coder_agent` tool with the detailed list to start the implementation.
++  4. Verify if the solution implemented works and satisfies the user's request.
++  5. If it does show a summary of what changed and how the solution works. If
++     it doesn't generate a new plan based on the current state, with the fixes
++     needed and call the `coder_agent` tool with the new plan.
++  6. When the task is finished get the response from the coder agent (if any)
++     and summarize it to the user.
++- Each call to the coder agent starts with a clean context, so if you want the
++  agent to consider past interactions include the content in the prompt.
++
++### Tool Usage
++]] .. tool_usage
++
++M.planner_system_prompt = config.planner_system_prompt or M.planner_system_prompt
++if config.custom_prompt and config.custom_prompt ~= "" then
++	M.planner_system_prompt = M.planner_system_prompt .. "\n" .. config.custom_prompt
++end
++
++M.coder_system_prompt = [[
+ You are a master programmer agent. You have read/write access to the
+ project's codebase in the current folder: ]] .. config.root .. [[
+ 
+-Your goal is to complete the tasks requested by the user with high precision
+-and reliability.
++Your job is to implement the tasks requested by the software architect with
++high precision and reliability.
++
++Current time is ]] .. os.date("%Y-%m-%d %H:%M:%S %Z") .. [[
+ 
+ ## Guidelines
+ 
+-- For general questions answer right away.
+-- For questions about the current project: explore the project for the answer
+-- If coding is needed: explore the project to understand the requirements and
+-  break down the task in smaller tasks. Create an implementation plan that is
+-  complete and concise, solving each smaller task that builds up the solution.
+-  Show it to the user and ask if you can start working on it. Then use the
+-  `patch` tool to create/edit needed files. Use one call for each change, so
+-  each smaller task can be done in a round of patches.
+-- Avoid reading unnecessary files for the task or running shell commands that
+-  give you partial results.
+-
+-## Guidelines for Patch Creation
++- Systematicaly implement each item of the task requested.
++- Avoid changing anything not extrictly asked for.
++- ALWAYS use line ranges if given to you instead of reading the whole file.
++- Call the `patch` tool with the proper arguments to actualy write the changes.
++- When you finish all tasks tell which files and lines you changed, what you
++  changed in the functions, be detailed.
++- Your last output is sent to the software architect so please include your
++  failures, things that need improvement, and your difficulties so it can 
++  re-evaluate the problem if needed. 
++
++### Patch Creation
+ 
+ When you need to create or modify files use the patch tool, follow these rules
+ to ensure patches are correct and minimal:
+ 
+-- **Analyze before acting:** Before proposing a change, read the entire file
+-  or the relevant sections to understand the context (imports, variable
+-  definitions, existing logic).
+ - **Small, focused patches:** Aim for the smallest possible changes that
+   accomplishes the task. The best patches change only a few lines and don't
+   include surrounding lines. Emit multiple calls if needed.
+-- **Verify line numbers and content:** When using tools to edit files, ensure
+-  you are targeting the correct lines and that the content you are
+-  replacing/adding is consistent with the file's current state. Beware that
++- **Verify line numbers and content:** Ensure you are targeting the correct
++  lines and that the content you are replacing/adding is consistent with the
++  file's current state by calling the `track_file` or `shell` tools. Beware that
+   a patch is affected by previous ones, so account for line number changes and
+   adjust the numbers.
+ - **Respect existing style:** Follow the existing coding style, indentation,
+@@ -49,22 +107,7 @@ to ensure patches are correct and minimal:
+ - **Valid path verification:** Ensure needed folders exist before creating a
+   new file.
+ 
+-## Guidelines for Tool Usage
+-
+-- Avoid repeating tool calls, e.g. calling `track_file` or `ls` for the same
+-  file in sequence is useless.
+-- Do NOT guess file paths — verify they exist with directory listing or `find`
+-  commands before trying to read or edit them.
+-- The shell tool already starts at the project's root folder. **Do NOT prepend
+-  commands with `cd ... &amp;&amp;`** — it is unnecessary and can lead to errors. Use
+-  relative paths instead.
+-- Avoid unnecessary redirections or complex shell pipelines unless required for
+-  the task.
+-]]
+-
+-M.system_prompt = config.system_prompt or default_system_prompt
+-if config.custom_prompt and config.custom_prompt ~= "" then
+-	M.system_prompt = M.system_prompt .. "\n" .. config.custom_prompt
+-end
++### Tool Usage
++]] .. tool_usage
+ 
+ return M
+diff --git a/lua/tai/local.lua b/lua/tai/local.lua
+index cd38c57..c65fb73 100644
+--- a/lua/tai/local.lua
++++ b/lua/tai/local.lua
+@@ -6,34 +6,15 @@ local tools = require("tai.tools")
+ local config = require("tai.config")
+ local url = 'http://localhost:11434/v1/chat/completions'
+ 
+-local history = nil
+-
+-function M.add_to_history(message)
+-	local msg = vim.deepcopy(message)
+-	if not history then
+-		history = { msg }
+-		return
+-	end
+-	table.insert(history, msg)
+-end
+-
+-function M.clear_history()
+-	history = nil
+-end
+-
+ local function build_body(model_config, msgs, format)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+ 	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
++	tools.refresh_connected_files(msgs)
+ 
+-	local agent_tools = common.build_request_tools("chat_completions")
++	local agent_tools = common.build_request_tools("chat_completions", model_config.tools)
+ 
+ 	local body = {
+ 		model = model_config.model,
+-		messages = common.filter_messages(history),
++		messages = common.filter_messages(msgs),
+ 	}
+ 
+ 	if config.use_tools ~= false and #agent_tools &gt; 0 then
+@@ -58,12 +39,8 @@ local function build_body(model_config, msgs, format)
+ end
+ 
+ function M.request(model_config, msgs, format, callback)
+-	for _, msg in ipairs(msgs) do
+-		M.add_to_history(msg)
+-	end
+-
+ 	-- Keep connected files up to date in history before sending.
+-	tools.refresh_connected_files(history)
++	tools.refresh_connected_files(msgs)
+ 
+ 	local body = {
+ 		model = model_config.model,
+@@ -71,9 +48,9 @@ function M.request(model_config, msgs, format, callback)
+ 	}
+ 
+ 	if config.use_tools ~= false then
+-		body.tools = common.build_request_tools("chat_completions")
++		body.tools = common.build_request_tools("chat_completions", model_config.tools)
+ 	end
+-	body.messages = common.filter_messages(history)
++	body.messages = common.filter_messages(msgs)
+ 
+ 	if format == "json_object" then
+ 		body.response_format = { type = "json_object" }
+@@ -112,6 +89,8 @@ end
+ 
+ -- Streaming request function
+ function M.request_stream(model_config, msgs, format, on_chunk, on_complete)
++	log.debug("[PROV] stream request " .. vim.inspect(model_config))
++
+ 	local body = build_body(model_config, msgs, format)
+ 	body.stream = true
+ 
+diff --git a/lua/tai/provider_common.lua b/lua/tai/provider_common.lua
+index 172b632..6079388 100644
+--- a/lua/tai/provider_common.lua
++++ b/lua/tai/provider_common.lua
+@@ -26,7 +26,7 @@ end
+ 
+ -- Build tools for request, including provider tools
+ -- api_format: "responses" for OpenAI Responses API, "chat_completions" for Chat Completions API
+-function M.build_request_tools(api_format)
++function M.build_request_tools(api_format, tool_list)
+ 	local request_tools = {}
+ 
+ 	-- Add local tools based on API format
+@@ -43,16 +43,14 @@ function M.build_request_tools(api_format)
+ 			return t
+ 		end
+ 
+-		request_tools = {
+-			to_responses_tool(tools.defs["read_file"]),
+-			to_responses_tool(tools.defs["shell"]),
+-			to_responses_tool(tools.defs["patch"]),
+-			to_responses_tool(tools.defs["summarize"]),
+-			to_responses_tool(tools.defs["send_image"]),
+-		}
++		for _, tool in ipairs(tool_list) do
++			table.insert(request_tools, to_responses_tool(tools.defs[tool]))
++		end
+ 	else
+ 		-- Chat Completions API: use standard tool format
+-		request_tools = vim.deepcopy(tools.defs)
++		for _, tool in ipairs(tool_list) do
++			table.insert(request_tools, tools.defs[tool])
++		end
+ 	end
+ 
+ 	-- Add provider-side tools (e.g., web_search)
+diff --git a/lua/tai/tools.lua b/lua/tai/tools.lua
+index bb43694..575be12 100644
+--- a/lua/tai/tools.lua
++++ b/lua/tai/tools.lua
+@@ -3,20 +3,8 @@ local M = {}
+ local log = require('tai.log')
+ local config = require("tai.config")
+ 
+-M.summary_msg = {
+-	role = "user",
+-	content = [[
+-Summarize all our prompts so far, don't include any file content. Follow this:
+-- Retain any important info about the project, file structure etc
+-- Make a brief summary of the chat.
+-- if there is an ongoing operation also include:
+-  - important file content.
+-  - the task definition, progress and the next steps.
+-]]
+-}
+-
+ M.defs = {
+-	{
++	track_file = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "track_file",
+@@ -41,7 +29,7 @@ M.defs = {
+ 			}
+ 		}
+ 	},
+-	{
++	patch = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "patch",
+@@ -63,13 +51,13 @@ M.defs = {
+ 					operation = {
+ 						type = "string",
+ 						description =
+-						"Operation of this change: add will append the content after the line or interval; update will substitute the whole range with the content; delete will erase the lines in range.",
++						"Operation of this change: add will insert the content after the line in 'range' parameter; update will substitute the range with the content; delete will erase the lines in range.",
+ 						enum = { "add", "update", "delete" }
+ 					},
+ 					range = {
+ 						type = "string",
+ 						description =
+-						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add)",
++						"Range of lines this operation affects, colon separated. 1-based: N (single), N:M (range), $ (last), -N:$ (last N), -N (Nth from end), 0 (before first for add). For 'add' operation only a single line is valid.",
+ 					},
+ 					content = {
+ 						type = "string",
+@@ -82,7 +70,7 @@ M.defs = {
+ 			}
+ 		}
+ 	},
+-	{
++	shell = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "shell",
+@@ -102,20 +90,26 @@ M.defs = {
+ 			}
+ 		}
+ 	},
+-	{
++	coder_agent = {
+ 		type = "function",
+ 		["function"] = {
+-			name = "summarize",
++			name = "coder_agent",
+ 			description =
+-			"Summarizes the chat history to reduce context size. This should be used when the conversation is getting too long and the context is becoming too large. Calling this function will replace the history.",
++			"This tool calls the coder agent to start working on the tasks sent. It will return a summary of the actions taken during the course of the implementation.",
+ 			parameters = {
+ 				type = "object",
+-				properties = vim.empty_dict(),
+-				additionalProperties = false
++				properties = {
++					prompt = {
++						type = "string",
++						description = "Detailed instructions of what to implement, how to behave, what to look for and what is the task. And any other information that can help in the implementation.",
++					}
++				},
++				additionalProperties = false,
++				required = { "prompt" }
+ 			}
+ 		}
+ 	},
+-	{
++	send_image = {
+ 		type = "function",
+ 		["function"] = {
+ 			name = "send_image",
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 190d0dd..1ed6259 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,5 +1,5 @@
+ local M = {}
+-local pending_tool_call = nil
++
+ local log = require("tai.log")
+ local tools = require("tai.tools")
+ local config = require("tai.config")
+@@ -16,8 +16,18 @@ local input_bufname = "tai-chat-input"
+ local chat_win
+ local input_win
+ 
++local planner_history = { { role = "system", content = agent.planner_system_prompt } }
++local coder_history = { { role = "system", content = agent.coder_system_prompt } }
++
++local planner_config = vim.deepcopy(config)
++local coder_config = vim.deepcopy(config)
++planner_config.tools = { "track_file", "shell", "send_image", "coder_agent" }
++coder_config.tools = { "track_file", "shell", "send_image", "patch" }
++
+ -- Global stop flag for hard stop command
+ local hard_stop = false
++local pending_tool_calls = nil
++local pending_confirmation = nil
+ 
+ function M.init()
+ 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false) -- scratch buffer, not listed
+@@ -70,6 +80,32 @@ function M.init()
+ 	M.update_chat_name()
+ end
+ 
++function M.append(content)
++	local new_lines = vim.split(content, "\n")
++
++	local function do_append()
++		local line_num = vim.api.nvim_buf_line_count(M.buffer_nr)
++		local cur_content = vim.api.nvim_buf_get_lines(M.buffer_nr, -2, -1, false)
++
++		-- Non-streaming mode: append new lines normally
++		if not cur_content or not cur_content[1] then
++			-- Buffer is empty, replace it
++			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 0, false, new_lines)
++		else
++			-- Append new lines to the end (after the last line)
++			cur_content[1] = cur_content[1] .. content
++			local new_content = vim.split(cur_content[1], "\n")
++			vim.api.nvim_buf_set_lines(M.buffer_nr, line_num - 1, line_num, false, new_content)
++		end
++	end
++
++	if vim.in_fast_event() then
++		vim.schedule(do_append)
++	else
++		do_append()
++	end
++end
++
+ local function update_token_display(token_count)
+ 	local name = input_bufname
+ 	if token_count then
+@@ -90,49 +126,6 @@ function M.update_chat_name()
+ 	end
+ end
+ 
+-function M.append_to_buffer(content)
+-	local new_lines = vim.split(content, "\n")
+-
+-	local function do_append()
+-		local current_lines_count = vim.api.nvim_buf_line_count(M.buffer_nr)
+-		if current_lines_count == 1 and vim.api.nvim_buf_get_lines(M.buffer_nr, 0, 1, false)[1] == "" then
+-			-- If buffer is essentially empty (one empty line), replace it
+-			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+-		else
+-			-- Append to existing content
+-			vim.api.nvim_buf_set_lines(M.buffer_nr, current_lines_count, current_lines_count, false,
+-				new_lines)
+-		end
+-	end
+-
+-	if vim.in_fast_event() then
+-		vim.schedule(do_append)
+-	else
+-		do_append()
+-	end
+-end
+-
+-local function append_streaming(content)
+-	local new_lines = vim.split(content, "\n")
+-
+-	local function do_append()
+-		local line_num = vim.api.nvim_buf_line_count(M.buffer_nr)
+-		local cur_content = vim.api.nvim_buf_get_lines(M.buffer_nr, -2, -1, false)
+-
+-		if line_num == 1 and cur_content[1] == "" then
+-			vim.api.nvim_buf_set_lines(M.buffer_nr, 0, 1, false, new_lines)
+-		else
+-			content = cur_content[1] .. content
+-			vim.api.nvim_buf_set_lines(M.buffer_nr, line_num - 1, line_num, false, vim.split(content, "\n"))
+-		end
+-	end
+-
+-	if vim.in_fast_event() then
+-		vim.schedule(do_append)
+-	else
+-		do_append()
+-	end
+-end
+ 
+ function M.focus_input()
+ 	vim.schedule(function()
+@@ -154,13 +147,13 @@ local function scroll_down()
+ 	end)
+ end
+ 
+-local function add_sep()
++local function add_sep(title)
+ 	local width = vim.api.nvim_win_get_width(chat_win)
+-	local result = ""
+-	for _ = 1, width do
++	local result = title
++	for _ = 1, width - #title do
+ 		result = result .. "_"
+ 	end
+-	M.append_to_buffer(result .. "\n")
++	M.append("\n" .. result .. "\n")
+ end
+ 
+ local function refresh_and_close_folds()
+@@ -177,6 +170,8 @@ local function refresh_and_close_folds()
+ end
+ 
+ local function run_tools(tool_calls)
++	M.append("\n")
++	-- pending_tool_calls = tool_calls
+ 	local results = {}
+ 	local stop = false
+ 	local inputs = {}
+@@ -190,101 +185,90 @@ local function run_tools(tool_calls)
+ 			role = "tool",
+ 			name = name,
+ 			tool_call_id = call.id,
+-		}
++               }
+ 
+-		-- Check for hard stop before each tool
+ 		if hard_stop then
+ 			goto continue
+ 		end
+ 
+ 		if name == "shell" then
+ 			if not tools.unsafe_command(args.command) then
+-				-- Allowed command: execute directly without confirmation
+ 				log.debug("Executing allowed command: " .. args.command)
+-				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
++				M.append("{{{ Running: " .. args.command .. "\n")
+ 				local out = tools.exec_command(args.command)
+-				M.append_to_buffer((out or "") .. "\n}}}\n")
++				M.append((out or "") .. "\n}}}")
+ 				res.content = out
+ 				goto continue
+-			end
+-
+-			-- Unknown command: ask for confirmation
+-			log.debug("Asking for confirmation for: " .. args.command)
+-			local input = vim.fn.confirm(
+-				"Run `" .. args.command .. "`?",
+-				"&amp;Y\n&amp;n\n&amp;s (stop)",
+-				1
+-			)
+-			if input == 1 then
+-				log.debug("Confirmed")
+-				M.append_to_buffer("{{{ Running: " .. args.command .. "\n")
+-				local out = tools.exec_command(args.command)
+-				M.append_to_buffer((out or ""))
+-				res.content = out
+-			elseif input == 2 then
+-				log.debug("Declined")
+-				local comment = vim.fn.input("Comment (optional): ")
+-				M.append_to_buffer("{{{ Declined " .. args.command .. "\n")
+-				if comment and comment ~= "" then
+-					res.content = "[sys] User declined running this command. Comment: " ..
+-					    comment
+-					M.append_to_buffer("Comment: " .. comment)
+-				else
+-					res.content = "[sys] User declined running this command"
+-				end
+ 			else
+-				local comment = vim.fn.input("Comment (optional): ")
+-				M.append_to_buffer("{{{ Stopped at " .. args.command)
+-				if comment and comment ~= "" then
+-					res.content = "[sys] User stopped the task. Comment: " .. comment
+-					M.append_to_buffer("Comment: " .. comment)
++				local input = vim.fn.confirm(
++						"Run `" .. args.command .. "`?",
++						"&amp;Y\n&amp;n\n&amp;s (stop)",
++						1
++				)
++				if input == 1 then
++					log.debug("Confirmed")
++					M.append("{{{ Running: " .. args.command .. "\n")
++					local out = tools.exec_command(args.command)
++					M.append((out or ""))
++					res.content = out
++				elseif input == 2 then
++					log.debug("Declined")
++					local comment = vim.fn.input("Comment (optional): ")
++					M.append("{{{ Declined " .. args.command .. "\n")
++					if comment and comment ~= "" then
++						res.content = "[sys] User declined running this command. Comment: " .. comment
++						M.append("Comment: " .. comment)
++					else
++						res.content = "[sys] User declined running this command"
++					end
+ 				else
+-					res.content = "[sys] User stopped the task"
++					local comment = vim.fn.input("Comment (optional): ")
++					M.append("{{{ Stopped at " .. args.command)
++					if comment and comment ~= "" then
++						res.content = "[sys] User stopped the task. Comment: " .. comment
++						M.append("Comment: " .. comment)
++					else
++						res.content = "[sys] User stopped the task"
++					end
++					stop = true
+ 				end
+-				stop = true
+ 			end
+-			M.append_to_buffer("\n}}}\n")
++			M.append("\n}}}\n")
+ 		elseif name == "track_file" then
+-			if not args.file then
+-				M.append_to_buffer("{{{ Attaching file failed: no file field.\n}}}")
+-				res.content = "[sys] missing file field"
+-				goto continue
+-			end
+-			if vim.fn.filereadable(args.file) ~= 1 then
+-				M.append_to_buffer("{{{ Attaching file failed: file does not exist or is not readable: " ..
+-					args.file .. "\n}}}\n")
+-				res.content = "[sys] file does not exist or is not readable"
+-				goto continue
+-			end
+-
+-			M.append_to_buffer("{{{ Attaching " .. args.file)
+-			res.content = tools.read_file(args.file, args.range)
+-			res.file_path = args.file
+-			res.file_range = args.range
+-			M.append_to_buffer(res.content .. "\n}}}\n")
++                       if not args.file then
++                               M.append("{{{ Attaching file failed: no file field.\n}}}")
++                               res.content = "[sys] missing file field"
++                               goto continue
++                       end
++                       if vim.fn.filereadable(args.file) ~= 1 then
++				M.append("{{{ Attaching " .. args.file .. "\n")
++				args.file .. "\n}}}\n")
++                               res.content = "[sys] file does not exist or is not readable"
++                               goto continue
++                       end
++
++                       M.append("{{{ Attaching " .. args.file .. "\n")
++                       res.content = tools.read_file(args.file, args.range)
++				res.file_range = args.range
++				M.append(res.content .. "\n}}}\n")
+ 		elseif name == "patch" then
+ 			if not args.file then
+-				M.append_to_buffer("{{{ Patching file failed: no file field.\n}}}")
++				M.append("{{{ Patching file failed: no file field.\n}}}")
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
+ 			if not args.operation then
+-				M.append_to_buffer(
+-					"{{{ Patching file failed: no operation field.\n}}}")
++				M.append("{{{ Patching file failed: no operation field.\n}}}")
+ 				res.content =
+ 				"[sys] invalid operation field (must be one of 'add', 'update' or 'delete') check the tool definition to know the correct fields."
+ 				goto continue
+ 			end
+ 			if not args.range then
+-				M.append_to_buffer(
+-					"{{{ Patching file failed: no range field.\n}}}")
+-				res.content =
+-				"[sys] invalid lines range (must be a no-empty string) check the tool definition to know the correct fields."
++				M.append("{{{ Patching file failed: no range field.\n}}}\n")
++				res.content = "{{{ Patching file failed: no range field.\n}}}"
+ 				goto continue
+ 			end
+-
+-			M.append_to_buffer("{{{ Patching " .. args.file)
+-			M.append_to_buffer(string.format(
++			M.append(string.format(
+ 				"File: %s\nOperation: %s\nRange: %s\nContent:\n%s\n",
+ 				args.file,
+ 				args.operation,
+@@ -294,38 +278,42 @@ local function run_tools(tool_calls)
+ 
+ 			local out = tools.apply_patch(args.name, args.file, args.operation, args.range, args.content)
+ 			res.content = out
+-			M.append_to_buffer("Result:\n" .. (out or "") .. "\n}}}\n")
+-		elseif name == "summarize" then
+-			M.append_to_buffer("{{{ Summarizing chat\n}}}")
+-			M.task(
+-				{ tools.summary_msg },
+-				function(summ)
+-					if summ.error then
+-						log.error("sumarize error: " .. summ.error)
+-						return
+-					end
++			M.append("Result:\n" .. (out or "") .. "\n}}}\n")
++		elseif name == "coder_agent" then
++			if not args.prompt then
++				M.append("{{{ Calling coder failed: no prompt field.\n}}}\n")
++				res.content = "[sys] missing prompt field"
++				goto continue
++			end
+ 
+-					res.content = summ.content
+-					M.clear_history()
+-					M.add_to_history({ res })
+-				end
+-			)
+-			return nil
++			M.append("{{{ Calling coder agent.\nPrompt:\n" .. args.prompt .. "\n}}}\n")
++
++			-- TODO: improve getting last message
++			res.content = "[sys] coder has started, its response will be sent later"
++			stop = true
++			coder_history = { 
++				{ role = "system", content = agent.coder_system_prompt },
++				{ role = "user", content = args.prompt } 
++			}
++
++			add_sep("___ CODER AGENT ")
++			M.code()
++			-- res.content = coder_history[-1].content
+ 		elseif name == "send_image" then
+ 			if not args.file then
+-				M.append_to_buffer("{{{ Addind image failed: no file field.\n}}}")
++				M.append("{{{ Addind image failed: no file field.\n}}}")
+ 				res.content = "[sys] missing file field"
+ 				goto continue
+ 			end
+ 
+ 			local image_url, err = tools.image_data_url(args.file)
+ 			if not image_url then
+-				M.append_to_buffer("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
++				M.append("{{{ Adding image " .. args.file .. " failed: " .. err .. "\n}}}")
+ 				res.content = "[sys] Error: " .. err
+ 				goto continue
+ 			end
+ 			res.content = "[sys] Image " .. args.file .. " added."
+-			M.append_to_buffer("{{{ Adding image " .. args.file .. "\n}}}")
++			M.append("{{{ Adding image " .. args.file .. "\n}}}")
+ 
+ 			if args.prompt then
+ 				table.insert(inputs, {
+@@ -345,15 +333,15 @@ local function run_tools(tool_calls)
+ 			})
+ 		else
+ 			res.content = "[sys] Invalid tool name: " .. (name or "")
+-			M.append_to_buffer("{{{ Invalid tool name\n}}}\n")
++			M.append("{{{ Invalid tool name\n}}}\n")
+ 		end
+ 
+ 		::continue::
++		-- table.remove(pending_tool_calls, 1)
+ 		refresh_and_close_folds()
+ 		table.insert(results, res)
+ 	end
+ 
+-
+ 	-- Second pass is needed for image inputs
+ 	if #inputs &gt; 0 then
+ 		for _, i in ipairs(inputs) do
+@@ -380,22 +368,20 @@ local function send_input()
+ 		if not input or input == "" then
+ 			return
+ 		end
++		table.insert(planner_history, { role = "user", content = input })
+ 
+-		add_sep()
+-		M.append_to_buffer(input .. "\n---\n")
++		add_sep("___ USER ")
++		M.append(input .. "\n")
++		add_sep("___ PLANNER AGENT ")
+ 
+ 		log.debug("[UI] got user input: " .. input)
+-		if config.stream then
+-			M.task_stream({ { role = "user", content = input } })
+-		else
+-			M.task({ { role = "user", content = input } })
+-		end
++		M.task()
+ 	end)
+ end
+ 
+ function M.stop()
+ 	hard_stop = true
+-	M.append_to_buffer("[tai] Stopped by user\n")
++	M.append("[tai] Stopped by user\n")
+ end
+ 
+ vim.keymap.set("n", "&lt;CR&gt;", send_input, { buffer = M.input_buffer_nr })
+@@ -415,7 +401,7 @@ function M.open()
+ 			vim.cmd("below split")
+ 			input_win = vim.api.nvim_get_current_win()
+ 			vim.api.nvim_win_set_buf(input_win, M.input_buffer_nr)
+-			vim.api.nvim_win_set_height(input_win, 8)
++			vim.api.nvim_win_set_height(input_win, 12)
+ 
+ 			-- Folding is window-local; configure it here so tool output/details can be collapsed.
+ 			if chat_win and vim.api.nvim_win_is_valid(chat_win) then
+@@ -425,6 +411,7 @@ function M.open()
+ 			end
+ 		else
+ 			chat_win = vim.fn.win_getid(chat_window_nr)
++			vim.api.nvim_win_set_width(chat_win, 80)
+ 			local input_window_nr = vim.fn.bufwinnr(M.input_buffer_nr)
+ 			if input_window_nr ~= -1 then
+ 				input_win = vim.fn.win_getid(input_window_nr)
+@@ -454,145 +441,295 @@ end
+ 
+ function M.clear()
+ 	vim.api.nvim_buf_set_lines(M.buffer_nr, 0, -1, false, {})
+-	provider.clear_history()
+-	provider.add_to_history({ role = "system", content = agent.system_prompt })
++	planner_history = { { role = "system", content = agent.planner_system_prompt } }
+ end
+ 
+-function M.task(msgs)
+-	log.info("Agent executing task")
+-	provider.request(
+-		config,
+-		msgs,
+-		nil,
+-		function(fields, err)
+-			if err then
+-				M.append_to_buffer("{{{ Error\n" .. err .. "\n}}}")
+-				provider.add_to_history({ role = "assistant", content = err })
+-				return
+-			end
+-			local response = { role = "assistant" }
+-			for k, v in pairs(fields) do
+-				response[k] = v
+-			end
+-			provider.add_to_history(response)
+-
+-			log.debug("[UI] processing response: " .. vim.inspect(fields))
+-			M.open()
++function M.task()
++	log.debug("Agent task with config: " .. vim.inspect(planner_config))
++
++	-- check pending tool calls first
++	if config.stream then
++		log.info("Agent executing streaming task")
++
++		local think_start = true
++		local content_start = true
++		provider.request_stream(
++			planner_config,
++			planner_history,
++			nil,
++			function(chunk, err)
++				if err then
++					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
++					return
++				end
+ 
+-			if fields.token_usage then
+-				update_token_display(fields.token_usage)
+-			end
+-			if fields.error then
+-				M.append_to_buffer("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+-			end
++				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
++				if chunk.reasoning and #chunk.reasoning &gt; 0 then
++					if think_start then
++						M.append("{{{ Thinking \n" .. chunk.reasoning)
++						think_start = false
++					else
++						M.append(chunk.reasoning)
++					end
++				end
+ 
+-			if fields.reasoning then
+-				M.append_to_buffer("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
+-				refresh_and_close_folds()
+-			end
++				if chunk.content and chunk.content ~= "" then
++					if content_start and not think_start then
++						M.append("\n}}}\n")
++						refresh_and_close_folds()
++						content_start = false
++					end
+ 
+-			-- For non-streaming responses, append the content to the buffer
+-			if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
+-				if not config.stream then
+-					M.append_to_buffer(fields.content .. "\n")
++					M.append(chunk.content)
+ 				end
+-			end
++				log.debug("[UI] updated chat")
++			end,
++			function(data, err)
++				log.debug("[UI] got message completed: " .. vim.inspect(data))
++				if err then
++					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
++					table.insert(planner_history, { role = "assistant", content = err })
++					return
++				end
++				local response = { role = "assistant" }
++				for k, v in pairs(data) do
++					response[k] = v
++				end
++				table.insert(planner_history, response)
+ 
+-			if not fields.tool_calls or #fields.tool_calls == 0 then
+-				return
+-			end
++				if not think_start and content_start then
++					M.append("\n}}}\n")
++				end
++				if data.token_usage then
++					update_token_display(data.token_usage)
++				end
++				if data.error then
++					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
++				end
++				if not data.tool_calls or #data.tool_calls == 0 then
++					return
++				end
+ 
+-			vim.schedule(function()
+ 				log.debug("[UI] running tools")
+-				local res, stop = run_tools(fields.tool_calls)
++				local res, stop = run_tools(data.tool_calls)
++				for _, msg in ipairs(res) do
++					table.insert(planner_history, msg)
++				end
+ 				if stop or hard_stop then
+-					for _, msg in ipairs(res) do
+-						provider.add_to_history(msg)
+-					end
+ 					log.debug("[UI] stopped")
+ 					return
+ 				end
+-				M.task(res)
+-			end)
+-		end
+-	)
+-end
+-
+--- Streaming task execution
+-function M.task_stream(msgs)
+-	log.info("Agent executing streaming task")
+-
+-	local think_start = true
+-	local content_start = true
+-	provider.request_stream(
+-		config,
+-		msgs,
+-		nil,
+-		function(chunk, err)
+-			if err then
+-				append_streaming("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
+-				return
++				M.task()
+ 			end
++		)
++	else
++		log.info("Agent executing task")
++		provider.request(
++			planner_config,
++			planner_history,
++			nil,
++			function(fields, err)
++				if err then
++					M.append("{{{ Error\n" .. err .. "\n}}}")
++					table.insert(planner_history, { role = "assistant", content = err })
++					return
++				end
++				local response = { role = "assistant" }
++				for k, v in pairs(fields) do
++					response[k] = v
++				end
++				table.insert(planner_history, response)
+ 
+-			log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
+-			if chunk.reasoning and #chunk.reasoning &gt; 0 then
+-				if think_start then
+-					append_streaming("{{{ Thinking \n" .. chunk.reasoning)
+-					think_start = false
+-				else
+-					append_streaming(chunk.reasoning)
++				log.debug("[UI] processing response: " .. vim.inspect(fields))
++				M.open()
++
++				if fields.token_usage then
++					update_token_display(fields.token_usage)
++				end
++				if fields.error then
++					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
+ 				end
+-			end
+ 
+-			if chunk.content and chunk.content ~= "" then
+-				if content_start and not think_start then
+-					append_streaming("\n}}}\n")
++				if fields.reasoning then
++					M.append("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
+ 					refresh_and_close_folds()
+-					content_start = false
+ 				end
+ 
+-				append_streaming(chunk.content)
+-			end
+-			log.debug("[UI] updated chat")
+-		end,
+-		function(data, err)
+-			log.debug("[UI] got message completed: " .. vim.inspect(data))
+-			if err then
+-				append_streaming("{{{ Received error\n" .. err .. "\n}}}\n")
+-				provider.add_to_history({ role = "assistant", content = err })
+-				return
+-			end
+-			local response = { role = "assistant" }
+-			for k, v in pairs(data) do
+-				response[k] = v
+-			end
+-			provider.add_to_history(response)
++				-- For non-streaming responses, append the content to the buffer
++				if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
++					M.append(fields.content .. "\n")
++				end
+ 
+-			if not think_start and content_start then
+-				append_streaming("\n}}}\n")
+-			end
+-			if data.token_usage then
+-				update_token_display(data.token_usage)
+-			end
+-			if data.error then
+-				M.append_to_buffer("{{{ Provider returned error\n" .. data.error .. "\n}}}")
+-			end
+-			if not data.tool_calls or #data.tool_calls == 0 then
+-				return
++				if not fields.tool_calls or #fields.tool_calls == 0 then
++					return
++				end
++
++				vim.schedule(function()
++					log.debug("[UI] running tools")
++					local res, stop = run_tools(fields.tool_calls)
++					for _, msg in ipairs(res) do
++						table.insert(planner_history, msg)
++					end
++					if stop or hard_stop then
++						log.debug("[UI] stopped")
++						return
++					end
++					M.task()
++				end)
+ 			end
++		)
++	end
++end
+ 
+-			log.debug("[UI] running tools")
+-			local res, stop = run_tools(data.tool_calls)
+-			if stop or hard_stop then
++function M.code()
++	-- check pending tool calls first
++	if config.stream then
++		log.info("Coder Agent executing streaming task")
++
++		local think_start = true
++		local content_start = true
++		provider.request_stream(
++			coder_config,
++			coder_history,
++			nil,
++			function(chunk, err)
++				if err then
++					M.append("\n{{{ Chunk error\n" .. err .. "\n}}}\n")
++					return
++				end
++
++				log.debug("[UI] got chunk data: " .. vim.inspect(chunk))
++				if chunk.reasoning and #chunk.reasoning &gt; 0 then
++					if think_start then
++						M.append("{{{ Thinking \n" .. chunk.reasoning)
++						think_start = false
++					else
++						M.append(chunk.reasoning)
++					end
++				end
++
++				if chunk.content and chunk.content ~= "" then
++					if content_start and not think_start then
++						M.append("\n}}}\n")
++						refresh_and_close_folds()
++						content_start = false
++					end
++
++					M.append(chunk.content)
++				end
++				log.debug("[UI] updated chat")
++			end,
++			function(data, err)
++				log.debug("[UI] got message completed: " .. vim.inspect(data))
++				if err then
++					M.append("{{{ Received error\n" .. err .. "\n}}}\n")
++					table.insert(coder_history, { role = "assistant", content = err })
++					return
++				end
++				local response = { role = "assistant" }
++				for k, v in pairs(data) do
++					response[k] = v
++				end
++				table.insert(coder_history, response)
++
++				if not think_start and content_start then
++					M.append("\n}}}\n")
++				end
++				if data.token_usage then
++					update_token_display(data.token_usage)
++				end
++				if data.error then
++					M.append("{{{ Provider returned error\n" .. data.error .. "\n}}}")
++				end
++				if not data.tool_calls or #data.tool_calls == 0 then
++					log.debug("coder finished")
++					-- worker finished the job
++					table.insert(
++						planner_history,
++						{ role = "user", content = coder_history[#coder_history].content }
++					)
++					add_sep("___ PLANNER AGENT ")
++					M.task()
++					return
++				end
++
++				log.debug("[UI] running tools")
++				local res, stop = run_tools(data.tool_calls)
+ 				for _, msg in ipairs(res) do
+-					provider.add_to_history(msg)
++					table.insert(coder_history, msg)
+ 				end
+-				log.debug("[UI] stopped")
+-				return
++				if stop or hard_stop then
++					log.debug("[UI] stopped")
++					return
++				end
++				M.code()
+ 			end
+-			M.task_stream(res)
+-		end
+-	)
++		)
++	else
++		log.info("Coder Agent executing task")
++		provider.request(
++			coder_config,
++			coder_history,
++			nil,
++			function(fields, err)
++				if err then
++					M.append("{{{ Error\n" .. err .. "\n}}}")
++					table.insert(coder_history, { role = "assistant", content = err })
++					return
++				end
++				local response = { role = "assistant" }
++				for k, v in pairs(fields) do
++					response[k] = v
++				end
++				table.insert(coder_history, response)
++
++				log.debug("[UI] processing response: " .. vim.inspect(fields))
++				M.open()
++
++				if fields.token_usage then
++					update_token_display(fields.token_usage)
++				end
++				if fields.error then
++					M.append("{{{ Provider returned error\n" .. fields.error .. "\n}}}")
++				end
++
++				if fields.reasoning then
++					M.append("{{{ Thinking\n" .. fields.reasoning .. "\n}}}\n")
++					refresh_and_close_folds()
++				end
++
++				-- For non-streaming responses, append the content to the buffer
++				if fields.content and fields.content ~= vim.NIL and fields.content ~= "" then
++					M.append(fields.content .. "\n")
++				end
++
++				if not fields.tool_calls or #fields.tool_calls == 0 then
++					log.debug("coder finished")
++					-- worker finished the job
++					table.insert(
++						planner_history,
++						{ role = "user", content = coder_history[#coder_history].content }
++					)
++					add_sep("___ PLANNER AGENT ")
++					M.task()
++					return
++				end
++
++				vim.schedule(function()
++					log.debug("[UI] running tools")
++					local res, stop = run_tools(fields.tool_calls)
++					for _, msg in ipairs(res) do
++						table.insert(coder_history, msg)
++					end
++					if stop or hard_stop then
++						log.debug("[UI] stopped")
++						return
++					end
++					M.code()
++				end)
++			end
++		)
++	end
+ end
+ 
+ return M
+</pre>

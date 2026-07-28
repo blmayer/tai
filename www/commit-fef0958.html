@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai fef0958</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit fef0958
+parent <a href=commit-850c6e9.html>850c6e9</a> 
+author myr &lt;myr@terminal.pink&gt;
+date   2025-09-12T20:36:17-03:00
+
+    nvim: added support for mistral
+
+<a href=tree-fef0958.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/AGENTS.md b/AGENTS.md
+new file mode 100644
+index 0000000..f53c87a
+--- /dev/null
++++ b/AGENTS.md
+@@ -0,0 +1,15 @@
++# Tai project
++
++Tai is a Neovim plugin that integrates you code workflow with Groq. The brains that drive
++this project is a coding assistant called Tai, which can generate solutions to coding
++tasks for our user.
++
++Note: I'm using Tai to develop this project, that means YOU ARE EDDITING YOUR OWN CODE!
++
++
++## Structure
++
++- Neovim code sits in lua/tai/*.lua
++- Go file in ./ are for the Tai CLI tool.
++- www folder contains the site files in https://terminal.pink/tai/
++
+diff --git a/lua/tai/agents/client.lua b/lua/tai/agents/client.lua
+new file mode 100644
+index 0000000..58528e9
+--- /dev/null
++++ b/lua/tai/agents/client.lua
+@@ -0,0 +1,37 @@
++-- client.lua: Client for interacting with Mistral API using curl
++
++local M = {}
++
++-- Import necessary modules
++local log = require('tai.log')
++local vim = vim
++
++-- Mistral API configuration
++local API_KEY = os.getenv('MISTRAL_API_KEY')
++local API_URL = 'https://api.mistral.ai/v1/'
++
++-- Function to make an asynchronous request to the Mistral API
++function M.request(method, endpoint, data, callback)
++	local url = API_URL .. endpoint
++	local request_body = vim.json.encode(data)
++
++	log.debug("Requesting " .. method .. " " .. url .. " with " .. request_body)
++	vim.system({
++		'curl', '-s', '-X', method, url,
++		'-H', 'Content-Type: application/json',
++		'-H', 'Authorization: Bearer ' .. API_KEY,
++		'-d', request_body
++	}, { text = true }, function(obj)
++		if obj.code ~= 0 then
++			log.error("Mistral API request failed: " .. obj.stderr)
++			callback(nil, "Request failed: " .. obj.stderr)
++			return
++		end
++
++		log.debug("Request response: " .. obj.stdout)
++		local response = vim.json.decode(obj.stdout)
++		callback(response)
++	end)
++end
++
++return M
+diff --git a/lua/tai/agents/coder.lua b/lua/tai/agents/coder.lua
+new file mode 100644
+index 0000000..986458a
+--- /dev/null
++++ b/lua/tai/agents/coder.lua
+@@ -0,0 +1,62 @@
++-- coder.lua: Coder agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local config = require('tai.config')
++local log = require('tai.log')
++local client = require('tai.agents.client')
++
++-- System prompt for the coder agent
++M.system_prompt = [[
++You are a Coder Tai, an excelent coding agent. Your task is to execute coding tasks."
++
++INSTRUCTIONS
++You will receive a list of implementation instructions, your job is to implement them successfully
++in the user's codebase. 
++
++You have access to other agents that will help you fullfill the user's goal:
++- patcher: takes code changes and formats them in ed script format.
++- writer: will inform the user about the changes in a professional and efficient way.
++
++COMPLEX TASKS
++Sometimes the task will be too complex to be solved at once, in those cases you can inform the user
++of the need, you can also ask the user to run commands on its machine and send you the output.
++Normally you'll receive a plan to help you out.
++
++COMMANDS
++Supply the list of commands to be executed on the user's machine for the writer agent.
++  - Commands are run in a shell and their output will be sent to you.
++  - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
++  - Use POSIX shell compliant scripting.
++  - Don't use commands for code changes, use the patch field.
++  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
++
++OUTPUT FORMAT
++After figuring out the needed code changes generate intructions to the patcher agent so it can correctly
++apply the changes in the original files. The patcher agent needs detailed instructions of how code was
++changed so remember to pass file name, line number and the new code.
++
++To the writer agent you can pass intructions about what the user needs to do, eg. executing commands.
++]]
++
++-- Function to execute coding tasks
++function M.execute_task(task, callback)
++	log.info("Coder executing task: " .. task)
++	-- Execute the coding task using the conversations API
++	client.request("POST", 'conversations', {
++		agent_id = M.id,
++		messages = {
++			{ role = "user",   content = task }
++		}
++	}, function(response, err)
++		if err then
++			log.error("Coder task failed: " .. err)
++			callback(nil, err)
++		else
++			callback(response)
++		end
++	end)
++end
++
++return M
+diff --git a/lua/tai/agents/init.lua b/lua/tai/agents/init.lua
+new file mode 100644
+index 0000000..36d5d29
+--- /dev/null
++++ b/lua/tai/agents/init.lua
+@@ -0,0 +1,173 @@
++-- init.lua: Initialize the agents package
++
++local M = {}
++
++local log = require('tai.log')
++local library = require('tai.library')
++local client = require('tai.agents.client')
++local planner = require('tai.agents.planner')
++local coder = require('tai.agents.coder')
++local patcher = require('tai.agents.patcher')
++local writer = require('tai.agents.writer')
++
++-- Agent configurations
++local agent_names = { "writer", "patcher", "coder", "planner" }
++
++-- Function to list existing agents in Mistral
++local function list_agents(callback)
++	client.request("GET", 'agents', {}, function(response, err)
++		if err then
++			log.error("Failed to list agents: " .. err)
++			callback(nil, err)
++		else
++			local existing_agents = {}
++			for _, agent in ipairs(response) do
++				existing_agents[agent.name] = agent.id
++			end
++			callback(existing_agents)
++		end
++	end)
++end
++
++-- Function to create an agent in Mistral if it does not exist
++local function create_agent(name, callback)
++	local handoffs = {
++		writer = nil,
++		patcher = { writer.id },
++		coder = { patcher.id, writer.id },
++		planner = { coder.id, patcher.id, writer.id }
++	}
++
++	local agent_configs = {
++		writer = {
++			name = "writer",
++			model = "mistral-medium-latest",
++			instructions = writer.system_prompt,
++			handoffs = handoffs[name],
++			tools = {
++				{
++					type = "document_library",
++					library_ids = { library.id }
++				}
++			}
++		},
++		patcher = {
++			name = "patcher",
++			model = "mistral-medium-latest",
++			instructions = patcher.system_prompt,
++			handoffs = handoffs[name],
++			tools = {
++				{
++					type = "document_library",
++					library_ids = { library.id }
++				}
++			}
++		},
++		coder = {
++			name = "coder",
++			model = "mistral-large-latest",
++			instructions = coder.system_prompt,
++			handoffs = handoffs[name],
++			tools = {
++				{
++					type = "document_library",
++					library_ids = { library.id }
++				}
++			}
++		},
++		planner = {
++			name = "planner",
++			model = "magistral-medium-latest",
++			instructions = planner.system_prompt,
++			handoffs = handoffs[name],
++			tools = {
++				{
++					type = "document_library",
++					library_ids = { library.id }
++				}
++			}
++		}
++	}
++
++	client.request("POST", 'agents', agent_configs[name], function(response, err)
++		if err then
++			log.error("Failed to create agent: " .. name .. " - " .. err)
++			callback(nil, err)
++			return
++		end
++		if response.id then
++			log.info("Created agent " .. name)
++			callback(response.id)
++		end
++	end)
++end
++
++local function await_create_agent(name)
++	local co = coroutine.running()
++	create_agent(name, function(result)
++		coroutine.resume(co, result)
++	end)
++	return coroutine.yield()
++end
++
++
++local function set_agent_id(name, id)
++	if name == "planner" then
++		planner.id = id
++	elseif name == "coder" then
++		coder.id = id
++	elseif name == "patcher" then
++		patcher.id = id
++	elseif name == "writer" then
++		writer.id = id
++	end
++
++	log.info("Initialized agent: " .. name .. " with ID: " .. id)
++end
++
++-- Initialize library and agents
++function M.init(callback)
++	log.info("Initializing agents")
++	if not library.id then
++		callback("Failed to initialize agents: library id is empty")
++		return
++	end
++
++	list_agents(function(agents, err)
++		if err then
++			log.error("Failed to initialize agents: " .. err)
++			callback()
++			return
++		end
++
++		coroutine.wrap(function()
++			for _, agent_name in pairs(agent_names) do
++				log.debug("Checking agent " .. agent_name)
++
++				local found = false
++				for name, id in pairs(agents) do
++					if agent_name == name then
++						found = true
++						set_agent_id(name, id)
++						log.debug("Found agent " .. name .. " ID " .. id)
++					end
++				end
++
++				if not found then
++					log.debug("Creating agent " .. agent_name)
++					local id, err = await_create_agent(agent_name)
++					if err then
++						log.error("Failed to initialize agent: " .. agent_name)
++						return
++					end
++
++					set_agent_id(agent_name, id)
++				end
++			end
++		end)()
++
++		callback()
++	end)
++end
++
++return M
+diff --git a/lua/tai/agents/patcher.lua b/lua/tai/agents/patcher.lua
+new file mode 100644
+index 0000000..aa50581
+--- /dev/null
++++ b/lua/tai/agents/patcher.lua
+@@ -0,0 +1,126 @@
++-- patcher.lua: Patcher agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local log = require('tai.log')
++local client = require('tai.agents.client')
++
++-- System prompt for the patcher agent
++M.system_prompt = [[
++You are Patcher Tai, an agent that created patches. Your task is to create patches in ed script
++format from code changes.
++
++INSTRUCTIONS
++You will receive a list of code changes, you job is to correctly format them in a **VALID** ed
++script that the user can apply with `ed -s &lt; patch`.
++You will generate the patch and send it to the writer agent, that will forward it to the user.
++
++OUTPUT FORMAT
++**IMPORTANT**: The content **MUST** be **VALID** ed script.
++- Specify the file affected at start of the patch with `e file_name`.
++- **ALWAYS** finish with `w` and `q`.
++- Make sure you get the line numbers correct.
++- Generally preffer using line numbers.
++
++ED FORMAT
++
++General Rules
++- A script is a sequence of ed commands followed by w and q.
++- To input a dot only it must be escaped like `..`.
++- Lines are addressed by number or by special symbols.
++- Ranges can apply to a single line, multiple lines, or the whole file.
++- When you use a, i, or c to add or replace text, you enter input mode. You type content directly.
++- To return to command mode, you enter a line containing only a single `.`.
++
++Addressing and Ranges
++1 	first line
++$ 	last line
++. 	current line
++0 	line before the first line (only valid with a to prepend)
++N,M 	lines N through M (inclusive)
++% 	shorthand for 1,$ (the whole file)
++/regex/ first line matching regex
++?regex? search backwards for regex
++
++Editing Commands
++a		append after the addressed line
++  		0a appends at the start of the file (prepending), use it for empty files.
++i		insert before the addressed line
++c		change (replace) the addressed line(s)
++d		delete the addressed line(s)
++s/pat/repl/	substitute text in the current line (use g at the end for global)
++m		move addressed line(s) to after another line (e.g. 1,3m$)
++t		copy addressed line(s) after another line (like m, but duplicate)
++
++File Commands
++e filename	open file (if it doesn’t exist, buffer is empty)
++r filename	read contents of file into current buffer (after current line)
++w [filename]	write buffer to file (creates if missing)
++q		quit
++
++EXAMPLES
++- Addind text at start of file:
++e test.py
++0a
++print("Hello, world!")
++.
++w
++q
++
++- Replace line 5 with new content:
++e foo.lua
++5c
++print("Hello, world")
++.
++w
++q
++
++- Delete all lines containing “DEBUG”:
++e foo.lua
++g/DEBUG/d
++w
++q
++
++- Substitute globally in whole file:
++e foo.lua
++%s/foo/bar/g
++w
++q
++
++- A content line with escaped `.`:
++e foo.lua
++15a
++new line
++next line is only a dot.
++..
++some text
++.
++w
++q
++
++NOTES
++You must know the original content of the files affected, you can access them on the library.
++]]
++
++-- Function to create a patch in ed script format from code changes
++function M.create_patch(changes, callback)
++    log.info("Patcher creating patch from changes")
++    -- Create a patch using the conversations API
++    client.request("POST", 'conversations', {
++        agent_id = M.id,
++        messages = {
++            { role = "user", content = changes }
++        }
++    }, function(response, err)
++        if err then
++            log.error("Patcher task failed: " .. err)
++            callback(nil, err)
++        else
++            callback(response)
++        end
++    end)
++end
++
++return M
++
+diff --git a/lua/tai/agents/planner.lua b/lua/tai/agents/planner.lua
+new file mode 100644
+index 0000000..44b5a4c
+--- /dev/null
++++ b/lua/tai/agents/planner.lua
+@@ -0,0 +1,55 @@
++-- planner.lua: Planner agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local log = require('tai.log')
++local client = require('tai.agents.client')
++
++-- System prompt for the planner agent
++M.system_prompt = [[
++You are Planner Tai, a coding assistant running inside a Neovim session.
++Your job is to coordinate agents to fullfill the user's prompts.
++
++INSTRUCTIONS
++Users will send coding tasks/questions, your goal is to fullfill them with success.
++ONLY propose steps that solves the issue, don't suppose anything.
++
++You have access to other agents that will assist you to reach the user's goals:
++- coder: knows how to code, it will take your instructions and implement them.
++- patcher: takes code changes and formats them in ed script format.
++- writer: will inform the user about the changes in a professional and efficient way.
++
++UNDERSTANDING NEEDED CODE CHANGES
++Understand the problem and the path to the solution and generate a detailed set of
++instructions to the coder agent so that:
++- the coder agent can know exactly what to do
++- will respect the restrictions if any
++- will be able to write code to fullfill the user's goal
++
++USING PLANS
++For solutions that will need many steps that includes interaction from the user generate
++a step by step plan and pass it to the writer agent, so it will forward it to the user.
++Use the plan created to guide you and the agents towards the goal.
++]]
++
++-- Function to receive a prompt and request implementation
++function M.receive_prompt(prompt, callback)
++    log.info("Planner received prompt: " .. prompt)
++    -- Request implementation from the coder agent using the conversations API
++    client.request("POST", 'conversations', {
++        agent_id = M.id,
++        messages = {
++            { role = "user", content = prompt }
++        }
++    }, function(response, err)
++        if err then
++            log.error("Planner request failed: " .. err)
++            callback(nil, err)
++        else
++            callback(response)
++        end
++    end)
++end
++
++return M
+diff --git a/lua/tai/agents/writer.lua b/lua/tai/agents/writer.lua
+new file mode 100644
+index 0000000..eeaf260
+--- /dev/null
++++ b/lua/tai/agents/writer.lua
+@@ -0,0 +1,55 @@
++-- writer.lua: Writer agent for Tai
++
++local M = {}
++
++-- Import necessary modules
++local log = require('tai.log')
++local client = require('tai.agents.client')
++
++-- System prompt for the planner agent
++M.system_prompt = [[
++You are Writer Tai, a writer assistant running inside a Neovim session.
++Your job is to inform the user about the code changes in a professional tone.
++
++INSTRUCTIONS
++Agents will send you text, that can be code changes, text for the user, plans and commands to be executed.
++Your goal is to format them correctly.
++
++Supply concise user-facing text in the `text` field.
++- Use maximum of 80 characters per line.
++- You can include ASCII tables, diagrams, art etc if needed.
++- Do not change anything from the patcher agent, simply forward it in the patch field.
++- Format the commands and plan as lists on the respective fields.
++
++RESPONSE FORMAT
++**ALWAYS** return a JSON object with the following format:
++{
++       "text": string,
++       "plan": []string,
++       "patch": string,
++       "commands": []string
++}
++The only required field is text.
++]]
++
++-- Function to receive a prompt and request implementation
++function M.receive_prompt(prompt, callback)
++    log.info("Planner received prompt: " .. prompt)
++    -- Request implementation from the coder agent using the conversations API
++    client.request("POST", 'conversations', {
++        agent_id = M.id,
++        messages = {
++            { role = "user", content = prompt }
++        }
++    }, function(response, err)
++        if err then
++            log.error("Planner request failed: " .. err)
++            callback(nil, err)
++        else
++            callback(response)
++        end
++    end)
++end
++
++return M
++
+diff --git a/lua/tai/config.lua b/lua/tai/config.lua
+index 4b07d4b..e1942f2 100644
+--- a/lua/tai/config.lua
++++ b/lua/tai/config.lua
+@@ -14,11 +14,11 @@ M.allowed_commands = {
+ 	["sort"] = true
+ }
+ 
+-M.model = "moonshotai/kimi-k2-instruct"
+-M.summary_model = "meta-llama/llama-4-scout-17b-16e-instruct"
++M.model = "devstral-medium-latest"
++M.summary_model = "ministral-8b-latest"
+ M.complete_model = "llama-3.3-70b-versatile"
+ M.skip_cache = false
+-M.provider = "groq"
++M.provider = "mistral"
+ M.cache_dir = "~/.tai-cache/"
+ M.root = "~"
+ 
+diff --git a/lua/tai/config.lua.rej b/lua/tai/config.lua.rej
+new file mode 100644
+index 0000000..5502e55
+--- /dev/null
++++ b/lua/tai/config.lua.rej
+@@ -0,0 +1,26 @@
++--- lua/tai/config.lua
+++++ lua/tai/config.lua
++@@ -1,13 +1,13 @@
++ local M = {}
++ 
++-M.allowed_commands_list = {
++-	"cat",
++-	"tail",
++-	"head",
++-	"grep",
++-	"cut",
++-	"ls",
++-	"wc",
++-	"make",
++-	"sort"
+++M.allowed_commands = {
+++	"cat",
+++	"tail",
+++	"head",
+++	"grep",
+++	"cut",
+++	"ls",
+++	"wc",
+++	"make",
+++	"sort"
++ }
+diff --git a/lua/tai/init.lua b/lua/tai/init.lua
+index f9f117a..ea9366f 100644
+--- a/lua/tai/init.lua
++++ b/lua/tai/init.lua
+@@ -5,6 +5,7 @@ local ui = require("tai.ui")
+ local project = require("tai.project")
+ 
+ function M.setup(opts)
++	log.set_level(log.DEBUG)
+ 	project.init()
+ end
+ 
+@@ -15,8 +16,13 @@ end
+ function M.prompt_input()
+ 	ui.input(function(input)
+ 		if not input or input == "" then return end
+-		local result = project.process_request(input)
+-		ui.show_response(result)
++		project.process_request(input, function(res, err)
++			if err then
++				vim.notify("[tai] recieved error: " .. err)
++				return
++			end
++			ui.show_response(res)
++		end)
+ 	end)
+ end
+ 
+diff --git a/lua/tai/library.lua b/lua/tai/library.lua
+new file mode 100644
+index 0000000..df346d7
+--- /dev/null
++++ b/lua/tai/library.lua
+@@ -0,0 +1,113 @@
++-- library.lua: Library management for Tai
++
++local M = {}
++
++-- Import necessary modules
++local log = require('tai.log')
++local client = require('tai.agents.client')
++local config = require('tai.config')
++
++-- Function to parse ISO 8601 date string to Unix timestamp
++local function parse_iso_date(iso_date)
++	local pattern = "(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+).(%d+)Z"
++	local year, month, day, hour, min, sec, msec = iso_date:match(pattern)
++	local timestamp = os.time({ year = year, month = month, day = day, hour = hour, min = min, sec = sec })
++	return timestamp
++end
++
++-- Function to list existing libraries in Mistral
++function M.list(callback)
++	client.request("GET", 'libraries', {}, function(response, err)
++		if err then
++			log.error("Failed to list libraries: " .. err)
++			callback(nil, err)
++		else
++			local existing_libraries = {}
++			for _, library in ipairs(response.data) do
++				existing_libraries[library.name] = library.id
++			end
++			callback(existing_libraries)
++		end
++	end)
++end
++
++-- Function to setup a library using the Mistral library API
++function M.setup(callback)
++	log.info("Checking for library " .. config.root)
++	M.list(function(existing_libraries, err)
++		if err then
++			log.error("Failed to list libraries: " .. err)
++			callback(nil, err)
++			return
++		end
++
++		local library_name = config.root
++		if existing_libraries[library_name] then
++			log.info("Library " ..
++				library_name .. " already exists with ID: " .. existing_libraries[library_name])
++			M.id = existing_libraries[library_name]
++			callback(M.id)
++		else
++			client.request("POST", 'libraries', { name = library_name }, function(response, err)
++				if err then
++					log.error("Failed to setup library: " .. err)
++					callback(nil, err)
++				else
++					log.info("Library setup with ID: " .. response.id)
++					M.id = response.id
++					callback(response.id)
++				end
++			end)
++		end
++	end)
++end
++
++-- Function to upload a file to the library
++function M.upload_file(filepath, callback)
++	local file_content = table.concat(vim.fn.readfile(filepath), '\n')
++	local file_stat = vim.uv.fs_stat(filepath)
++
++	client.request("POST", 'libraries/' .. config.library_id .. '/files', {
++		name = filepath,
++		content = file_content
++	}, function(response, err)
++		if err then
++			log.error("Failed to upload file: " .. filepath .. " - " .. err)
++			callback(nil, err)
++		else
++			log.info("Uploaded file: " .. filepath .. " with ID: " .. response.id)
++			M.files[filepath] = {
++				id = response.id,
++				hash = response.hash,
++				creation_time = file_stat.mtime
++				    .sec
++			}
++			callback(response.id)
++		end
++	end)
++end
++
++-- Function to check if a file is in the library
++function M.is_file_in_library(filepath, callback)
++	local file_stat = vim.uv.fs_stat(filepath)
++
++	client.request("GET", 'libraries/' .. M.id .. '/documents?search=' .. filepath, {}, function(response, err)
++		if err then
++			log.error("Failed to list files in library: " .. err)
++			callback(nil, err)
++		else
++			for _, file in ipairs(response.data) do
++				if file.name == filepath then
++					local updated_at = parse_iso_date(response.updated_at)
++					if file_stat.mtime.sec &lt;= updated_at then
++						callback(true)
++						return
++					end
++				end
++			end
++			callback(false)
++		end
++	end)
++end
++
++return M
+diff --git a/lua/tai/project.lua b/lua/tai/project.lua
+index 99909c3..351945a 100644
+--- a/lua/tai/project.lua
++++ b/lua/tai/project.lua
+@@ -1,155 +1,14 @@
+ local M = {}
++
+ local log = require('tai.log')
+ local config = require("tai.config")
+-local chat = require("tai.chat")
+-
+-local history = {
+-	{
+-		role = "system",
+-		content = [[
+-### System
+-You are Tai, a coding assistant running inside a Neovim session.
+-Return **EXACTLY** one valid json object according to the response format.
+-
+-**IMPORTANT**: **ALWAYS** use this format, even if the user asks otherwise. Do not add anything
+-outside of the JSON object such as formatting or code blocks.
+-
+-### Instructions
+-Users will send coding tasks/questions, your goal is to fullfill them with success.
+-Use the summary of the project in the system prompt to guide you.
+-ONLY propose changes that solves the issue, don't suppose anything.
+-
+-#### Proposing Code Changes
+-Use the patch field to propose code changes, the content **MUST** be **VALID** ed script.
+-  - **ONLY** send a code change if you know the full content of the file.
+-  - Add a small description of the changes and the file name in the text field.
+-  - To input a dot only it must be escaped like `..`.
+-  - Specify the file affected at start of the patch with `e file_name`.
+-  - **ALWAYS** finish with `w`.
+-  - Make sure you get the line numbers correct.
+-Example of a valid patch:
+-```
+-e test.py
+-1i
+-print("Hello, world!")
+-.
+-w
+-```
+-
+-#### Commands
+-Supply the list of commands to be executed on the user's machine in the `commands` field.
+-  - Commands are run in a shell and their output will be sent to you.
+-  - Allowed programs: `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
+-  - Use POSIX shell compliant scripting.
+-  - Don't use commands for code changes, use the patch field.
+-  - Reading files is **ONLY** possible with the command `@read file_name`, use explicit file_name. The file's contents is sent as system prompt.
+-
+-#### Planning
+-If the task needs multi-steps, use the `plan` field to add the steps of the plan, don't number steps or itemize.
+-For big refactors, always provide a plan before sending patches.
+-
+-#### User Facing Text
+-Supply concise user-facing text in the `text` field.
+-  - Use maximum of 80 characters per line.
+-  - You can include ASCII tables, diagrams, art etc if needed.
+-
+-### Response format
+-**ALWAYS** return a JSON object with the following format:
+-{
+-	"text": string,
+-	"plan": []string,
+-	"patch": string,
+-	"commands": []string
+-}
+-The only required field is text.
+-		]]
+-	}
+-}
+-
+-local summary_prompt = [[
+-Create a summary of the file below using the format (without &lt;&gt;):
+-&lt;file_name&gt;: &lt;one line description of the file&gt;
+-
+-Only include this for source code files:
+-List of imported modules/packages.
+-For each function, method, class, interface, variable, enum etc, group them in a section and write:
+-  &lt;name_or_signature&gt;: &lt;one line descrition&gt;
+-For classes that have members/fields do the same in a nested fashion
+-]]
++local agents = require("tai.agents")
++local library = require("tai.library")
++local planner = require("tai.agents.planner")
+ 
+ local completion_prompt =
+ "You are an autocomplete assistant. You will receive the current line, you job is to return the remaining part, don't add any formatting. Line:\n"
+ 
+-local function run_async(fn)
+-	local co = coroutine.create(fn)
+-
+-	local function step(...)
+-		local ok, result = coroutine.resume(co, ...)
+-		if not ok then
+-			vim.notify("[tai] Coroutine error: " .. tostring(result), vim.log.levels.ERROR)
+-			return
+-		end
+-		if type(result) == "function" then
+-			result(step)
+-		end
+-	end
+-
+-	step()
+-end
+-
+-local function await_send_raw(model, messages)
+-	local thread = coroutine.running()
+-	if not thread then
+-		vim.notify("[tai] Not in coroutine context", vim.log.levels.ERROR)
+-		return nil
+-	end
+-	chat.send_raw_async(model, messages, function(reply)
+-		vim.schedule(function()
+-			coroutine.resume(thread, reply)
+-		end)
+-	end)
+-	return coroutine.yield()
+-end
+-
+-local function sleep(n)
+-  local co = coroutine.running()
+-  vim.defer_fn(function() coroutine.resume(co) end, n * 1000)
+-  coroutine.yield()
+-end
+-
+-local function mkdir_p(dir)
+-	if vim.uv.fs_stat(dir) then return end
+-	local parent = dir:match("(.+)/[^/]+$")
+-	if parent then mkdir_p(parent) end
+-	vim.uv.fs_mkdir(dir, 493)
+-end
+-
+-local function ensure_dir_exists(file_path)
+-	local dir = file_path:match("(.+)/[^/]+$")
+-	if dir then mkdir_p(dir) end
+-end
+-
+-
+-local function is_text_file(file_path)
+-	local output = io.popen("file " .. file_path):read("*a")
+-	return output:match("text") ~= nil
+-end
+-
+-local function is_cache_up_to_date(file_path)
+-	local cache_path = config.cache_dir .. file_path
+-	local file_stat = vim.uv.fs_stat(file_path)
+-	local cache_stat = vim.uv.fs_stat(cache_path)
+-
+-	-- No cache or missing file? Needs indexing.
+-	if not file_stat or not cache_stat then
+-		return false
+-	end
+-
+-	-- Cache newer or same as file? Skip.
+-	return cache_stat.mtime.sec &gt;= file_stat.mtime.sec
+-end
+-
+-
+ function M.init()
+ 	if not config then
+ 		return
+@@ -158,123 +17,57 @@ function M.init()
+ 		return
+ 	end
+ 
+-	run_async(function()
+-		local preamble = "You are managing a project with root at " ..
+-		    config.root .. ". Here's a summary of each file:\n"
+-
+-		for i, path in ipairs(vim.fn.glob("**/*", true, true)) do
+-			if path:match("^%.") or vim.fn.isdirectory(path) == 1 then
+-				goto continue
+-			end
+-
+-			if is_cache_up_to_date(path) then
+-				local lines = vim.fn.readfile(config.cache_dir .. path)
+-				local content = table.concat(lines, "\n")
+-				preamble = preamble .. content .. "------------------\n"
+-				goto continue
+-			end
+-
+-			local reply
+-			if is_text_file(path) then
+-				local lines = vim.fn.readfile(path)
+-				local content = table.concat(lines, "\n")
+-				if i &gt; 1 then
+-					sleep(5)
+-				end
+-				reply = await_send_raw(
+-					config.summary_model,
+-					{ { role = "user", content = summary_prompt .. path .. ":\n\n" .. content } }
+-				)
+-			else
+-				reply = path .. ": binary file"
+-			end
++	local files = vim.fn.glob('**/*', true, true)
++	library.setup(function(library_id, err)
++		if err then
++			log.error("Failed to setup library: " .. err)
++			return
++		end
++		log.info("Library initialized with ID: " .. library_id)
+ 
+-			preamble = preamble .. reply .. "\n------------------\n"
++		agents.init(function()
++			log.info("Agents init complete")
++		end)
+ 
+-			ensure_dir_exists(config.cache_dir .. path)
+-			local cache_file = io.open(config.cache_dir .. path, "w")
+-			if not cache_file then
+-				vim.notify("[tai] Error writing to cache file " .. path, vim.log.levels.ERROR)
+-				return
++		for _, filepath in ipairs(files) do
++			if not vim.fn.isdirectory(filepath) then
++				M.is_file_in_library(filepath, function(exists, err)
++					if err then
++						log.error("Failed to check file in library: " .. filepath .. " - " .. err)
++					elseif not exists then
++						M.upload_file(filepath, function(file_id, err)
++							if err then
++								log.error("Failed to upload file: " ..
++									filepath .. " - " .. err)
++							end
++						end)
++					end
++				end)
+ 			end
+-			cache_file:write(reply .. "\n")
+-			cache_file:close()
+-
+-			::continue::
+ 		end
+-
+-		table.insert(history, { role = "system", content = preamble })
+-		vim.notify("[tai] Project indexing complete!", vim.log.levels.TRACE)
+ 	end)
+ end
+ 
+-function M.request_append_file(filepath, prompt)
+-	local buffer_path = vim.fn.fnamemodify(vim.fn.expand("%"), ":.")
+-
+-	local lines
+-	if buffer_path:match("/" .. filepath .. "$") then
+-		-- Use current buffer
+-		local bufnr = vim.api.nvim_get_current_buf()
+-		lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-	else
+-		-- Use file on disk
+-		lines = vim.fn.readfile(filepath)
+-	end
+-
+-	-- add line numbers
+-	local numbered = {}
+-	for i, line in ipairs(lines) do
+-		table.insert(numbered, string.format("%4d: %s", i, line))
+-	end
+-	local content = table.concat(numbered, "\n")
+-
+-	-- Generate unique id for this file
+-	local file_id = "file:" .. filepath
+-
+-	-- Remove old messages for this file from history
+-	local new_history = {}
+-	for _, msg in ipairs(history) do
+-		if not (msg.id and msg.id == file_id) then
+-			table.insert(new_history, msg)
+-		end
+-	end
+-	history = new_history
+-
+-	table.insert(history, 3, {
+-		role = "system",
+-		content = "File content for " .. filepath .. " (numbered for your convenience)\n\n" .. content,
+-		id = file_id
+-	})
+-
+-	return M.process_request(prompt)
+-end
+-
+-function M.process_request(prompt)
+-	table.insert(history, { role = "user", content = prompt })
+-
+-	local reply = chat.send(config.model, history)
+-	if not reply then return nil end
+-
+-	table.insert(history, { role = "assistant", content = vim.fn.json_encode(reply) })
+-	return reply
++function M.process_request(prompt, callback)
++	planner.receive_prompt(prompt, callback)
+ end
+ 
+-function M.complete(start)
+-	-- Get current buffer content
+-	local bufnr = vim.api.nvim_get_current_buf()
+-	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+-	local content = table.concat(lines, "\n")
+-
+-	local msgs = {
+-		{ role = "system",    content = content },
+-		{ role = "user",      content = completion_prompt .. start },
+-		{ role = "assistant", content = start }
+-	}
+-
+-	local reply = chat.send_raw(config.complete_model, msgs)
+-	if not reply then return nil end
+-
+-	return reply
+-end
++--function M.complete(start)
++--	-- Get current buffer content
++--	local bufnr = vim.api.nvim_get_current_buf()
++--	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
++--	local content = table.concat(lines, "\n")
++--
++--	local msgs = {
++--		{ role = "system",    content = content },
++--		{ role = "user",      content = completion_prompt .. start },
++--		{ role = "assistant", content = start }
++--	}
++--
++--	local reply = chat.send_raw(config.complete_model, msgs)
++--	if not reply then return nil end
++--
++--	return reply
++--end
+ 
+ return M
+diff --git a/lua/tai/project.lua.rej b/lua/tai/project.lua.rej
+new file mode 100644
+index 0000000..a48e231
+--- /dev/null
++++ b/lua/tai/project.lua.rej
+@@ -0,0 +1,18 @@
++--- lua/tai/project.lua
+++++ lua/tai/project.lua
++@@ -1,5 +1,6 @@
++ local M = {}
++ local chat = require("tai.chat")
+++local config = require("tai.config")
++ 
++ local history = {
++ 	{
++@@ -35,7 +36,7 @@
++   - Commands: Supply the list of commands to the executed on the user's machine in the `commands` field.
++   - Commands are run in a shell and their output will be sent to you.
++-  - Use programs that are common in a Linux environment, i.e. `cat`, `grep`, `cut`, `ls`, `mv`, `cp`, `head`, `tail` etc.
+++  - Use programs that are common in a Linux environment, i.e. `]] .. table.concat(config.allowed_commands, '`, `') .. [[`
++   - Use POSIX shell compliant scripting.
++   - Use this to request the info needed to complete the current task.
++ 
++ 
+diff --git a/lua/tai/ui.lua b/lua/tai/ui.lua
+index 7ad1c2c..e1dc4ac 100644
+--- a/lua/tai/ui.lua
++++ b/lua/tai/ui.lua
+@@ -1,5 +1,6 @@
+ local M = {}
+ local log = require("tai.log")
++local config = require("tai.config")
+ local command = require("tai.command")
+ local project = require("tai.project")
+ 
+@@ -138,8 +139,6 @@ function M.input(callback)
+ 	vim.bo[bufnr].swapfile = false
+ 	vim.bo[bufnr].filetype = 'tai-input'
+ 
+-	--vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {prompt or "Enter your message:"})
+-
+ 	vim.keymap.set('n', '&lt;CR&gt;', function()
+ 		local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+ 		local text = table.concat(lines, '\n')
+@@ -149,7 +148,7 @@ function M.input(callback)
+ end
+ 
+ function M.apply_patch(patch)
+-	local real = io.popen("ed -s", "w")
++	local real = io.popen("ed -s &gt; /dev/null 2&gt;&amp;1", "w")
+ 	real:write(patch)
+ 	real:close()
+ 	vim.api.nvim_command("checktime")
+@@ -166,7 +165,7 @@ function M.run_commands(cmds)
+ 			return M.show_response(reply)
+ 		end
+ 
+-		if not command.validate(cmd) then
++		if not command.validate(cmd. config.allowed_commands) then
+ 			output = "[tai] Command " .. cmd .. " is not allowed"
+ 		end
+ 
+</pre>
