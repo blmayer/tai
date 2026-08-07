@@ -20,7 +20,8 @@
   seed `notes`/`todos` for personas (planner, implementer, reviewer, …).
 - **Session persistence** — conversations auto-save/restore (`.tai-session.json`
   in the project root).
-- **Tool use** — read/write files, shell, edit, images, subtask.
+- **Tool use** — read/write files, shell, edit, images, subtask, MCP.
+- **MCP** — local stdio and remote HTTP servers from `.tai` (`mcps`).
 - **Rate limiting** — configurable `rpm` / `tpm`.
 - **Streaming and non-streaming** for all providers.
 - **Code folding** — tool output and whole subtasks fold in the chat buffer.
@@ -33,7 +34,7 @@
 ┌──────────────────────────────────────────────────────────────┐
 │  MAIN (long-lived)                                           │
 │  tools: read, shell, send_image, edit, write, notes, todos,  │
-│         subtask                                              │
+│         subtask, mcp                                         │
 │  Live Context: notes + todos → injected into system each turn│
 │                                                              │
 │   user request → plan (explore / subtask) → auth if needed   │
@@ -185,10 +186,48 @@ tai reads configuration from a `.tai` JSON file in your project root:
 | `custom_prompt` | string | — | Extra instructions appended to the main prompt |
 | `allowed_commands` | object | *(defaults)* | Map of allowed shell commands |
 | `auto_approve` | boolean | `false` | Auto-approve shell commands outside the allowlist |
+| `mcps` | object | `{}` | MCP server definitions (local and remote) |
 
 Default allowed commands: `cat`, `grep`, `ag`, `rg`, `ls`, `head`, `tail`,
 `wc`, `diff`, `sort`, `uniq`, `find`, `file`, `stat`, `date`, `echo`, `tree`,
 `pwd`, `which`, `type`.
+
+### MCP servers (`mcps`)
+
+Map of name → server config. Connected at startup.
+
+**Local (stdio):**
+
+```json
+"my-server": {
+  "command": "python3",
+  "args": ["path/to/server.py"],
+  "env": { "FOO": "bar" },
+  "cwd": ".",
+  "denylist": ["dangerous_tool"]
+}
+```
+
+**Remote (HTTP JSON-RPC):**
+
+```json
+"remote": {
+  "url": "http://127.0.0.1:3000/mcp",
+  "api_key": "…",
+  "denylist": []
+}
+```
+
+Auth fields (use one style):
+
+| Fields | Auth |
+|---|---|
+| `api_key` | Bearer + `X-Api-Key` headers |
+| `user` + `pass` | HTTP Basic |
+| `oauthURL` + `oauth_token` | OAuth: set URL for discovery; put the access token in `oauth_token` |
+| `headers` | Extra static headers |
+
+Client features **not** supported: Tool List Change Notifications, Roots, Sampling.
 
 Example `.tai` file:
 
@@ -208,6 +247,13 @@ Example `.tai` file:
 		"git": true,
 		"npm": true,
 		"make": true
+	},
+	"mcps": {
+		"dummy": {
+			"command": "python3",
+			"args": ["lua/tai/tests/fixtures/dummy_mcp_server.py"],
+			"denylist": ["secret_tool"]
+		}
 	}
 }
 ```
@@ -224,9 +270,20 @@ Example `.tai` file:
 | `subtask` | Spawn a child agent (`goal`, `tools`, optional `system_prompt` / seeds) |
 | `todos` | Add/update todos (auto-injected as Live Context; no list action) |
 | `notes` | Write/append notes (auto-injected as Live Context; no read action) |
+| `mcp` | MCP status / connect / disconnect / list_tools / call |
 
 Main agent gets all of the above. Subtasks get only the tools listed in `tools`
-(never `subtask` itself).
+(never `subtask` itself). MCP may be granted to subtasks.
+
+### `mcp` tool
+
+| Action | Args | Description |
+|---|---|---|
+| `status` | `server?` | Connection state and tools |
+| `connect` | `server` | Connect a configured server |
+| `disconnect` | `server` | Disconnect |
+| `list_tools` | `server?` | Available tools (with schemas) |
+| `call` | `server`, `tool`, `arguments` | Invoke an MCP tool |
 
 ## Commands
 
@@ -244,6 +301,7 @@ If `plugin/tai.lua` is on the runtimepath:
 ```sh
 nvim --headless -u NONE -c "set rtp+=." -c "luafile lua/tai/tests/edit_test.lua" -c "qa!"
 nvim --headless -u NONE -c "set rtp+=." -c "luafile lua/tai/tests/subtask_test.lua" -c "qa!"
+nvim --headless -u NONE -c "set rtp+=." -c "luafile lua/tai/tests/mcp_test.lua" -c "qa!"
 ```
 
 ## Screenshots

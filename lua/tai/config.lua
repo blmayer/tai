@@ -22,6 +22,9 @@ M.provider_tools = nil
 M.rpm = 60
 M.tpm = nil
 
+-- MCP servers (filled by reload from .tai `mcps` field)
+M.mcps = {}
+
 -- Context persistence configuration
 -- Default file is project-scoped (.tai-session.json in project root).
 -- Set cache_dir to use a global cache path instead.
@@ -108,6 +111,9 @@ function M.reload()
 			M.context.file_name = data.context.file_name
 		end
 	end
+
+	-- MCP servers: map of name -> { command, args, env, url, api_key, user, pass, oauthURL, oauth_token, denylist, headers, cwd }
+	M.mcps = data.mcps or M.mcps or {}
 
 	log.debug(string.format(
 		"Context config: enabled=%s auto_save=%s save_on_shutdown=%s file_name=%s cache_dir=%s",

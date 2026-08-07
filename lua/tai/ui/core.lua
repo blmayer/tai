@@ -9,6 +9,8 @@ local tools_shell = require("tai.tools.shell")
 local tools_edit = require("tai.tools.edit")
 local tools_subtask = require("tai.tools.subtask")
 local tools_skill = require("tai.tools.skill")
+local tools_mcp = require("tai.tools.mcp")
+local mcp = require("tai.mcp")
 
 if not config.provider then
 	return M
@@ -37,13 +39,18 @@ end
 local function prepare_messages(frame)
 	local msgs = vim.deepcopy(frame.history)
 	if msgs[1] and msgs[1].role == "system" then
+		local parts = { frame.system_prompt }
+		-- MCP connection/tool state (request-ephemeral)
+		local mcp_section = mcp.render_prompt_section()
+		if mcp_section ~= "" then
+			table.insert(parts, mcp_section)
+		end
 		local live = tools_subtask.render_memory(frame)
 		if live ~= "" then
-			-- Single system message (providers that allow only one); never stored in history.
-			msgs[1].content = frame.system_prompt .. "\n\n" .. live
-		else
-			msgs[1].content = frame.system_prompt
+			table.insert(parts, live)
 		end
+		-- Single system message (providers that allow only one); never stored in history.
+		msgs[1].content = table.concat(parts, "\n\n")
 	end
 	return msgs
 end
@@ -229,8 +236,17 @@ local function ensure_system(frame)
 end
 
 function M.init()
+	-- Idempotent: plugin/tai.lua and user init.lua may both call setup().
+	if M.input_buffer_nr and vim.api.nvim_buf_is_valid(M.input_buffer_nr)
+		and M.buffer_nr and vim.api.nvim_buf_is_valid(M.buffer_nr) then
+		M.update_chat_name()
+		update_input_name()
+		return
+	end
+
 	M.input_buffer_nr = vim.api.nvim_create_buf(true, false)
-	vim.api.nvim_buf_set_name(M.input_buffer_nr, input_bufname)
+	-- Unique name avoids E95 if a prior ghost buffer still holds "tai-chat-input"
+	pcall(vim.api.nvim_buf_set_name, M.input_buffer_nr, input_bufname)
 	vim.bo[M.input_buffer_nr].buftype = "nofile"
 	vim.bo[M.input_buffer_nr].bufhidden = "hide"
 	vim.bo[M.input_buffer_nr].swapfile = false
@@ -266,6 +282,7 @@ function M.init()
 			if config.context and config.context.enabled and config.context.save_on_shutdown then
 				save_session()
 			end
+			pcall(mcp.disconnect_all)
 			if vim.api.nvim_buf_is_valid(M.buffer_nr) then
 				vim.api.nvim_buf_delete(M.buffer_nr, { force = true })
 			end
@@ -400,7 +417,7 @@ local function run_live_shell(command, on_done)
 		end)
 	end
 
-	local job = vim.fn.jobstart({ shell, flag, command .. " 2>&1" }, {
+	local job_opts = {
 		on_stdout = function(_, data, _)
 			if not data then
 				return
@@ -430,7 +447,14 @@ local function run_live_shell(command, on_done)
 		end,
 		stdout_buffered = false,
 		stderr_buffered = false,
-	})
+	}
+	-- Tool contract: shell starts in project root (where .tai was found).
+	if config.root and config.root ~= "" then
+		job_opts.cwd = config.root
+	end
+	-- List form: argv is not re-parsed by an outer shell (avoids double-quoting).
+	-- {shell, flag, script} is one -c argument; nested quotes in `command` are preserved.
+	local job = vim.fn.jobstart({ shell, flag, command .. " 2>&1" }, job_opts)
 
 	current_job = job
 	if job <= 0 then
@@ -632,6 +656,23 @@ local function run_tools(tool_calls, frame, start_index, on_done)
 			local out = tools_skill.run(args)
 			res.content = out
 			M.append("{{{ Skill (" .. (args.action or "?") .. ")\n" .. out .. "\n}}}\n")
+		elseif name == "mcp" then
+			-- Async for connect/call
+			local async_actions = { connect = true, call = true }
+			if async_actions[args.action] then
+				M.append("{{{ MCP (" .. (args.action or "?") .. ")\n")
+				current_state = "tools"
+				update_input_name()
+				tools_mcp.run(args, function(out)
+					res.content = tools_io.limit_output(out or "", "mcp")
+					M.append(res.content .. "\n}}}\n")
+					finish_one()
+				end)
+				return
+			end
+			local out = tools_mcp.run(args)
+			res.content = out
+			M.append("{{{ MCP (" .. (args.action or "?") .. ")\n" .. (out or "") .. "\n}}}\n")
 		elseif name == "send_image" then
 			if not args.file then
 				M.append("{{{ Adding image failed: no file field.\n}}}")

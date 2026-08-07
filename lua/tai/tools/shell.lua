@@ -8,17 +8,29 @@ M.limit_output = tools_io.limit_output
 function M.unsafe_command(cmd)
 	log.debug("Running `" .. cmd .. "`")
 
-	-- Check for disallowed redirect operators
+	-- Check for disallowed redirect operators.
+	-- Note: the harness already appends `2>&1`; models often add `2>/dev/null`
+	-- which trips this check — that is intentional, not a quoting bug.
 	if cmd:match("[><]") then
 		log.debug("Command contains redirects, which are not allowed: " .. cmd)
-		return "[sys] Redirects (>, <, >>, <<, etc.) are not allowed."
+		return "[sys] Redirects (>, <, >>, <<, 2>/dev/null, etc.) are not allowed. Stderr is already captured; omit redirects."
 	end
 
 	local config = require("tai.config")
 	local allowed = config.get_allowed_commands()
 
-	-- Extract the base command (first word)
-	local base_cmd = cmd:match("^%s*(%w+)")
+	-- Extract the base command (first word). Paths like /usr/bin/ssh use basename.
+	local base_cmd = cmd:match("^%s*(%S+)")
+	if base_cmd then
+		base_cmd = base_cmd:match("([^/]+)$") or base_cmd
+		-- Drop a leading env assignment like FOO=bar cmd
+		if base_cmd:find("=") then
+			base_cmd = cmd:match("^%s*%S+=%S+%s+(%S+)")
+			if base_cmd then
+				base_cmd = base_cmd:match("([^/]+)$") or base_cmd
+			end
+		end
+	end
 	if not base_cmd or not allowed[base_cmd] then
 		return "Command " .. tostring(base_cmd or "?") .. " is not allowed."
 	end

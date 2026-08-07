@@ -47,6 +47,12 @@ history), so you always see current state without re-reading them.
   - Implementation: ["read", "shell", "send_image", "edit", "write", "todos", "notes"]
 - The child's final text reply is returned as the tool result, plus its notes/todos.
 - Subtasks cannot spawn further subtasks.
+
+### MCP
+
+Use the `mcp` tool for Model Context Protocol servers configured in `.tai`.
+Actions: status, connect, disconnect, list_tools, call. Prefer `call` with the
+server name, tool name, and arguments.
 ]]
 
 M.system_prompt = [[
@@ -114,7 +120,7 @@ if catalog ~= "" then
 end
 
 M.main_tools = {
-	"read", "shell", "send_image", "edit", "write", "todos", "notes", "subtask", "skill",
+	"read", "shell", "send_image", "edit", "write", "todos", "notes", "subtask", "skill", "mcp",
 }
 
 -- Allowed tools a parent may grant a subtask (never subtask itself).
@@ -126,6 +132,7 @@ M.subtask_tool_allowlist = {
 	write = true,
 	todos = true,
 	notes = true,
+	mcp = true,
 }
 
 function M.sanitize_subtask_tools(tools)

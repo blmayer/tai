@@ -8,6 +8,7 @@ local tools_shell = require("tai.tools.shell")
 local tools_edit = require("tai.tools.edit")
 local tools_subtask = require("tai.tools.subtask")
 local tools_skill = require("tai.tools.skill")
+local tools_mcp = require("tai.tools.mcp")
 
 -- Re-export functions from submodules
 M.read_file = tools_io.read_file
@@ -26,6 +27,7 @@ M.format_complete = tools_subtask.format_complete
 M.run_todos = tools_subtask.run_todos
 M.run_notes = tools_subtask.run_notes
 M.run_skill = tools_skill.run
+M.run_mcp = tools_mcp.run
 
 -- Tool definitions (API schema)
 M.defs = {
@@ -284,6 +286,40 @@ M.defs = {
 					id = {
 						type = "string",
 						description = "Skill name (must match directory / frontmatter name). Required for status/load/unload.",
+					},
+				},
+				additionalProperties = false,
+				required = { "action" },
+			},
+		},
+	},
+	mcp = {
+		type = "function",
+		["function"] = {
+			name = "mcp",
+			description =
+			"Manage MCP servers and call their tools. Actions: status, connect, disconnect, list_tools, call. "
+				.. "For call: provide server, tool, and arguments object. "
+				.. "Servers are configured in .tai under `mcps`.",
+			parameters = {
+				type = "object",
+				properties = {
+					action = {
+						type = "string",
+						description = "status | connect | disconnect | list_tools | call",
+						enum = { "status", "connect", "disconnect", "list_tools", "call" },
+					},
+					server = {
+						type = "string",
+						description = "MCP server name (from .tai mcps).",
+					},
+					tool = {
+						type = "string",
+						description = "Tool name on the server (for call).",
+					},
+					arguments = {
+						type = "object",
+						description = "Arguments object for tools/call.",
 					},
 				},
 				additionalProperties = false,

@@ -1,9 +1,10 @@
 local M = {}
 
 local log = require("tai.log")
+local config = require("tai.config")
 local tools_module = require("tai.tools")
 
-if not require("tai.config").provider then
+if not config.provider then
 	return M
 end
 
@@ -47,7 +48,7 @@ local function run_live_shell(command, on_done, M_core)
 		end)
 	end
 
-	local job = vim.fn.jobstart({ shell, flag, command .. " 2>&1" }, {
+	local job_opts = {
 		on_stdout = function(_, data, _)
 			if not data then
 				return
@@ -77,7 +78,11 @@ local function run_live_shell(command, on_done, M_core)
 		end,
 		stdout_buffered = false,
 		stderr_buffered = false,
-	})
+	}
+	if config.root and config.root ~= "" then
+		job_opts.cwd = config.root
+	end
+	local job = vim.fn.jobstart({ shell, flag, command .. " 2>&1" }, job_opts)
 
 	current_job = job
 	if job <= 0 then
@@ -293,6 +298,20 @@ local function run_tools(tool_calls, frame, start_index, on_done, M_core, M_sess
 					res.content = content
 				end
 			end
+		elseif name == "mcp" then
+			local async_actions = { connect = true, call = true }
+			if async_actions[args.action] then
+				M_core.append("{{{ MCP (" .. (args.action or "?") .. ")\n")
+				tools_module.run_mcp(args, function(out)
+					res.content = tools_module.limit_output(out or "", "mcp")
+					M_core.append(res.content .. "\n}}}\n")
+					finish_one()
+				end)
+				return
+			end
+			local out = tools_module.run_mcp(args)
+			res.content = out
+			M_core.append("{{{ MCP (" .. (args.action or "?") .. ")\n" .. (out or "") .. "\n}}}\n")
 		else
 			res.content = "Invalid tool name: " .. (name or "")
 			M_core.append("{{{ Invalid tool name\n}}}\n")

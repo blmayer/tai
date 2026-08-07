@@ -59,6 +59,17 @@ describe("config module", function()
         custom_prompt = "custom",
         rpm = 120,
         tpm = 1000,
+        mcps = {
+          local_srv = {
+            command = "python3",
+            args = { "server.py" },
+            denylist = { "bad_tool" },
+          },
+          remote_srv = {
+            url = "http://127.0.0.1:9999/mcp",
+            api_key = "secret",
+          },
+        },
       }
       
       -- Mock io.open to return our mock file
@@ -88,6 +99,9 @@ describe("config module", function()
       assert.are.equal("custom", config.custom_prompt)
       assert.are.equal(120, config.rpm)
       assert.are.equal(1000, config.tpm)
+      assert.are.equal("python3", config.mcps.local_srv.command)
+      assert.are.equal("secret", config.mcps.remote_srv.api_key)
+      assert.are.same({ "bad_tool" }, config.mcps.local_srv.denylist)
 
       -- Restore io.open
       io.open = original_open

@@ -3,6 +3,8 @@ local M = {}
 local log = require("tai.log")
 local config = require("tai.config")
 local ui = require("tai.ui")
+local mcp = require("tai.mcp")
+local tools = require("tai.tools")
 
 function M.setup(opts)
 	log.set_level(opts.log_level or log.DEBUG)
@@ -17,6 +19,13 @@ function M.setup(opts)
 		context.setup(config.context)
 	end
 
+	-- Configure + connect MCP servers from .tai
+	mcp.configure(config.mcps)
+	mcp.update_tool_def(tools.defs)
+	mcp.connect_all(function()
+		mcp.update_tool_def()
+	end)
+
 	ui.init()
 end
 
@@ -26,6 +35,11 @@ function M.reload(opts)
 		vim.notify("tai: failed to reload config: " .. (err or ""), vim.log.levels.ERROR)
 		return
 	end
+	mcp.configure(config.mcps)
+	mcp.update_tool_def(tools.defs)
+	mcp.connect_all(function()
+		mcp.update_tool_def()
+	end)
 	ui.update_chat_name()
 	ui.update_input_name()
 	vim.notify("tai: config reloaded", vim.log.levels.INFO)
