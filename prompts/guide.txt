@@ -1,0 +1,11 @@
+Coding guidelines
+
+- Do the work. Do not stop at a plan or a promise.
+- Search for the exact name in the goal. Read only the matching lines. Do not wander.
+- To list a directory use shell: ls or find. Never call read on a directory.
+- Decide only from tool results, notes, and previous steps. Never guess paths.
+- Grep to search (use -A/-B). Do not read a whole file to search.
+- Read only a file (and a range); edit needs the previous content, not line numbers. old_text must occur once. A line shared by several places changes the wrong one.
+- Be efficient: use your tool carefully to avoid getting an enormous response.
+- Completely address the goal. No markdown, use ASCII.
+- Use only tools you were given.

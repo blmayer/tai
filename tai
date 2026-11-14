@@ -1,0 +1,1253 @@
+#!/bin/sh
+# tai — terminal agent. One shell file. jq and prompts come from the XDG data dir.
+set -u
+
+usage() {
+	cat <<'EOF'
+tai — plan, run, and review work in the terminal.
+
+  tai            open the client (needs a .tai above this directory)
+  tai --help
+
+Keys: type at the > prompt, Enter sends. Scroll the terminal window
+to read earlier output.
+Ctrl-C stops the agent, Ctrl-L redraws, Ctrl-U clears the line.
+Ctrl-N clears the session. Ctrl-H shows this help. Ctrl-Q quits.
+EOF
+}
+
+die() { printf 'tai: %s\n' "$1" >&2; exit 1; }
+command -v jq >/dev/null || die "jq is required"
+command -v curl >/dev/null || die "curl is required"
+
+# $XDG_DATA_HOME/tai, then each directory in $XDG_DATA_DIRS.
+find_share() {
+	xh=$HOME/.local/share
+	[ -n "${XDG_DATA_HOME:-}" ] && xh=$XDG_DATA_HOME
+	d=$xh/tai
+	if [ -f "$d/jq/fs.jq" ] && [ -f "$d/prompts/guide.txt" ]; then
+		printf '%s' "$d"
+		return 0
+	fi
+	rest=/usr/local/share:/usr/share
+	[ -n "${XDG_DATA_DIRS:-}" ] && rest=$XDG_DATA_DIRS
+	while [ -n "$rest" ]; do
+		case $rest in
+			*:*) one=${rest%%:*}; rest=${rest#*:} ;;
+			*) one=$rest; rest= ;;
+		esac
+		[ -n "$one" ] || continue
+		d=$one/tai
+		if [ -f "$d/jq/fs.jq" ] && [ -f "$d/prompts/guide.txt" ]; then
+			printf '%s' "$d"
+			return 0
+		fi
+	done
+	return 1
+}
+
+if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
+	usage
+	exit 0
+fi
+
+share=$(find_share) || die "no data files in ${XDG_DATA_HOME:-$HOME/.local/share}/tai"
+jqdir=$share/jq
+prompts=$share/prompts
+
+if [ "${1-}" = "--self-check" ]; then
+	tmp=$(mktemp -d)
+	printf 'alpha  beta\ngamma\n' > "$tmp/f"
+	jq -n -L "$jqdir" --rawfile src "$tmp/f" --arg old "alpha beta" --arg new "delta" --argjson multi false \
+		'include "fs"; $src | edit($old; $new; $multi)' | jq -e '.ok == true and (.text | startswith("delta"))' >/dev/null
+	rm -rf "$tmp"
+	printf 'ok\n'
+	exit 0
+fi
+[ "${1-}" = "" ] || die "unknown argument: $1"
+
+# --- project -------------------------------------------------------
+
+find_root() {
+	d=$(pwd)
+	while [ "$d" != "/" ]; do
+		[ -f "$d/.tai" ] && { printf '%s' "$d"; return 0; }
+		d=$(dirname "$d")
+	done
+	return 1
+}
+
+have_tai=0
+if root=$(find_root); then
+	have_tai=1
+else
+	root=$(pwd)
+fi
+cd "$root" || die "cannot cd to $root"
+
+cfgfile=${TMPDIR:-/tmp}/tai-cfg.$$
+if [ "$have_tai" = 1 ]; then
+	jq -c '
+		.provider //= "" | .model //= "" | .auto_approve //= false
+		| .use_tools //= true | .stream //= false | .options //= {}
+		| .rpm //= 60 | .mcps //= {}
+	' "$root/.tai" > "$cfgfile" || die "cannot read .tai"
+else
+	printf '%s\n' '{"provider":"","model":"","auto_approve":false,"use_tools":true,"stream":false,"options":{},"rpm":60,"mcps":{}}' > "$cfgfile"
+fi
+
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/tai/$$
+mkdir -p "$cache/mcp" || die "cannot make cache"
+state=$cache/state.json
+raw=$cache/raw
+resp=$cache/resp.json
+resultf=$cache/result
+imagef=$cache/image.json
+skillsf=$cache/skills.json
+keylog=$cache/keys
+printf 'null\n' > "$resp"
+printf '[]\n' > "$skillsf"
+printf '{}\n' > "$state"
+: > "$raw"; : > "$resultf"; : > "$imagef"; : > "$keylog"
+cat > "$cache/help.txt" <<'EOF'
+scroll      the terminal window
+enter       send the prompt
+shift-enter new line
+left right  move in the line
+backspace   delete left
+ctrl-d      delete right
+ctrl-u      clear the line
+ctrl-n      clear the session
+ctrl-c      stop, or clear the line
+ctrl-l      redraw the prompt
+ctrl-q      quit
+y/yes       run a waiting command
+s/stop      stop a waiting command
+other       decline a waiting command
+ctrl-h      close help
+EOF
+session=
+[ "$have_tai" = 1 ] && session=$root/.tai-cli-session.json
+
+# --- jq ------------------------------------------------------------
+
+jq_op() {
+	op=$1
+	text=${2-}
+	jq -n -L "$jqdir" \
+		--arg op "$op" --arg text "$text" --arg root "$root" \
+		--arg mcptext "${mcptext:-}" --arg image "$(cat "$imagef" 2>/dev/null || true)" \
+		--rawfile result "$resultf" \
+		--rawfile porch "$prompts/orchestrator.txt" \
+		--rawfile pnest "$prompts/orchestrator-nested.txt" \
+		--rawfile pman "$prompts/manager.txt" \
+		--rawfile pcoder "$prompts/coder.txt" \
+		--rawfile prev "$prompts/revisor.txt" \
+		--rawfile pguide "$prompts/guide.txt" \
+		--slurpfile cfg "$cfgfile" --slurpfile tools "$jqdir/tools.json" \
+		--slurpfile resp "$resp" --slurpfile skills "$skillsf" --slurpfile st "$state" \
+		'include "request"; if $op == "init" then dispatch else ($st[0] | dispatch) end' \
+		> "$state.new" && mv "$state.new" "$state"
+}
+
+# --- transcript ----------------------------------------------------
+
+raw_count=0
+printed=0
+live=0
+live_row=1
+help=0
+cursor_on=0
+inL=
+inR=
+rows=24
+cols=80
+gap=0
+help_rows=0
+plines=1
+mcptext=
+in_req=0
+drop=0
+kr=
+cpid=
+titlekey=
+
+append_raw() {
+	printf '%s%s\n' "$1" "$2" >> "$raw"
+	raw_count=$((raw_count + 1))
+}
+
+# A blank row is stored as a single kind character. Skip when the
+# transcript is empty or already ends with one.
+blank_before() {
+	[ -s "$raw" ] || return 0
+	last=$(tail -n 1 "$raw" 2>/dev/null || true)
+	[ "${#last}" -le 1 ] && return 0
+	append_raw A ""
+}
+
+# Print one stored transcript line. The kind byte selects the color.
+# The terminal wraps and keeps the line in its scrollback.
+write_raw_line() {
+	line=$1
+	if [ -z "$line" ]; then
+		printf '\n'
+		return 0
+	fi
+	kind=${line%"${line#?}"}
+	text=${line#?}
+	case $kind in
+		U) printf '\033[1m%s\033[m\n' "$text" ;;
+		T) printf '\033[2m%s\033[m\n' "$text" ;;
+		C) printf '\033[33m%s\033[m\n' "$text" ;;
+		M) printf '\033[36m%s\033[m\n' "$text" ;;
+		*) printf '%s\n' "$text" ;;
+	esac
+}
+
+# Append raw lines that are not on screen yet.
+emit_pending() {
+	[ "${raw_count:-0}" -le "${printed:-0}" ] && return 0
+	tail -n "+$((printed + 1))" "$raw" | while IFS= read -r line || [ -n "$line" ]; do
+		write_raw_line "$line"
+	done
+	printed=$raw_count
+}
+
+# The status and prompt are the only rows redrawn. The cursor sits on live_row.
+erase_live() {
+	[ "${live:-0}" -lt 1 ] && return 0
+	printf '\r'
+	if [ "${live_row:-1}" -gt 1 ]; then
+		printf '\033[%dA' "$((live_row - 1))"
+	fi
+	printf '\033[J'
+	live=0
+	live_row=1
+}
+
+flush_say() {
+	jq -c '.io.say[]?' "$state" > "$cache/say.jsonl"
+	while IFS= read -r row; do
+		d=$(printf '%s' "$row" | jq -r '.d // 0')
+		k=$(printf '%s' "$row" | jq -r '.k // "A"')
+		t=$(printf '%s' "$row" | jq -r '.t // empty')
+		sp=
+		i=0
+		while [ "$i" -lt "$d" ]; do sp="  $sp"; i=$((i + 1)); done
+		if [ -z "$t" ]; then
+			append_raw "$k" ""
+		else
+			blank_before
+			printf '%s' "$t" | tr -d '\r\033' > "$cache/say.txt"
+			while IFS= read -r line || [ -n "$line" ]; do
+				append_raw "$k" "$sp$line"
+			done < "$cache/say.txt"
+		fi
+	done < "$cache/say.jsonl"
+	jq '.io.say = []' "$state" > "$state.new" && mv "$state.new" "$state"
+}
+
+geom() {
+	# macOS ncurses tput ignores the window size when stderr is not a tty
+	# and returns the terminfo default, 24x80. Read the size from the tty.
+	if [ -t 1 ]; then
+		sz=$(stty size </dev/tty 2>/dev/null || true)
+		rows=${sz%% *}
+		cols=${sz##* }
+		if ! [ "$rows" -gt 0 ] 2>/dev/null || ! [ "$cols" -gt 0 ] 2>/dev/null; then
+			rows=24
+			cols=80
+		fi
+	fi
+	rows=${ROWS:-$rows}
+	cols=${COLS:-$cols}
+	[ "$rows" -lt 3 ] && rows=3
+	[ "$cols" -lt 20 ] && cols=20
+}
+
+# --- draw ----------------------------------------------------------
+
+set_title() {
+	tw=tai
+	if [ -n "$prov" ]; then
+		tw="$tw $prov"
+		[ -n "$model" ] && tw="$tw/$model"
+	else
+		tw="$tw no provider"
+	fi
+	tw="$tw $role"
+	if [ "$op" = "approve" ]; then
+		tw="$tw [run?]"
+	else
+		tw="$tw [$st]"
+	fi
+	[ "$ctx" != 0 ] && [ "$ctx" != null ] && tw="$tw ctx $ctx"
+	[ "$tw" = "$titlekey" ] && return 0
+	titlekey=$tw
+	tw=$(printf '%s' "$tw" | tr -d '\000-\037\177')
+	printf '\033]2;%s\007' "$tw"
+}
+
+# One prompt line per newline, including a trailing break.
+load_input() {
+	vis=$inL$inR
+	printf '%s\034' "$vis" > "$cache/input.raw"
+	awk '
+		NR > 1 { print prev }
+		{ prev = $0 }
+		END {
+			sub(/\034$/, "", prev)
+			print prev
+		}
+	' "$cache/input.raw" > "$cache/input.lines"
+	ilines=$(wc -l < "$cache/input.lines" | tr -d ' ')
+	[ "$ilines" -lt 1 ] && ilines=1
+	cur_line=$(printf '%s' "$inL" | tr -cd '\n' | wc -c | tr -d ' ')
+	rest=$inL
+	while [ "$rest" != "${rest#*
+}" ]; do
+		rest=${rest#*
+}
+	done
+	col=${#rest}
+}
+
+fit_prompt() {
+	gap=0
+	help_rows=0
+	if [ "$rows" -ge 4 ] && [ "$ilines" -le 1 ] && [ "$help" != 1 ]; then
+		gap=1
+	fi
+	if [ "$help" = 1 ]; then
+		help_all=$(wc -l < "$cache/help.txt" | tr -d ' ')
+		roomh=$((rows - 2))
+		[ "$roomh" -lt 1 ] && roomh=1
+		help_rows=$help_all
+		[ "$help_rows" -gt "$roomh" ] && help_rows=$roomh
+	fi
+	maxp=$((rows - 1 - gap - help_rows))
+	[ "$maxp" -lt 1 ] && maxp=1
+	plines=$ilines
+	[ "$plines" -gt "$maxp" ] && plines=$maxp
+	[ "$plines" -lt 1 ] && plines=1
+	if [ "$ilines" -le "$plines" ]; then
+		in_start=0
+	else
+		in_start=$((cur_line - plines + 1))
+		[ "$in_start" -lt 0 ] && in_start=0
+	fi
+	used=$((1 + gap + plines + help_rows))
+	if [ "$used" -gt "$rows" ] && [ "$help_rows" -gt 0 ]; then
+		help_rows=$((rows - 1 - gap - plines))
+		[ "$help_rows" -lt 0 ] && help_rows=0
+	fi
+}
+
+# Status and the prompt. Transcript lines are printed above this block.
+draw_live() {
+	geom
+	load_input
+	fit_prompt
+	st=$(jq -r '.io.status // "idle"' "$state")
+	role=$(jq -r '.io.label // "orchestrator"' "$state")
+	ctx=$(jq -r '.last_ctx // 0' "$state")
+	prov=$(jq -r '.provider // ""' "$cfgfile")
+	model=$(jq -r '.model // ""' "$cfgfile")
+	op=$(jq -r '.io.op // "idle"' "$state")
+	set_title
+	if [ "$op" = "approve" ]; then prew=5; else prew=2; fi
+	room=$((cols - prew))
+	[ "$room" -lt 1 ] && room=1
+
+	if [ -n "$prov" ]; then
+		provmodel=$prov
+		[ -n "$model" ] && provmodel=$prov/$model
+	else
+		provmodel="no provider"
+	fi
+	plain=$(printf 'tai  %s  %s  [%s]' "$provmodel" "$role" "$st")
+	extra=
+	if [ "$ctx" != 0 ] && [ "$ctx" != null ]; then
+		extra=$(printf '  ctx %s' "$ctx")
+	fi
+	if [ $((${#plain} + ${#extra})) -gt "$cols" ]; then
+		printf '%s\n' "$(printf '%s%s' "$plain" "$extra" | cut -c "1-$cols")"
+	else
+		printf '\033[1mtai\033[m  %s  \033[1m%s\033[m  ' "$provmodel" "$role"
+		case $st in
+			idle) printf '\033[2m[idle]\033[m' ;;
+			waiting) printf '\033[36m[waiting]\033[m' ;;
+			thinking) printf '\033[35m[thinking]\033[m' ;;
+			tools) printf '\033[33m[tools]\033[m' ;;
+			throttled) printf '\033[31m[throttled]\033[m' ;;
+			*) printf '[%s]' "$st" ;;
+		esac
+		printf '%s\n' "$extra"
+	fi
+
+	if [ "$help" = 1 ] && [ "$help_rows" -gt 0 ]; then
+		sed -n "1,${help_rows}p" "$cache/help.txt" | while IFS= read -r hline || [ -n "$hline" ]; do
+			printf '\033[2m%s\033[m\n' "$(printf '%s' "$hline" | cut -c "1-$cols")"
+		done
+	fi
+	if [ "$gap" = 1 ]; then
+		printf '\n'
+	fi
+
+	exec 5< "$cache/input.lines"
+	si=0
+	while [ "$si" -lt "$in_start" ]; do
+		IFS= read -r _skip <&5 || break
+		si=$((si + 1))
+	done
+	pi=0
+	poff=0
+	while [ "$pi" -lt "$plines" ]; do
+		pline_in=
+		IFS= read -r pline_in <&5 || pline_in=
+		line_no=$((in_start + pi))
+		off=0
+		if [ "$line_no" -eq "$cur_line" ]; then
+			[ "$col" -ge "$room" ] && off=$((col - room + 1))
+			poff=$off
+		fi
+		chunk=$(printf '%s' "$pline_in" | cut -c "$((off + 1))-$((off + room))")
+		if [ "$line_no" -eq 0 ]; then
+			if [ "$op" = "approve" ]; then
+				shown=$(printf '\033[33mrun?\033[m %s' "$chunk")
+			elif [ -z "$vis" ]; then
+				hint=$(printf '%s' 'ctrl-h help' | cut -c "1-$room")
+				shown=$(printf '\033[2m>\033[m \033[2m%s\033[m' "$hint")
+			else
+				shown=$(printf '\033[2m>\033[m %s' "$chunk")
+			fi
+		else
+			shown=$(printf '%*s%s' "$prew" '' "$chunk")
+		fi
+		if [ "$pi" -eq $((plines - 1)) ]; then
+			printf '%s' "$shown"
+		else
+			printf '%s\n' "$shown"
+		fi
+		pi=$((pi + 1))
+	done
+	exec 5<&-
+
+	back=$((plines - 1 - (cur_line - in_start)))
+	[ "$back" -lt 0 ] && back=0
+	[ "$back" -gt 0 ] && printf '\033[%dA' "$back"
+	printf '\r'
+	colpos=$((prew + col - poff))
+	[ "$colpos" -gt 0 ] && printf '\033[%dC' "$colpos"
+
+	live=$((1 + help_rows + gap + plines))
+	live_row=$((1 + help_rows + gap + cur_line - in_start + 1))
+	[ "$live_row" -lt 1 ] && live_row=1
+	[ "$live_row" -gt "$live" ] && live_row=$live
+	if [ "$st" = "idle" ] || [ "$op" = "approve" ]; then
+		[ "$cursor_on" = 1 ] || printf '\033[?25h'
+		cursor_on=1
+	else
+		[ "$cursor_on" = 0 ] || printf '\033[?25l'
+		cursor_on=0
+	fi
+}
+
+paint() {
+	erase_live
+	emit_pending
+	draw_live
+}
+
+# --- providers / tools --------------------------------------------
+
+provider_url() {
+	case $1 in
+		mistral) echo https://api.mistral.ai/v1/chat/completions ;;
+		gemini) echo https://generativelanguage.googleapis.com/v1beta/openai/chat/completions ;;
+		groq) echo https://api.groq.com/openai/v1/chat/completions ;;
+		openrouter) echo https://openrouter.ai/api/v1/chat/completions ;;
+		minimax) echo https://api.minimax.io/v1/chat/completions ;;
+		stepfun) echo https://api.stepfun.ai/v1/chat/completions ;;
+		z_ai) echo https://api.z.ai/api/paas/v4/chat/completions ;;
+		xai) echo https://api.x.ai/v1/chat/completions ;;
+		zyphra) echo https://api.zyphracloud.com/api/v1/chat/completions ;;
+		openai_responses) echo https://api.openai.com/v1/responses ;;
+		ollama) echo http://localhost:11434/v1/chat/completions ;;
+		llama_cpp) echo http://localhost:8080/v1/chat/completions ;;
+		custom) jq -r '.options.url // empty' "$cfgfile" ;;
+		*) echo "" ;;
+	esac
+}
+
+api_key() {
+	case $1 in
+		mistral) printf '%s' "${MISTRAL_API_KEY:-}" ;;
+		gemini) printf '%s' "${GEMINI_API_KEY:-}" ;;
+		groq) printf '%s' "${GROQ_API_KEY:-}" ;;
+		openrouter) printf '%s' "${OPENROUTER_API_KEY:-}" ;;
+		minimax) printf '%s' "${MINIMAX_API_KEY:-}" ;;
+		stepfun) printf '%s' "${STEPFUN_API_KEY:-}" ;;
+		z_ai) printf '%s' "${Z_AI_API_KEY:-}" ;;
+		xai) printf '%s' "${XAI_API_KEY:-}" ;;
+		zyphra) printf '%s' "${ZYPHRA_API_KEY:-}" ;;
+		openai_responses) printf '%s' "${OPENAI_API_KEY:-}" ;;
+		*) printf '' ;;
+	esac
+}
+
+tool_args() {
+	jq -c '.io.tool.function.arguments | if type == "string" then (try fromjson catch {}) else . end' "$state"
+}
+
+bad_path() {
+	case $1 in
+		""|/*|..|../*|*/..|*/../*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+is_bin() {
+	dd if="$1" bs=8192 count=1 2>/dev/null | od -An -tu1 | awk '
+		{ for (i = 1; i <= NF; i++) if ($i + 0 < 9) bad = 1 }
+		END { exit (bad ? 0 : 1) }'
+}
+
+cap_out() {
+	head -c 16000 "$1" > "$resultf"
+	if [ "$(wc -c < "$1" | tr -d ' ')" -gt 16000 ]; then
+		printf '\n[truncated]\n' >> "$resultf"
+	fi
+}
+
+show_out() {
+	kind=$1
+	while IFS= read -r line || [ -n "$line" ]; do
+		append_raw "$kind" "  $line"
+	done < "$resultf"
+}
+
+# Tool call text is kind C. The result that follows stays kind T.
+show_call() {
+	blank_before
+	while IFS= read -r line || [ -n "$line" ]; do
+		append_raw C "$line"
+	done < "$1"
+}
+
+run_read() {
+	a=$(tool_args)
+	file=$(printf '%s' "$a" | jq -r '.file // ""')
+	range=$(printf '%s' "$a" | jq -r '.range // ""')
+	printf 'read: %s%s\n' "$file" "${range:+ [$range]}" > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	if bad_path "$file"; then
+		printf 'Paths cannot start from root (/). Use relative.\n' > "$resultf"
+	elif [ -d "$root/$file" ]; then
+		printf 'Error: `%s` is a directory. List it with shell: ls %s\n' "$file" "$file" > "$resultf"
+	elif [ ! -f "$root/$file" ]; then
+		printf 'Error: `%s` does not exist (project %s). List with shell: ls\n' "$file" "$root" > "$resultf"
+	elif is_bin "$root/$file"; then
+		printf 'Binary file detected. Use send_image for images.\n' > "$resultf"
+	else
+		jq -nr -L "$jqdir" --rawfile src "$root/$file" --arg range "$range" \
+			'include "fs"; $src | read_range($range)' > "$resultf"
+	fi
+	show_out T
+}
+
+run_shell_now() {
+	a=$(tool_args)
+	cmd=$(printf '%s' "$a" | jq -r '.command // ""')
+	printf 'shell: %s\n' "$cmd" > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	tmp=$cache/cmd.out
+	(cd "$root" && sh -c "$cmd") > "$tmp" 2>&1
+	code=$?
+	[ "$code" -ne 0 ] && printf '\n[exit %s]\n' "$code" >> "$tmp"
+	cap_out "$tmp"
+	show_out T
+}
+
+run_edit() {
+	a=$(tool_args)
+	file=$(printf '%s' "$a" | jq -r '.file // ""')
+	old=$(printf '%s' "$a" | jq -r '.old_text // ""')
+	new=$(printf '%s' "$a" | jq -r '.new_text // ""')
+	multi=$(printf '%s' "$a" | jq -c '.multi // false')
+	{
+		printf 'edit: %s\n' "$file"
+		printf 'old:\n%s\n' "$old"
+		printf 'new:\n%s\n' "$new"
+	} > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	if bad_path "$file" || [ ! -f "$root/$file" ]; then
+		printf 'Error: `%s` is not a readable file.\n' "$file" > "$resultf"
+	elif is_bin "$root/$file"; then
+		printf 'Binary file detected. Use send_image for images.\n' > "$resultf"
+	else
+		jq -n -L "$jqdir" --rawfile src "$root/$file" --arg old "$old" --arg new "$new" --argjson multi "$multi" \
+			'include "fs"; $src | edit($old; $new; $multi)' > "$cache/edit.json"
+		if [ "$(jq -r '.ok' "$cache/edit.json")" = true ]; then
+			jq -r '.text' "$cache/edit.json" > "$root/$file"
+			printf 'Patched %s\n' "$file" > "$resultf"
+		else
+			jq -r '.err' "$cache/edit.json" > "$resultf"
+		fi
+	fi
+	show_out T
+}
+
+run_write() {
+	a=$(tool_args)
+	file=$(printf '%s' "$a" | jq -r '.file // ""')
+	{
+		printf 'write: %s\n' "$file"
+		printf '%s' "$a" | jq -r '.content // ""'
+	} > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	if bad_path "$file"; then
+		printf 'Paths cannot start from root (/). Use relative.\n' > "$resultf"
+	elif [ -e "$root/$file" ]; then
+		printf 'Error: `%s` already exists. Use edit.\n' "$file" > "$resultf"
+	else
+		mkdir -p "$(dirname "$root/$file")" || { printf 'Error: could not create directory\n' > "$resultf"; show_out T; return; }
+		printf '%s' "$a" | jq -r '.content // ""' > "$root/$file"
+		printf 'File created: %s\n' "$file" > "$resultf"
+	fi
+	show_out T
+}
+
+run_image() {
+	a=$(tool_args)
+	file=$(printf '%s' "$a" | jq -r '.file // ""')
+	prompt=$(printf '%s' "$a" | jq -r '.prompt // "image"')
+	printf 'image: %s\n%s\n' "$file" "$prompt" > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	ext=$(printf '%s' "$file" | sed 's/.*\.//')
+	case $ext in
+		png) mime=image/png ;;
+		jpg|jpeg) mime=image/jpeg ;;
+		gif) mime=image/gif ;;
+		webp) mime=image/webp ;;
+		bmp) mime=image/bmp ;;
+		*) mime= ;;
+	esac
+	if bad_path "$file" || [ ! -f "$root/$file" ] || [ -z "$mime" ]; then
+		printf 'Error: unsupported or missing image %s\n' "$file" > "$resultf"
+		: > "$imagef"
+	else
+		b64=$(base64 < "$root/$file" | tr -d '\n')
+		jq -n --arg u "data:$mime;base64,$b64" --arg p "$prompt" \
+			'[{type:"text", text:$p}, {type:"image_url", image_url:{url:$u}}]' > "$imagef"
+		printf 'sent\n' > "$resultf"
+	fi
+	show_out T
+}
+
+skill_body() {
+	awk 'BEGIN{p=0;b=0} NR==1 && $0=="---"{p=1; next} p && $0=="---"{b=1; next} b{print}' "$1"
+}
+
+scan_skills() {
+	printf '[]\n' > "$skillsf"
+	for dir in "${XDG_CONFIG_HOME:-$HOME/.config}/tai/skills" "$root/.tai-skills"; do
+		[ -d "$dir" ] || continue
+		for d in "$dir"/*; do
+			[ -f "$d/SKILL.md" ] || continue
+			name=$(basename "$d")
+			fm_name=$(awk 'NR==1 && $0!="---"{exit} NR==1{next} $0=="---"{exit} /^name:/{sub(/^name: */,""); print; exit}' "$d/SKILL.md" | tr -d "\"'")
+			fm_desc=$(awk 'NR==1 && $0!="---"{exit} NR==1{next} $0=="---"{exit} /^description:/{sub(/^description: */,""); print; exit}' "$d/SKILL.md")
+			[ "$fm_name" = "$name" ] || continue
+			printf '%s' "$fm_name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' || continue
+			printf '%s' "$fm_name" | grep -q -- '--' && continue
+			[ "${#fm_name}" -le 64 ] && [ "${#fm_desc}" -ge 1 ] && [ "${#fm_desc}" -le 1024 ] || continue
+			jq --arg name "$fm_name" --arg desc "$fm_desc" --arg file "$d/SKILL.md" \
+				'map(select(.name != $name)) + [{name:$name, desc:$desc, file:$file}]' \
+				"$skillsf" > "$skillsf.new" && mv "$skillsf.new" "$skillsf"
+		done
+	done
+	jq_op skills
+}
+
+run_skill() {
+	a=$(tool_args)
+	action=$(printf '%s' "$a" | jq -r '.action // ""')
+	id=$(printf '%s' "$a" | jq -r '.id // ""')
+	printf 'skill: %s %s\n' "$action" "$id" > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	case $action in
+		list)
+			jq -r '.[] | "- \(.name): \(.desc)"' "$skillsf" > "$resultf"
+			[ -s "$resultf" ] || printf 'No skills found.\n' > "$resultf"
+			;;
+		status|load|unload)
+			file=$(jq -r --arg id "$id" '.[] | select(.name == $id) | .file' "$skillsf")
+			if [ -z "$file" ]; then
+				printf 'Error: skill %s not found.\n' "$id" > "$resultf"
+			elif [ "$action" = status ]; then
+				printf '%s\n%s\n' "$id" "$file" > "$resultf"
+			elif [ "$action" = unload ]; then
+				jq --arg id "$id" 'del(.skill_bodies[$id])' "$state" > "$state.new" && mv "$state.new" "$state"
+				printf 'Skill %s unloaded.\n' "$id" > "$resultf"
+			else
+				skill_body "$file" > "$cache/skill.body"
+				jq --rawfile b "$cache/skill.body" --arg id "$id" '.skill_bodies[$id] = $b' \
+					"$state" > "$state.new" && mv "$state.new" "$state"
+				printf 'Skill %s loaded.\n' "$id" > "$resultf"
+			fi
+			;;
+		*) printf 'Error: unknown action %s\n' "$action" > "$resultf" ;;
+	esac
+	show_out T
+}
+
+mcp_summary() {
+	: > "$cache/mcp.txt"
+	jq -r '.mcps // {} | keys[]' "$cfgfile" | while IFS= read -r name; do
+		if [ -f "$cache/mcp/$name/pid" ] && kill -0 "$(cat "$cache/mcp/$name/pid")" 2>/dev/null; then
+			printf '%s: connected\n' "$name"
+		else
+			printf '%s: configured\n' "$name"
+		fi
+	done >> "$cache/mcp.txt"
+	mcptext=$(cat "$cache/mcp.txt" 2>/dev/null || true)
+}
+
+mcp_rpc() {
+	name=$1 method=$2 params=$3
+	d=$cache/mcp/$name
+	id=$(( $(cat "$d/id" 2>/dev/null || echo 0) + 1 ))
+	printf '%s\n' "$id" > "$d/id"
+	jq -n --arg m "$method" --argjson id "$id" --argjson p "$params" \
+		'{jsonrpc:"2.0", id:$id, method:$m, params:$p}' > "$d/req"
+	if [ "$(cat "$d/kind" 2>/dev/null)" = http ]; then
+		key=$(jq -r --arg n "$name" '.mcps[$n].api_key // empty' "$cfgfile")
+		if [ -n "$key" ]; then
+			curl -sS -m 30 -X POST "$(cat "$d/url")" -H "Content-Type: application/json" \
+				-H "Authorization: Bearer $key" --data-binary @"$d/req" > "$d/last" || printf '{"error":"curl"}\n' > "$d/last"
+		else
+			curl -sS -m 30 -X POST "$(cat "$d/url")" -H "Content-Type: application/json" \
+				--data-binary @"$d/req" > "$d/last" || printf '{"error":"curl"}\n' > "$d/last"
+		fi
+		return 0
+	fi
+	before=$(wc -l < "$d/out" | tr -d ' ')
+	cat "$d/req" >> "$d/msg"
+	i=0
+	while [ "$i" -lt 200 ]; do
+		if awk -v b="$before" 'NR > b && /"id"/ { f = 1 } END { exit !f }' "$d/out"; then
+			awk -v b="$before" 'NR > b' "$d/out" | jq -s --argjson id "$id" 'map(select(.id == $id)) | last // {error:"no reply"}' > "$d/last"
+			return 0
+		fi
+		sleep 0.05
+		i=$((i + 1))
+	done
+	printf '{"error":"timeout"}\n' > "$d/last"
+	return 1
+}
+
+mcp_connect() {
+	name=$1
+	d=$cache/mcp/$name
+	mkdir -p "$d"
+	: > "$d/out"; : > "$d/msg"; printf '0\n' > "$d/id"
+	url=$(jq -r --arg n "$name" '.mcps[$n].url // empty' "$cfgfile")
+	if [ -n "$url" ]; then
+		printf 'http\n' > "$d/kind"
+		printf '%s\n' "$url" > "$d/url"
+		mcp_rpc "$name" initialize '{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"tai","version":"0.1"}}'
+		return 0
+	fi
+	cmd=$(jq -r --arg n "$name" '.mcps[$n].command // empty' "$cfgfile")
+	[ -n "$cmd" ] || { printf 'Error: mcp %s has no command or url\n' "$name"; return 1; }
+	printf 'stdio\n' > "$d/kind"
+	jq -r --arg n "$name" '.mcps[$n].args[]?' "$cfgfile" > "$d/args"
+	(
+		set --
+		while IFS= read -r arg; do set -- "$@" "$arg"; done < "$d/args"
+		tail -n +1 -f "$d/msg" | "$cmd" "$@" > "$d/out" 2>"$d/err"
+	) &
+	printf '%s\n' "$!" > "$d/pid"
+	sleep 0.1
+	mcp_rpc "$name" initialize '{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"tai","version":"0.1"}}'
+	printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' >> "$d/msg"
+}
+
+run_mcp() {
+	a=$(tool_args)
+	action=$(printf '%s' "$a" | jq -r '.action // ""')
+	name=$(printf '%s' "$a" | jq -r '.server // ""')
+	tool=$(printf '%s' "$a" | jq -r '.tool // ""')
+	printf 'mcp: %s %s %s\n' "$action" "$name" "$tool" > "$cache/call.txt"
+	show_call "$cache/call.txt"
+	case $action in
+		status) mcp_summary; cp "$cache/mcp.txt" "$resultf" ;;
+		connect)
+			if mcp_connect "$name" > "$cache/mcp.err" 2>&1; then
+				printf 'connected %s\n' "$name" > "$resultf"
+			else
+				cp "$cache/mcp.err" "$resultf"
+			fi
+			mcp_summary
+			;;
+		disconnect)
+			if [ -f "$cache/mcp/$name/pid" ]; then
+				kill "$(cat "$cache/mcp/$name/pid")" 2>/dev/null || true
+				rm -f "$cache/mcp/$name/pid"
+			fi
+			printf 'disconnected %s\n' "$name" > "$resultf"
+			mcp_summary
+			;;
+		list_tools)
+			mcp_rpc "$name" "tools/list" '{}' || true
+			jq -r '.result.tools[]? | "- \(.name): \(.description // "")"' "$cache/mcp/$name/last" > "$resultf" 2>/dev/null \
+				|| cp "$cache/mcp/$name/last" "$resultf"
+			;;
+		call)
+			if jq -e --arg n "$name" --arg t "$tool" '.mcps[$n].denylist // [] | index($t) != null' "$cfgfile" >/dev/null; then
+				printf 'Error: tool %s is denied\n' "$tool" > "$resultf"
+			else
+				args=$(printf '%s' "$a" | jq -c '.arguments // {}')
+				mcp_rpc "$name" "tools/call" "$(jq -n --arg t "$tool" --argjson a "$args" '{name:$t, arguments:$a}')" || true
+				jq -c '.result // .error // .' "$cache/mcp/$name/last" > "$resultf"
+			fi
+			;;
+		*) printf 'Error: unknown action %s\n' "$action" > "$resultf" ;;
+	esac
+	show_out T
+}
+
+do_tool() {
+	name=$(jq -r '.io.tool.function.name' "$state")
+	: > "$imagef"
+	: > "$resultf"
+	case $name in
+		read) run_read ;;
+		shell) run_shell_now ;;
+		edit) run_edit ;;
+		write) run_write ;;
+		send_image) run_image ;;
+		skill) run_skill ;;
+		mcp) run_mcp ;;
+		*) printf 'Error: unknown tool %s\n' "$name" > "$resultf" ;;
+	esac
+	jq_op tool
+}
+
+# --- requests ------------------------------------------------------
+
+# Bracketed paste ends at ESC [201~. Bytes stay in the body file.
+take_paste() {
+	paste_seq=$((paste_seq + 1))
+	body=$cache/paste.$paste_seq
+	: > "$body"
+	cr=0
+	while :; do
+		rb=
+		IFS= read -r -d '' -n 1 rb </dev/tty || exit 0
+		[ -n "$rb" ] || continue
+		bb=$(printf '%d' "'$rb" 2>/dev/null) || continue
+		if [ "$bb" = 27 ]; then
+			[ "$cr" = 1 ] && printf '\n' >> "$body"
+			cr=0
+			dd bs=5 count=1 </dev/tty 2>/dev/null > "$cache/paste.end" || true
+			printf '[201~' > "$cache/paste.mark"
+			if cmp -s "$cache/paste.end" "$cache/paste.mark"; then
+				break
+			fi
+			printf '\033' >> "$body"
+			cat "$cache/paste.end" >> "$body"
+			continue
+		fi
+		if [ "$bb" = 13 ]; then
+			cr=1
+			continue
+		fi
+		if [ "$bb" = 10 ]; then
+			printf '\n' >> "$body"
+			cr=0
+			continue
+		fi
+		if [ "$cr" = 1 ]; then
+			printf '\n' >> "$body"
+			cr=0
+		fi
+		if [ "$bb" = 9 ] || [ "$bb" -ge 32 ]; then
+			printf '%s' "$rb" >> "$body"
+		fi
+	done
+	[ "$cr" = 1 ] && printf '\n' >> "$body"
+	[ -s "$body" ] || return 0
+	printf 'P %s\n' "$paste_seq" >&8 || exit 0
+}
+
+# One blocked read on the tty. An arrow is ESC plus two bytes that are
+# already buffered, so take those with dd and no timer, as ereandel does.
+# A timer waits out the whole interval on every arrow.
+key_reader() {
+	trap - EXIT INT HUP TERM
+	LC_ALL=C
+	export LC_ALL
+	exec </dev/tty
+	paste_seq=0
+	while :; do
+		c=
+		IFS= read -r -d '' -n 1 c </dev/tty || [ -n "$c" ] || exit 0
+		[ -n "$c" ] || continue
+		b=$(printf '%d' "'$c" 2>/dev/null) || continue
+		if [ "$b" = 27 ]; then
+			# The whole sequence is already buffered. Read it with no timer.
+			seq=
+			IFS= read -r -d '' -n 1 seq </dev/tty || exit 0
+			k=
+			if [ "$seq" = '[' ]; then
+				csi=
+				n=0
+				while [ "$n" -lt 16 ]; do
+					cb=
+					IFS= read -r -d '' -n 1 cb </dev/tty || exit 0
+					[ -n "$cb" ] || exit 0
+					csi=$csi$cb
+					fb=$(printf '%d' "'$cb" 2>/dev/null) || fb=0
+					[ "$fb" -ge 64 ] && break
+					n=$((n + 1))
+				done
+				case $csi in
+					A) k=UP ;;
+					B) k=DOWN ;;
+					C) k=RIGHT ;;
+					D) k=LEFT ;;
+					5~) k=PGUP ;;
+					6~) k=PGDN ;;
+					200~) k=PASTE ;;
+					201~) k= ;;
+					# Shift-Enter is its own key. A plain Enter, even as a line feed, submits.
+					13\;2u|13\;2:*u|13\;2\;*u|27\;2\;13~|27\;2\;13u|27\;2\;10~) k=NL ;;
+					13u|13\;1u|13\;1:*u|13\;1\;*u|27\;1\;13~|27\;13~) k=13 ;;
+					*) k=ESC ;;
+				esac
+			else
+				k=ESC
+			fi
+			if [ "$k" = PASTE ]; then
+				take_paste
+				continue
+			fi
+			[ -n "$k" ] || continue
+		elif [ "$b" -ge 32 ] && [ "$b" -le 126 ]; then
+			k="C $(printf "\\$(printf '%03o' "$b")")"
+		else
+			k=$b
+		fi
+		printf '%s\n' "$k" >&8 || exit 0
+	done
+}
+
+kill_req() {
+	if [ -f "$cache/curl.pid" ]; then
+		kill "$(cat "$cache/curl.pid")" 2>/dev/null || true
+	fi
+	[ -n "$cpid" ] && kill "$cpid" 2>/dev/null || true
+}
+
+rate_wait() {
+	rpm=$(jq -r '.rpm // 60' "$cfgfile")
+	[ "$rpm" -lt 1 ] && rpm=1000000
+	now=$(date +%s)
+	touch "$cache/rpm"
+	awk -v n="$now" '$1 > n - 60 { print }' "$cache/rpm" > "$cache/rpm.new"
+	mv "$cache/rpm.new" "$cache/rpm"
+	count=$(wc -l < "$cache/rpm" | tr -d ' ')
+	if [ "$count" -ge "$rpm" ]; then
+		jq '.io.status = "throttled"' "$state" > "$state.new" && mv "$state.new" "$state"
+		paint
+		sleep 1
+		rate_wait
+		return
+	fi
+	printf '%s\n' "$now" >> "$cache/rpm"
+}
+
+fold_stream() {
+	awk 'sub(/^data: /, "") && $0 != "[DONE]" { print }' "$cache/sse" > "$cache/sse.jsonl"
+	if [ ! -s "$cache/sse.jsonl" ]; then
+		if [ -s "$cache/sse" ]; then
+			cp "$cache/sse" "$resp"
+		else
+			printf '%s\n' '{"error":"ERROR [provider]: empty provider response"}' > "$resp"
+		fi
+		return
+	fi
+	jq -s -L "$jqdir" 'include "request"; fold_sse' "$cache/sse.jsonl" > "$resp" \
+		|| printf '%s\n' '{"error":"ERROR [provider]: bad stream"}' > "$resp"
+}
+
+do_request() {
+	jq '.io.body' "$state" > "$cache/body.json"
+	limit=$(jq -r '.context_tokens // empty' "$cfgfile")
+	if [ -n "$limit" ]; then
+		chars=$(wc -c < "$cache/body.json" | tr -d ' ')
+		est=$((chars / 4))
+		if [ "$est" -gt "$limit" ]; then
+			printf '{"error":"ERROR [context]: request is %s tokens, limit is %s."}\n' "$est" "$limit" > "$resp"
+			jq_op resp
+			return
+		fi
+	fi
+	rate_wait
+	prov=$(jq -r '.provider // ""' "$cfgfile")
+	url=$(provider_url "$prov")
+	if [ -z "$url" ]; then
+		printf '%s\n' '{"error":"ERROR [provider]: set provider and model in .tai"}' > "$resp"
+		jq_op resp
+		return
+	fi
+	key=$(api_key "$prov")
+	stream=$(jq -r 'if .stream == true and .provider != "openai_responses" then "yes" else "no" end' "$cfgfile")
+	rm -f "$cache/stop"
+	if [ -n "${TAI_FAKE_RESPONSE:-}" ]; then
+		cp "$TAI_FAKE_RESPONSE" "$resp"
+		jq_op resp
+		return
+	fi
+	out=$resp
+	[ "$stream" = yes ] && out=$cache/sse
+	nflag=
+	[ "$stream" = yes ] && nflag=-N
+	# shellcheck disable=SC2086
+	(
+		trap - EXIT INT HUP TERM
+		curlpid=
+		trap '[ -n "$curlpid" ] && kill "$curlpid" 2>/dev/null || true; printf "DONE\n" >&8' EXIT
+		trap 'exit 1' TERM
+		# shellcheck disable=SC2086
+		curl -sS $nflag -D "$cache/hdr" -o "$out" -w '%{http_code}' \
+			-X POST "$url" \
+			-H "Authorization: Bearer $key" \
+			-H "Content-Type: application/json" \
+			-H "HTTP-Referer: https://terminal.pink/tai" \
+			-H "X-Title: tai" \
+			--data-binary @"$cache/body.json" > "$cache/code" &
+		curlpid=$!
+		printf '%s\n' "$curlpid" > "$cache/curl.pid"
+		wait "$curlpid"
+	) &
+	cpid=$!
+	in_req=1
+	while IFS= read -r k <&8; do
+		[ "$k" = DONE ] && break
+		case $k in
+			3) printf x > "$cache/stop"; kill_req ;;
+			8) help=$((1 - help)); paint ;;
+			12) paint ;;
+			14) clear_session ;;
+			17) quit ;;
+		esac
+	done
+	wait "$cpid" 2>/dev/null || true
+	cpid=
+	in_req=0
+	rm -f "$cache/curl.pid"
+	if [ "$drop" = 1 ]; then
+		drop=0
+		return
+	fi
+	if [ -f "$cache/stop" ]; then
+		rm -f "$cache/stop"
+		jq_op stop
+		return
+	fi
+	code=$(cat "$cache/code" 2>/dev/null || echo 000)
+	if [ "$stream" = yes ]; then
+		fold_stream
+	fi
+	case $code in
+		2*) ;;
+		000) printf '%s\n' '{"error":"ERROR [provider]: curl failed"}' > "$resp" ;;
+		*)
+			jq -n --arg c "$code" --rawfile b "$resp" \
+				'{error: ("ERROR [HTTP " + $c + "]: " + ($b[0:400]))}' > "$cache/err.json"
+			mv "$cache/err.json" "$resp"
+			;;
+	esac
+	jq_op resp
+}
+
+drive() {
+	busy=0
+	while :; do
+		op=$(jq -r '.io.op // "idle"' "$state")
+		case $op in
+			idle|approve)
+				[ "$busy" = 1 ] && printf '\a'
+				break
+				;;
+			request)
+				jq '.io.status = "waiting"' "$state" > "$state.new" && mv "$state.new" "$state"
+				busy=1
+				paint
+				do_request
+				flush_say
+				paint
+				;;
+			tool)
+				busy=1
+				jq '.io.status = "tools"' "$state" > "$state.new" && mv "$state.new" "$state"
+				paint
+				do_tool
+				flush_say
+				paint
+				;;
+			*) break ;;
+		esac
+	done
+}
+
+save_session() {
+	[ -n "$session" ] && [ -f "$state" ] || return 0
+	jq -n --slurpfile st "$state" --rawfile raw "$raw" \
+		'($st[0] | {stack, plan, skill_bodies, skill_catalog, last_ctx}) + {output: ($raw | split("\n"))}' \
+		> "$session.tmp" && mv "$session.tmp" "$session"
+}
+
+load_session() {
+	if [ -n "$session" ] && [ -f "$session" ]; then
+		jq '{
+			stack, plan,
+			skill_bodies: (.skill_bodies // {}),
+			skill_catalog: (.skill_catalog // []),
+			last_ctx: (.last_ctx // 0),
+			queue: [], stop: false, ran: null, go: null,
+			io: {op:"idle", status:"idle", label:(.stack[-1].role // "orchestrator"), say:[], ctx:(.last_ctx // 0)}
+		}' "$session" > "$state"
+		jq -r '.output // [] | .[]' "$session" > "$raw"
+		raw_count=$(wc -l < "$raw" | tr -d ' ')
+		printed=0
+	else
+		jq_op init
+		raw_count=0
+	fi
+}
+
+# --- keys ----------------------------------------------------------
+
+k=
+
+submit() {
+	line=$inL$inR
+	inL=
+	inR=
+	op=$(jq -r '.io.op // "idle"' "$state")
+	if [ "$op" = "approve" ]; then
+		jq_op approve "$line"
+		flush_say
+		drive
+		return
+	fi
+	[ -z "$line" ] && return 0
+	jq_op user "$line"
+	flush_say
+	drive
+}
+
+quit() { exit 0; }
+
+clear_session() {
+	if [ "$in_req" = 1 ]; then
+		drop=1
+		kill_req
+	fi
+	rm -f "$cache/stop"
+	printf 'null\n' > "$resp"
+	: > "$resultf"
+	: > "$imagef"
+	inL=
+	inR=
+	help=0
+	jq_op init || return
+	scan_skills
+	: > "$raw"
+	raw_count=0
+	printed=0
+	append_raw M "session cleared"
+	save_session
+}
+
+handle() {
+	case $k in
+		LEFT) [ -n "$inL" ] && { c=${inL#"${inL%?}"}; inL=${inL%?}; inR=$c$inR; } ;;
+		RIGHT) [ -n "$inR" ] && { c=${inR%"${inR#?}"}; inR=${inR#?}; inL=$inL$c; } ;;
+		13|10) submit ;;
+		NL) inL="$inL
+" ;;
+		127) [ -n "$inL" ] && inL=${inL%?} ;;
+		8) help=$((1 - help)) ;;
+		21) inL=; inR= ;;
+		14) clear_session ;;
+		3)
+			if [ "$(jq -r '.io.op' "$state")" != idle ]; then
+				printf x > "$cache/stop"
+			else
+				inL=; inR=
+			fi
+			;;
+		4) [ -n "$inR" ] && inR=${inR#?} ;;
+		17) quit ;;
+		P\ *)
+			id=${k#P }
+			chunk=$(cat "$cache/paste.$id"; printf x)
+			chunk=${chunk%x}
+			rm -f "$cache/paste.$id"
+			inL=$inL$chunk
+			;;
+		C\ *) inL=$inL${k#C } ;;
+		*) ;;
+	esac
+}
+
+cleanup() {
+	trap - EXIT INT HUP TERM
+	if [ -n "$kr" ]; then
+		pkill -P "$kr" 2>/dev/null || true
+		kill "$kr" 2>/dev/null || true
+		wait "$kr" 2>/dev/null || true
+	fi
+	kill_req
+	stty sane 2>/dev/null || true
+	if [ "${live:-0}" -gt "${live_row:-1}" ]; then
+		printf '\033[%dB' "$((live - live_row))"
+	fi
+	printf '\n\033[?25h\033[?2004l\033[<u\033[>4;0m'
+	printf '\033]2;\007'
+	save_session
+	rm -f "$cfgfile"
+}
+trap cleanup EXIT INT HUP TERM
+
+[ -t 1 ] || die "not a terminal"
+
+load_session
+scan_skills
+mcp_summary
+# Block until a key, as ereandel does. A timed read restarts od and tr
+# about ten times a second while the prompt is idle.
+# -icrnl keeps Enter as CR. A pasted line feed stays in the prompt.
+# Stay on the main screen so the terminal's own scrollback keeps the output.
+stty -echo -icanon -isig -ixon -icrnl min 1 time 0 \
+	intr undef quit undef susp undef dsusp undef \
+	start undef stop undef kill undef werase undef status undef
+rm -f "$cache/ev"
+mkfifo "$cache/ev" || die "cannot make key fifo"
+exec 8<>"$cache/ev" || die "cannot open key fifo"
+printf '\033[?2004h\033[=1u\033[>4;1m'
+set +m 2>/dev/null || true
+key_reader &
+kr=$!
+paint
+while IFS= read -r k <&8; do
+	[ "$k" = DONE ] && continue
+	handle
+	paint
+done
