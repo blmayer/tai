@@ -1,0 +1,2852 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai 753ba8b</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit 753ba8b
+parent (none)
+author Brian Mayer &lt;bleemayer@gmail.com&gt;
+date   2026-11-14T20:19:47-03:00
+
+    Add the tai terminal client.
+
+    A POSIX shell client for the local agent: jq plans the work, prompts
+    drive the orchestrator, and the transcript prints into the terminal
+    scrollback.
+
+<a href=tree-753ba8b.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/Makefile b/Makefile
+new file mode 100644
+index 0000000..ad19616
+--- /dev/null
++++ b/Makefile
+@@ -0,0 +1,37 @@
++PREFIX ?= $(HOME)/.local
++JQ = jq
++HERE = $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
++
++.PHONY: test install
++
++test:
++	$(JQ) -e -n -L jq -f test/plan.test.jq &gt;/dev/null
++	$(JQ) -e -n -L jq -f test/fs.test.jq &gt;/dev/null
++	$(JQ) -e -n -L jq \
++		--arg root /proj --arg op init --arg text '' --arg mcptext '' --arg image '' \
++		--rawfile result /dev/null \
++		--rawfile porch prompts/orchestrator.txt \
++		--rawfile pnest prompts/orchestrator-nested.txt \
++		--rawfile pman prompts/manager.txt \
++		--rawfile pcoder prompts/coder.txt \
++		--rawfile prev prompts/revisor.txt \
++		--rawfile pguide prompts/guide.txt \
++		--slurpfile cfg test/cfg.json \
++		--slurpfile tools jq/tools.json \
++		--slurpfile resp test/null.json \
++		--slurpfile skills test/skills.json \
++		-f test/harness.test.jq &gt;/dev/null
++	set -e; \
++	share=$$(mktemp -d); \
++	trap 'rm -rf "$$share"' EXIT; \
++	mkdir -p "$$share/tai"; \
++	ln -s "$$(pwd)/jq" "$$share/tai/jq"; \
++	ln -s "$$(pwd)/prompts" "$$share/tai/prompts"; \
++	XDG_DATA_HOME="$$share" ./tai --self-check
++	sh test/emit.sh
++
++install:
++	mkdir -p $(PREFIX)/bin $(PREFIX)/share/tai/jq $(PREFIX)/share/tai/prompts
++	install -m 755 tai $(PREFIX)/bin/tai
++	install -m 644 jq/* $(PREFIX)/share/tai/jq/
++	install -m 644 prompts/* $(PREFIX)/share/tai/prompts/
+diff --git a/README.md b/README.md
+new file mode 100644
+index 0000000..50b4cef
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,33 @@
++# tai
++
++Terminal client for the tai agent. The Neovim plugin is [tai.nvim](https://github.com/blmayer/tai).
++
++One POSIX shell script. `jq` and `curl` do the JSON and HTTP. It reads `.tai` from the project (same file as the plugin) and keeps its own session at `.tai-cli-session.json`. The `jq` filters and prompts are read from `$XDG_DATA_HOME/tai` (default `~/.local/share/tai`), then from each directory in `$XDG_DATA_DIRS`.
++
++```
++tai  llama_cpp/gemma  orchestrator  [idle]
++you: fix the build
++CODER show the error [1]
++&gt;
++```
++
++Output is appended to the terminal. Scroll the window to read earlier lines. The input is the `&gt;` line. The terminal title tracks the status line. The bell rings when the agent stops.
++
++| Key | Action |
++|---|---|
++| Enter | Send the line. `y` / `n` / `s` while a command is waiting |
++| Ctrl-C | Stop the agent |
++| Ctrl-L | Redraw the prompt |
++| Ctrl-U | Clear the line |
++| Ctrl-N | Clear the session |
++| Ctrl-H | Show or hide help |
++| Ctrl-Q | Quit |
++
++An empty prompt shows `ctrl-h help` in dim text. That text is not part of the line.
++
++```
++make test
++make install
++```
++
++`make install` puts the script in `~/.local/bin` and the data files in `~/.local/share/tai` (`$(PREFIX)/share/tai` when `PREFIX` is set). A `PREFIX` of `/usr/local` or `/usr` is found through the default `XDG_DATA_DIRS`.
+diff --git a/jq/fs.jq b/jq/fs.jq
+new file mode 100644
+index 0000000..d4181a3
+--- /dev/null
++++ b/jq/fs.jq
+@@ -0,0 +1,73 @@
++# File edit / read helpers. Input is the file text.
++
++def normline:
++  gsub("\\s+"; " ") | gsub("^\\s+|\\s+$"; "");
++
++def lines:
++  if . == "" then [""] else split("\n") end;
++
++def numbered($from; $to):
++  lines as $ls
++  | [range($from; $to + 1) | "\(.)" + ": " + $ls[. - 1]]
++  | join("\n");
++
++def read_range($range):
++  lines as $ls
++  | ($ls | length) as $n
++  | if $range == null or $range == "" then numbered(1; $n)
++    else
++      (if $range == "$" then {a: (-1), b: (-1)}
++       elif $range | test("^-\\d+:\\$$") then {a: ($range | sub(":\\$$"; "") | tonumber), b: (-1)}
++       elif $range | test("^\\d+:\\$$") then {a: (($range | sub(":\\$$"; "") | tonumber) - 1), b: (-1)}
++       elif $range | test("^\\d+:\\d+$") then
++         ($range | split(":")) as $p | {a: (($p[0] | tonumber) - 1), b: (($p[1] | tonumber) - 1)}
++       elif $range | test("^\\d+$") then
++         ($range | tonumber) as $k | if $k == 0 then {a: 0, b: 0} else {a: ($k - 1), b: ($k - 1)} end
++       else null end) as $r
++      | if $r == null then "Error: Invalid range \($range)"
++        else
++          (if $r.a &lt; 0 then $n + $r.a else $r.a end) as $a0
++          | (if $r.b &lt; 0 then $n + $r.b else $r.b end) as $b0
++          | ($a0 + 1) as $a1
++          | (if ($b0 + 1) &gt; $n then $n else $b0 + 1 end) as $b1
++          | if $a1 &lt; 1 or $b1 &lt; 0 or $a1 &gt; $n or $a1 &gt; $b1 then "Error: Invalid range \($range)"
++            else numbered($a1; $b1) end
++        end
++    end;
++
++def find_starts($old):
++  lines as $buf
++  | ($old | lines) as $oldl
++  | ([$buf[] | normline]) as $nb
++  | ([$oldl[] | normline]) as $no
++  | if ($no | length) == 0 then []
++    else
++      [range(0; ($nb | length) - ($no | length) + 1) as $i
++        | select(all(range(0; $no | length); . as $k | $nb[$i + $k] == $no[$k]))
++        | $i]
++    end;
++
++def splice($start; $count; $newlines):
++  lines as $ls
++  | ($ls[:$start] + $newlines + $ls[$start + $count:]) | join("\n");
++
++def edit($old; $new; $multi):
++  . as $src
++  | ($new | if . == null then "" else . end | lines) as $nl
++  | if $old == null or $old == "" then
++      {ok: true, text: ($nl + ($src | lines) | join("\n"))}
++    else
++      find_starts($old) as $hits
++      | if ($hits | length) == 0 then
++          (lines | map(normline)) as $nb
++          | ($old | lines | map(normline)) as $no
++          | (reduce $nb[] as $line (0;
++              if . &gt;= ($no | length) then .
++              elif $line == $no[.] then . + 1 else . end)) as $best
++          | {ok: false, err: "Error: old_text was not found. Call read on this file, then edit again. Best partial match: \($best)/\($no | length) lines."}
++        else
++          (if $multi then $hits | reverse else [$hits[0]] end) as $starts
++          | reduce $starts[] as $s ($src; splice($s; ($old | lines | length); $nl))
++          | {ok: true, text: .}
++        end
++    end;
+diff --git a/jq/plan.jq b/jq/plan.jq
+new file mode 100644
+index 0000000..03b4614
+--- /dev/null
++++ b/jq/plan.jq
+@@ -0,0 +1,181 @@
++# Plan tree. Input is the whole state unless a def says otherwise.
++
++def trim:
++  if type == "string" then gsub("^\\s+|\\s+$"; "") else "" end;
++
++def statuses:
++  ["pending", "running", "ok", "blocked", "error", "skipped"];
++
++def terminal($s):
++  $s == "ok" or $s == "blocked" or $s == "error" or $s == "skipped";
++
++def empty_plan:
++  {agent:"orchestrator", status:"pending", goal:"", title:"", notes:"", result:"", tools:[], tasks:[]};
++
++def normalize:
++  . as $raw
++  | ($raw.goal // $raw.text // "") | trim as $g
++  | if $g == "" then null
++    else
++      [($raw.tasks // $raw.children // $raw.items // [])[] | normalize | select(. != null)] as $tasks
++      | ($raw.agent // $raw.role // "" | tostring | ascii_downcase | trim) as $a0
++      | (if $a0 == "coder" or $a0 == "manager" or $a0 == "orchestrator" then $a0
++         elif ($tasks | length) &gt; 0 then "orchestrator" else "coder" end) as $agent
++      | ($raw.status // "pending" | tostring | ascii_downcase) as $st0
++      | {
++          agent: $agent,
++          status: (if (statuses | index($st0)) then $st0 else "pending" end),
++          goal: $g,
++          title: (if ($raw.title | type) == "string" then ($raw.title | trim) else "" end),
++          notes: (if ($raw.notes | type) == "string" then $raw.notes else "" end),
++          result: (if ($raw.result | type) == "string" then $raw.result else "" end),
++          tools: [($raw.tools // [])[] | select(type == "string" and . != "")],
++          tasks: $tasks
++        }
++    end;
++
++def parse_index($index):
++  if ($index | type) == "number" then
++    if $index &lt; 1 then null else [$index] end
++  elif ($index | type) == "string" then
++    [$index | split(".")[] | try tonumber catch null]
++    | if length == 0 or any(. == null or . &lt; 1) then null else . end
++  elif ($index | type) == "array" then
++    if length == 0 or any(type != "number" or . &lt; 1) then null else . end
++  else null end;
++
++def node_at($path):
++  if $path == null or ($path | length) == 0 then .
++  else .tasks[$path[0] - 1] // null | if . == null then null else node_at($path[1:]) end
++  end;
++
++def put_in($path; $node):
++  if ($path | length) == 0 then $node
++  elif ($path | length) == 1 then .tasks[$path[0] - 1] = $node
++  else .tasks[$path[0] - 1] |= put_in($path[1:]; $node)
++  end;
++
++def append_task($path; $node):
++  if ($path | length) == 0 then .tasks += [$node]
++  else .tasks[$path[0] - 1] |= append_task($path[1:]; $node)
++  end;
++
++def patch_in($path; f):
++  if ($path | length) == 0 then f
++  else .tasks[$path[0] - 1] |= patch_in($path[1:]; f)
++  end;
++
++def settle_node:
++  if ((.tasks // []) | length) == 0 then .
++  elif terminal(.status) then .
++  elif (.tasks | all(terminal(.status)) | not) then .
++  elif (.tasks | any(.status == "blocked" or .status == "error")) then .status = "blocked"
++  else .status = "ok" end;
++
++def settle_from($path):
++  if ($path | length) == 0 then settle_node
++  else .tasks[$path[0] - 1] |= settle_from($path[1:]) | settle_node end;
++
++def find_from($tasks; $pre; $i):
++  if $tasks == null or $i &gt;= ($tasks | length) then null
++  else
++    ($tasks[$i]) as $item
++    | ($pre + [$i + 1]) as $p
++    | (if (($item.tasks // []) | length) &gt; 0 then find_from($item.tasks; $p; 0)
++       elif $item.status == "pending" then {path: $p, item: $item}
++       else null end) as $hit
++    | if $hit then $hit else find_from($tasks; $pre; $i + 1) end
++  end;
++
++def find_pending($tasks):
++  find_from($tasks; []; 0);
++
++def frame_tasks($path):
++  (.plan | node_at($path) | .tasks) // [];
++
++def step_str($p):
++  $p | map(tostring) | join(".");
++
++def field_lines($pad; $label; $text):
++  if ($text | type) != "string" or ($text | trim) == "" then []
++  else
++    ($text | split("\n")) as $ls
++    | [range(0; $ls | length) as $i
++        | if $i == 0 then "\($pad)\($label)\($ls[$i])"
++          else "\($pad)\(" " * ($label | length))\($ls[$i])" end]
++  end;
++
++def tool_line($item):
++  if ($item.tools | length) &gt; 0 then ($item.tools | join(" "))
++  elif $item.agent == "orchestrator" or $item.agent == "manager" then
++    "create_task finish"
++  else "read shell edit" end;
++
++def task_heading($item; $panel):
++  if $panel and (($item.title // "") | trim) != "" then $item.title else $item.goal end;
++
++def render_list($list; $prefix; $depth; $panel):
++  if ($list | type) != "array" then []
++  else
++    reduce range(0; $list | length) as $i ([];
++      ($list[$i]) as $item
++      | (" " * ($depth * 3)) as $pad
++      | (if $prefix == "" then "\($i + 1)" else "\($prefix).\($i + 1)" end) as $label
++      | . + ["\($pad)\($label). \(task_heading($item; $panel))"]
++        + ["\($pad)   [\($item.status | ascii_upcase)] (\($item.agent) - \(tool_line($item)))"]
++        + field_lines("\($pad)   "; "notes: "; $item.notes)
++        + field_lines("\($pad)   "; "result: "; $item.result)
++        + (if (($item.tasks // []) | length) &gt; 0 then render_list($item.tasks; $label; $depth + 1; $panel) else [] end))
++  end;
++
++def panel_lines:
++  if ((.goal // "") | trim) != "" then render_list([.]; ""; 0; true)
++  else render_list(.tasks // []; ""; 0; true) end;
++
++def panel_text:
++  panel_lines | join("\n");
++
++def visible_text($path):
++  render_list(frame_tasks($path); ""; 0; false) | join("\n");
++
++def can_create($frame; $agent):
++  if $frame.role == "manager" and $agent != "coder" then "A manager can only create coders."
++  elif $frame.role == "orchestrator" and (($frame.plan_path // []) | length) &gt; 0 and $agent == "orchestrator" then
++    "Only the top orchestrator can create an orchestrator. Use manager or coder."
++  else null end;
++
++def plan_create($fields):
++  . as $s
++  | ($s.stack[-1]) as $fr
++  | ($fields | normalize) as $item
++  | if $item == null then .last = "Error: create_task needs a goal"
++    else
++      can_create($fr; $item.agent) as $why
++      | if $why then .last = "Error: \($why)"
++        elif (frame_tasks($fr.plan_path) | any(.status == "pending" or .status == "running")) then
++          .last = "Error: the next step already exists. Wait for its report, then create the next one."
++        else
++          .plan |= append_task($fr.plan_path; $item)
++          | .last = "Task \(frame_tasks($fr.plan_path) | length) created."
++        end
++    end;
++
++def plan_write($fields):
++  .last = "Error: create the next step with create_task. Do not replace the plan.";
++
++def plan_update($fields):
++  .last = "Error: a task cannot be changed. Create the next step.";
++
++def plan_delete($index):
++  .last = "Error: a task cannot be removed. Create the next step.";
++
++def plan_mark($frame; $rel; $status; $result):
++  ($frame.plan_path + $rel) as $abs
++  | .plan |= patch_in($abs; (.status = $status | if $result == null then . else .result = $result end))
++  | .plan |= settle_from($abs);
++
++def plan_notes($abs; $notes):
++  .plan |= patch_in($abs; .notes = $notes);
++
++def plan_notes_run($action; $content):
++  .last = "Error: notes are set in create_task. A task is not updated.";
+diff --git a/jq/request.jq b/jq/request.jq
+new file mode 100644
+index 0000000..590cae0
+--- /dev/null
++++ b/jq/request.jq
+@@ -0,0 +1,755 @@
++include "plan";
++
++def cfg: $cfg[0];
++def known:
++  ["read","shell","send_image","edit","write","notes","plan","create_task","update_task","delete_task","review","finish","answer","skill","mcp"];
++
++def say_at($d; $k; $t):
++  .io.say += [{d: $d, k: $k, t: $t}];
++def say($k; $t):
++  say_at((.stack[-1].depth // 0); $k; $t);
++
++def top: (.stack | length) &lt;= 1;
++def iterates:
++  (.stack[-1].role == "coder")
++  or ((.stack[-1].role == "orchestrator" or .stack[-1].role == "manager") and .stack[-1].isolated == true);
++def review_turn:
++  (.stack[-1].role == "orchestrator" or .stack[-1].role == "manager") and .stack[-1].phase == "review";
++
++def weak($s):
++  if $s == null or ($s | type) != "string" then true
++  else ($s | ascii_downcase | trim) as $t
++    | $t == "" or $t == "no" or $t == "ok" or $t == "yes" or $t == "leaf"
++      or ($t | test("^no[,.]")) or ($t | test("^ok[,.]"))
++      or ($t | test("^it is a leaf")) or ($t | test("^this is a leaf"))
++      or ($t | test("^looks good")) or ($t | test("^do not update"))
++      or ($t | test("^no update")) or ($t | test("^plan is fine"))
++  end;
++
++def said_leaf($s):
++  if ($s | type) != "string" then false
++  else ($s | ascii_downcase) as $t
++    | ($t | test("^leaf")) or ($t | contains("it is a leaf")) or ($t | contains("this is a leaf"))
++      or ($t | contains("already one action")) or ($t | contains("single action"))
++  end;
++
++def tools_for($role; $list):
++  if $role == "revisor" then ["review"]
++  elif $role == "orchestrator" or $role == "manager" then
++    ["create_task","finish"]
++  else
++    [($list // [])[] | select(. as $n | known | index($n))] as $out
++    | if ($out | length) == 0 then ["read","shell","edit","finish"]
++      else
++        $out
++        | if (index("read") or index("shell") or index("edit") or index("write"))
++            then (if index("read") then . else ["read"] + . end | if index("shell") then . else . + ["shell"] end)
++          else . end
++        | if index("finish") then . else . + ["finish"] end
++      end
++  end;
++
++def open_reply:
++  top
++  and .stack[-1].role == "orchestrator"
++  and .stack[-1].phase == "decompose"
++  and ((frame_tasks(.stack[-1].plan_path) | length) == 0);
++
++def request_tools:
++  (.stack[-1]) as $fr
++  | if ($fr.role == "orchestrator" or $fr.role == "manager") and $fr.phase == "decompose"
++       and ((frame_tasks($fr.plan_path) | length) == 0) and (open_reply | not) then ["create_task"]
++    else ($fr.tools // []) end;
++
++def blurb($n):
++  {"notes": "read/write this task's notes",
++   "review": "verdict pass or fail, plus result and notes",
++   "plan": "action=write|update|status",
++   "answer": "answer the user. Otherwise create one smaller task",
++   "create_task": "add one smaller task. title is a few words for the plan",
++   "update_task": "refused. A task cannot be changed",
++   "delete_task": "refused. A task cannot be removed",
++   "finish": "store the answer on this task",
++   "read": "open a file or line range, not a directory",
++   "shell": "run a command in the project root",
++   "edit": "replace text in a file",
++   "write": "create a file",
++   "send_image": "show an image to the model",
++   "skill": "list, load, or unload a skill",
++   "mcp": "status, connect, or call an MCP tool"}[$n] // "";
++
++def catalog:
++  . as $s
++  | if (($s.skill_catalog // []) | length) == 0 then ""
++    else
++      "## Available Skills\n\nUse the skill tool with action load when one of these fits.\n\n"
++      + ([$s.skill_catalog[]
++          | "- \(.name): \(.desc)"
++            + (if $s.skill_bodies[.name] != null then " [loaded]" else "" end)] | join("\n"))
++    end;
++
++def prompt_for($role):
++  if $role == "coder" then ($pcoder | gsub("@ROOT@"; $root)) + "\n" + $pguide
++  elif $role == "revisor" then ($prev | gsub("@ROOT@"; $root))
++  elif $role == "manager" then ($pman | gsub("@ROOT@"; $root))
++  elif top | not then ($pnest | gsub("@ROOT@"; $root))
++  else
++    (if (cfg.system_prompt | type) == "string" and cfg.system_prompt != "" then cfg.system_prompt
++     else ($porch | gsub("@ROOT@"; $root)) end)
++    + (if (cfg.custom_prompt | type) == "string" and cfg.custom_prompt != "" then "\n" + cfg.custom_prompt else "" end)
++    + (catalog | if . == "" then "" else "\n\n" + . end)
++  end;
++
++def indented($text):
++  if ($text | type) != "string" or $text == "" then ""
++  else $text | split("\n") | map("   " + .) | join("\n") end;
++
++def siblings($fr):
++  ($fr.plan_path // []) as $path
++  | if ($path | length) == 0 then ""
++    else
++      frame_tasks($path[:-1]) as $tasks
++      | ($path[-1]) as $my
++      | [range(0; $my - 1) as $i | $tasks[$i]
++          | "\($i + 1). \(.goal) [\(.status | ascii_upcase)]"
++            + (if (.result // "") == "" then "" else "\n" + indented(.result) end)] as $lines
++      | if ($lines | length) == 0 then ""
++        else "Previous tasks on this branch (use these; do not repeat the search):\n" + ($lines | join("\n"))
++        end
++    end;
++
++def progress($fr):
++  ($fr.steps // []) as $steps
++  | if ($steps | length) == 0 then ""
++    else
++      "Previous steps at this level:\n"
++      + ([range(0; $steps | length) as $i | $steps[$i]
++          | "\($i + 1). \(.text // "")" + (if .status == "blocked" then " [blocked]" else "" end)
++            + (if (.response // "") == "" then "" else "\n" + indented(.response) end)] | join("\n"))
++      + (if $fr.role == "orchestrator" then
++          "\n\n" + (if $steps[-1].status == "blocked"
++            then "Last task failed. That task stays. Create the next step from what it reported."
++            else "Last task was recorded. Create the next step from this report. Do not change a task that exists." end)
++        else "" end)
++    end;
++
++def loaded_text:
++  . as $s
++  | [$s.skill_bodies // {} | to_entries[] | "### Skill: \(.key)\n\n\(.value)"]
++  | if length == 0 then "" else "Loaded skills:\n" + join("\n\n---\n\n") end;
++
++def live($fr):
++  [siblings($fr), progress($fr), loaded_text] | map(select(. != ""))
++  | if length == 0 then ""
++    else "========== LIVE CONTEXT ==========\n\n" + join("\n\n") end;
++
++def task_block($fr):
++  ((.plan | node_at($fr.plan_path).notes) // $fr.task_notes // "") as $n
++  | if ($n | trim) == "" then ""
++    else "========== TASK NOTES ==========\n\n" + $n end;
++
++def plan_block($fr):
++  if $fr.role != "orchestrator" and $fr.role != "manager" then ""
++  else
++    visible_text($fr.plan_path) as $body
++    | if $body == "" then ""
++      else "========== PLAN ==========\n\n\($body)\n\n========== END PLAN ==========" end
++  end;
++
++def handoff_line($fr):
++  if ($fr.role != "orchestrator" and $fr.role != "manager") or $fr.phase != "handoff" then ""
++  elif $fr.isolated then "Nothing is pending. Call finish. Set result to the conclusion. Include short discoveries from the reports."
++  else
++    (progress($fr) | if . == "" then "" else . + "\n" end)
++    + "Nothing is pending. Call answer with the conclusion for the user, or create one smaller task if you still need one."
++  end;
++
++def system_text:
++  (.stack[-1]) as $fr
++  | [prompt_for($fr.role),
++     (request_tools as $names
++       | if ($names | length) == 0 then ""
++         else "You may call only:\n" + ([$names[] | "- " + . + (blurb(.) | if . == "" then "" else ": " + . end)] | join("\n")) end),
++     (if $fr.role == "coder" then task_block($fr) else "" end),
++     plan_block($fr),
++     handoff_line($fr),
++     (if $fr.isolated and $fr.role != "coder" and (review_turn | not) then live($fr) else "" end),
++     (if ($mcptext // "") == "" then "" else "========== MCP ==========\n" + $mcptext end)]
++  | map(select(. != null and . != "")) | join("\n\n");
++
++def review_packet:
++  (.stack[-1].last_review // {}) as $r
++  | "A task just finished.\nGoal: \($r.goal // "")\n\nCoder result:\n\($r.coder_result // "(no output)")\n\nReviewer: \($r.status // "fail")"
++    + (if ($r.result // "") == "" then "" else "\n" + $r.result end)
++    + (if ($r.notes // "") == "" then "" else "\n\nReviewer notes:\n" + $r.notes end)
++    + "\n\nCheck the goal, the plan, and the result. Create the next step from the important parts of the result. Each next step must contribute to fulfilling the goal. Do not repeat work the result already finished, and do not add a step the goal did not ask for. If the reviewer failed, that goal is not done. If the result shows the problem was wrong, the next goal restates the problem and says must not edit. If a check failed, the next goal is that failed example. Do not create a task whose goal is that the work is finished. Do not replace an example with a different claim. "
++    + ((.stack[-1]) as $fr
++       | if $fr.role == "orchestrator" and $fr.isolated then
++           "This result should help the next steps. Create that part only if this goal still needs it. Put only the important parts of this result in its notes, not the full result. If this goal is covered, call finish."
++         elif top then
++           "If this is enough to answer the user, call answer. Otherwise create one smaller task that helps you answer, and put this report in its notes."
++         else
++           "This result is the report the next step needs. Create only the next part or outcome, and put this report in its notes. Do not give the next agent the whole task."
++         end)
++    + " Call create_task for that next step only. A task cannot be changed after it is created.";
++
++def messages:
++  (.stack[-1]) as $fr
++  | (if review_turn then []
++     elif $fr.isolated and (iterates | not) then
++       (if ($fr.goal // "") == "" then [] else [{role: "user", content: $fr.goal}] end)
++     else ($fr.history // []) end) as $hist
++  | ([{role: "system", content: system_text}] + $hist
++     + (if review_turn then [{role: "user", content: review_packet}] else [] end))
++  | if (.[-1].role == "assistant") then . + [{role: "user", content: "Continue."}] else . end;
++
++def tool_defs($names):
++  if cfg.use_tools == false then []
++  else [ $names[] | $tools[0][.] | select(. != null) ] end;
++
++def with_options($body):
++  reduce (cfg.options // {} | to_entries[]) as $e ($body; .[$e.key] = $e.value);
++
++def must_tool: true;
++
++def chat_body:
++  request_tools as $names
++  | tool_defs($names) as $defs
++  | with_options({
++      model: cfg.model,
++      messages: messages
++    } + (if ($defs | length) &gt; 0 then {tools: $defs} else {} end)
++      + (if cfg.provider == "llama_cpp" and must_tool and ($defs | length) &gt; 0 then {tool_choice: "required"} else {} end)
++      + (if cfg.think != null then {reasoning_effort: cfg.think} else {} end)
++      + (if cfg.stream == true then {stream: true} else {} end));
++
++def to_input($msg):
++  if $msg.role == "system" or $msg.role == "user" then
++    [{role: $msg.role, content: [{type: "input_text", text: ($msg.content // "")}]}]
++  elif $msg.role == "assistant" then
++    [{role: "assistant", content: [{type: "output_text", text: ($msg.content // "")}]}]
++    + [($msg.tool_calls // [])[] | {type: "function_call", name: .function.name, call_id: .id, arguments: (.function.arguments // "{}")}]
++  elif $msg.role == "tool" then
++    [{type: "function_call_output", call_id: $msg.tool_call_id, output: (if ($msg.content | type) == "string" then $msg.content else ($msg.content | tojson) end)}]
++  else [] end;
++
++def responses_body:
++  request_tools as $names
++  | with_options({
++      model: cfg.model,
++      input: [messages[] | to_input(.)[]],
++      store: false,
++      tools: [tool_defs($names)[] | .function + {type: "function", strict: true}]
++    });
++
++def at_limit:
++  .stack[-1].role == "coder" and ((.stack[-1].turns // 0) &gt;= 32);
++
++def build:
++  if at_limit then
++    say("M"; "ERROR [turn limit]: coder turn limit")
++    | .stack[-1].skip_review = true
++    | .fs = "error"
++    | .ft = "ERROR [turn limit]: coder turn limit"
++    | .go = "finish"
++  else
++    .stack[-1].turns = ((.stack[-1].turns // 0) + 1)
++    | .io.op = "request"
++    | .io.status = "waiting"
++    | .io.label = .stack[-1].role
++    | .io.ctx = (.last_ctx // 0)
++    | .io.body = (if cfg.provider == "openai_responses" then responses_body else chat_body end)
++    | .go = null
++  end;
++
++def push_child($step; $item):
++  (.stack[-1]) as $parent
++  | (if ($item.agent // "coder") == "coder" and (($item.tasks // []) | length) &gt; 0 then "manager" else ($item.agent // "coder") end) as $role
++  | tools_for($role; $item.tools) as $tools
++  | (if (($item.title // "") | trim) != "" then $item.title else ($item.goal // "") end) as $shown
++  | say_at($parent.depth; "M"; (($role | ascii_upcase) + " " + $shown + " [" + step_str($step) + "]"))
++  | (if ($tools | length) &gt; 0 then say_at($parent.depth + 1; "T"; "tools: " + ($tools | join(", "))) else . end)
++  | .stack += [{
++      role: $role,
++      phase: (if $role == "orchestrator" or $role == "manager" then "decompose" else null end),
++      goal: ($item.goal // ""),
++      depth: ($parent.depth + 1),
++      isolated: true,
++      turns: 0,
++      history: (if ($item.goal // "") == "" then [] else [{role: "user", content: $item.goal}] end),
++      plan_path: ($parent.plan_path + $step),
++      plan_step: $step,
++      tools: $tools,
++      task_notes: ($item.notes // ""),
++      finish_result: null,
++      steps: [],
++      label: $role,
++      tool_outputs: []
++    }];
++
++def start_next:
++  (.stack[-1]) as $fr
++  | find_pending(frame_tasks($fr.plan_path)) as $hit
++  | if $hit == null then .started = false
++    elif (.stack | length) &gt;= 8 then
++      plan_mark($fr; $hit.path; "error"; "max depth reached") | .started = false
++    else
++      plan_mark($fr; $hit.path; "running"; null)
++      | push_child($hit.path; $hit.item)
++      | .started = true
++    end;
++
++def outcome_of($fr; $text):
++  if ($fr.finish_result | type) == "string" and ($fr.finish_result | trim) != "" then $fr.finish_result
++  elif ($text | type) == "string" and (weak($text) | not) then $text
++  elif (($fr.tool_outputs // []) | length) &gt; 0 then ($fr.tool_outputs | join("\n\n"))
++  elif ($text | type) == "string" and $text != "" then $text
++  else "(no output)" end;
++
++def transcript_of($fr; $outcome):
++  "Result:\n" + $outcome
++  + (if (($fr.tool_outputs // []) | length) &gt; 0 then "\n\nCommand output:\n" + ($fr.tool_outputs | join("\n\n")) else "" end);
++
++def revisor_goal($goal; $tr):
++  "Goal:\n\($goal // "")\n\nTranscript:\n\($tr)\n\nCall the review tool once.\npass: the plan item keeps the coder's result. Do not replace it.\nfail: result is stored on the plan item. Keep it short: what was done and what is missing.\npass: the Goal was done.\nfail: do not retry.";
++
++def push_revisor($child; $conclusion; $tr):
++  (.stack[-1]) as $parent
++  | (revisor_goal($child.goal; $tr)) as $goal
++  | say_at($parent.depth; "M"; "REVISOR " + ($child.goal // ""))
++  | .stack += [{
++      role: "revisor",
++      phase: null,
++      goal: $goal,
++      depth: ($parent.depth + 1),
++      isolated: true,
++      turns: 0,
++      history: [],
++      plan_path: $parent.plan_path,
++      tools: ["review"],
++      review_step: $child.plan_step,
++      review_fallback: $conclusion,
++      finish_result: null,
++      steps: [],
++      label: "revisor",
++      tool_outputs: []
++    }];
++
++def finish_up($status; $text):
++  if top then .io.op = "idle" | .io.status = "idle" | .go = null
++  else
++    (.stack[-1]) as $fr
++    | outcome_of($fr; $text) as $outcome
++    | transcript_of($fr; $outcome) as $tr
++    | (if $status == "error" or ($outcome | startswith("ERROR ")) then "error" else "ok" end) as $st
++    | (if $st == "error" then (if $outcome == "" then "error" else $outcome end)
++       elif $outcome != "" and $outcome != "(no output)" then $outcome else "done" end) as $conclusion
++    | ("status: " + $st + "\nstep: " + ($fr.goal // "") + "\n" + (if $st == "ok" then "report:\n" else $st + ": " end) + $outcome) as $report
++    | .stack = .stack[:-1]
++    | .stack[-1].steps += [{text: ($fr.goal // ""), response: $report, status: $st}]
++    | .stack[-1].last_child_goal = $fr.goal
++    | .stack[-1].last_finish_result = $fr.finish_result
++    | .stack[-1].last_child_step = $fr.plan_step
++    | .stop = false
++    | if $fr.skip_review then
++        (if ($fr.plan_step | type) == "array" then plan_mark(.stack[-1]; $fr.plan_step; "blocked"; $conclusion) else . end)
++        | .stack[-1].phase = "review"
++        | .stack[-1].last_review = {status: "fail", result: $conclusion, notes: "", coder_result: $conclusion, goal: $fr.goal}
++        | .go = "build"
++      elif .stack[-1].role == "orchestrator" or .stack[-1].role == "manager" then
++        push_revisor($fr; $conclusion; $tr) | .go = "build"
++      else
++        (if ($fr.plan_step | type) == "array" then plan_mark(.stack[-1]; $fr.plan_step; (if $st == "ok" then "ok" else "error" end); $conclusion) else . end)
++        | .io.op = "idle" | .io.status = "idle" | .go = null
++      end
++  end;
++
++def finish_revisor:
++  (.stack[-1]) as $rev
++  | ($rev.review // {}) as $rv
++  | (if $rv.status == "pass" then "pass" else "fail" end) as $verdict
++  | .stack = .stack[:-1]
++  | (.stack[-1].last_finish_result // $rev.review_fallback // "") as $agent
++  | (if $verdict == "pass" then $agent
++     elif ($rv.result // "") != "" then $rv.result
++     else $agent end) as $result
++  | (if ($rev.review_step | type) == "array" then
++      plan_mark(.stack[-1]; $rev.review_step; (if $verdict == "pass" then "ok" else "blocked" end); $result)
++      | if ($rv.notes // "") != "" then plan_notes(.stack[-1].plan_path + $rev.review_step; $rv.notes) else . end
++    else . end)
++  | .stack[-1].last_review = {
++      status: $verdict, result: $result, notes: ($rv.notes // ""),
++      coder_result: ($rev.review_fallback // ""), goal: .stack[-1].last_child_goal
++    }
++  | .stack[-1].phase = "review"
++  | say("M"; "review " + $verdict)
++  | .go = "build";
++
++def decompose($text):
++  if said_leaf($text) then
++    (if (frame_tasks(.stack[-1].plan_path) | length) == 0 then
++      plan_create({goal: (.stack[-1].goal // $text), agent: "coder", notes: (.stack[-1].task_notes // ""), tools: ["read","shell","edit","finish"]})
++    else . end)
++    | start_next
++    | if .started then .go = "build" else .io.op = "idle" | .io.status = "idle" | .go = null end
++  elif .stack[-1].continue_after_tools or (top | not) then .go = "build"
++  else .io.op = "idle" | .io.status = "idle" | .go = null end;
++
++def after_orch($text):
++  if .stack[-1].phase == "review" then
++    start_next
++    | if .started then .go = "build"
++      else
++        .stack[-1].phase = "handoff"
++        | if (top | not) and ($text | type) == "string" and (weak($text) | not) then finish_up("ok"; $text)
++          else .go = "build" end
++      end
++  else
++    start_next
++    | if .started then .go = "build"
++      elif .stack[-1].phase == "decompose" then decompose($text)
++      elif (top | not) and .stack[-1].phase != "run" and .stack[-1].phase != "handoff" then
++        if ($text | type) == "string" and (weak($text) | not) and $text != "" then finish_up("ok"; $text)
++        else .stack[-1].phase = "handoff" | .go = "build" end
++      elif .stack[-1].phase == "run" or .stack[-1].phase == "handoff" then
++        .stack[-1].phase = "handoff" | .go = "build"
++      else .io.op = "idle" | .io.status = "idle" | .go = null end
++  end;
++
++def after_tools:
++  (.stack[-1]) as $fr
++  | if top and (($fr.answer_text // "") | trim) != "" then
++      .io.op = "idle" | .io.status = "idle" | .go = null
++    elif ($fr.finish_result | type) == "string" and $fr.finish_result != ""
++       and ($fr.role == "coder" or $fr.role == "orchestrator" or $fr.role == "manager") then
++      finish_up("ok"; $fr.finish_result)
++    elif ($fr.role == "orchestrator" or $fr.role == "manager")
++         and ($fr.phase == "decompose" or $fr.phase == "review" or $fr.phase == "handoff") then
++      after_orch($fr.last_assistant // "")
++    elif $fr.role == "revisor" then finish_revisor
++    elif (top | not) and ($fr.continue_after_tools | not) and ($fr.role != "coder")
++         and ((($fr.role == "orchestrator" or $fr.role == "manager") and $fr.isolated) | not) then
++      finish_up("ok"; $fr.last_assistant // "")
++    else
++      (if $fr.isolated and ($fr.role != "coder")
++          and ($fr.role != "orchestrator" and $fr.role != "manager") then
++        .stack[-1].history = (if ($fr.goal // "") == "" then [] else [{role: "user", content: $fr.goal}] end)
++       else . end)
++      | .go = "build"
++    end;
++
++def args_of($call):
++  ($call.function.arguments // "{}") | if type == "object" then . else (try fromjson catch {}) end;
++
++def record($call; $content):
++  .stack[-1].history += [{role: "tool", name: $call.function.name, tool_call_id: $call.id, content: $content}]
++  | if ($content | type) == "string" then .stack[-1].tool_outputs += [$content] else . end;
++
++def call_line($name; $a):
++  if $name == "notes" then
++    "notes " + ($a.action // "") + "\n" + ($a.content // "")
++  elif $name == "create_task" then
++    "create_task"
++    + "\ntitle: " + ($a.title // "")
++    + "\nagent: " + ($a.agent // "coder")
++    + "\ngoal: " + ($a.goal // "")
++    + "\nnotes: " + ($a.notes // "")
++    + "\ntools: " + (if (($a.tools // []) | length) == 0 then "" else ($a.tools | join(" ")) end)
++  elif $name == "answer" then
++    "answer\n" + ($a.text // "")
++  elif $name == "update_task" then
++    "update_task " + (($a.index // "") | tostring)
++    + (if ($a.goal // "") == "" then "" else "\n" + $a.goal end)
++    + (if $a.notes == null then "" else "\n" + $a.notes end)
++    + (if $a.agent == null then "" else "\nagent: " + ($a.agent | tostring) end)
++    + (if (($a.tools // []) | length) == 0 then "" else "\ntools: " + ($a.tools | join(" ")) end)
++  elif $name == "delete_task" then
++    "delete_task " + (($a.index // "") | tostring)
++  elif $name == "finish" then
++    "finish\n" + ($a.result // "")
++  elif $name == "review" then
++    "review " + ($a.status // "")
++    + "\n" + ($a.result // "")
++    + (if ($a.notes // "") == "" then "" else "\n" + $a.notes end)
++  elif $name == "plan" then
++    "plan " + ($a.action // "")
++    + (if ($a.goal // "") == "" then "" else "\n" + $a.goal end)
++    + (if ($a.notes // "") == "" then "" else "\n" + $a.notes end)
++  else $name end;
++
++def show_call($name; $a):
++  say("C"; call_line($name; $a))
++  | if (.last | type) == "string" and (.last | startswith("Error")) then say("M"; .last) else . end;
++
++def apply_pure($call):
++  args_of($call) as $a
++  | ($call.function.name) as $name
++  | if $name == "finish" then
++      if ($a.result | type) != "string" or ($a.result | trim) == "" then
++        .last = "Error: result is empty" | .stack[-1].continue_after_tools = true | show_call($name; $a)
++      else
++        .stack[-1].finish_result = ($a.result | trim)
++        | .last = "Finished."
++        | show_call($name; $a)
++      end
++    elif $name == "review" then
++      if $a.status != "pass" and $a.status != "fail" then .last = "Error: status must be pass or fail" | show_call($name; $a)
++      elif ($a.result | type) != "string" or $a.result == "" then .last = "Error: result is required" | show_call($name; $a)
++      else
++        .stack[-1].review = {status: $a.status, result: $a.result, notes: (if ($a.notes | type) == "string" then $a.notes else "" end)}
++        | .last = "Review recorded (\($a.status))."
++        | show_call($name; $a)
++      end
++    elif $name == "notes" then
++      plan_notes_run($a.action; $a.content)
++      | .stack[-1].continue_after_tools = true
++      | show_call($name; $a)
++    elif $name == "answer" then
++      if (top | not) then
++        .last = "Error: answer is only for the top orchestrator. Call finish."
++        | .stack[-1].continue_after_tools = true
++        | show_call($name; $a)
++      elif (frame_tasks(.stack[-1].plan_path) | any(.status == "pending" or .status == "running")) then
++        .last = "Error: a task is still open. Wait for its report, then call answer."
++        | .stack[-1].continue_after_tools = true
++        | show_call($name; $a)
++      elif ($a.text | type) != "string" or ($a.text | trim) == "" then
++        .last = "Error: answer text is empty"
++        | .stack[-1].continue_after_tools = true
++        | show_call($name; $a)
++      elif ((.stack[-1].answer_text // "") | trim) != "" then
++        .last = "Error: already answered."
++        | show_call($name; $a)
++      else
++        .stack[-1].answer_text = ($a.text | trim)
++        | .stack[-1].phase = "handoff"
++        | .last = "Answered."
++        | show_call($name; $a)
++      end
++    elif $name == "create_task" then
++      if ((.stack[-1].answer_text // "") | trim) != "" then
++        .last = "Error: already answered."
++        | show_call($name; $a)
++      else
++        plan_create($a) | .stack[-1].continue_after_tools = true | show_call($name; $a)
++      end
++    elif $name == "update_task" then
++      plan_update($a) | .stack[-1].continue_after_tools = true | show_call($name; $a)
++    elif $name == "delete_task" then
++      plan_delete($a.index) | .stack[-1].continue_after_tools = true | show_call($name; $a)
++    elif $name == "plan" then
++      (if $a.action == "write" then plan_write($a)
++       elif $a.action == "update" then plan_update($a)
++       elif $a.action == "status" then .last = (visible_text(.stack[-1].plan_path) | if . == "" then "No plan." else . end)
++       else .last = "Error: unknown action '\($a.action // "")'" end)
++      | .stack[-1].continue_after_tools = true
++      | show_call($name; $a)
++    else .last = "Error: unknown tool \($name)" end
++  | record($call; .last);
++
++def allow:
++  if cfg.allowed_commands == null then
++    ["cat","grep","ag","rg","ls","head","tail","wc","diff","sort","uniq","find","file","stat","date","echo","tree","pwd","which","type"]
++  elif (cfg.allowed_commands | type) == "object" then cfg.allowed_commands | keys
++  elif (cfg.allowed_commands | type) == "array" then cfg.allowed_commands
++  else [] end;
++
++def shell_base($cmd):
++  [$cmd | trim | splits("\\s+")] as $w
++  | ($w[0] // "" | split("/")[-1]) as $b
++  | if ($b | contains("=")) then ($w[1] // "" | split("/")[-1]) else $b end;
++
++def shell_block($cmd):
++  if ($cmd | type) != "string" or ($cmd | trim) == "" then "missing"
++  elif $cmd | test("[&gt;&lt;]") then "redirect"
++  elif (allow | index(shell_base($cmd))) then null
++  else "denied" end;
++
++def drain_go:
++  if (.queue | length) == 0 then after_tools
++  else
++    .queue[0] as $call
++    | .queue = .queue[1:]
++    | .ran = $call
++    | if ((.stack[-1].tools // []) | index($call.function.name)) == null then
++        .last = "Tool `\($call.function.name)` is not granted."
++        | say("T"; .last) | record($call; .last) | drain_go
++      elif (["notes","create_task","update_task","delete_task","plan","finish","review","answer"] | index($call.function.name)) != null then
++        apply_pure($call) | drain_go
++      elif $call.function.name == "shell" then
++        (args_of($call).command // "") as $cmd
++        | shell_block($cmd) as $why
++        | if $why == "missing" then
++            .last = "missing command field" | say("T"; .last) | record($call; .last) | drain_go
++          elif $why == null or cfg.auto_approve == true then
++            .io.op = "tool" | .io.tool = $call | .io.status = "tools" | .io.label = .stack[-1].role | .go = null
++          else
++            .await = {command: $cmd}
++            | .io.op = "approve" | .io.prompt = $cmd | .io.status = "tools" | .io.tool = $call | .go = null
++          end
++      else
++        .io.op = "tool" | .io.tool = $call | .io.status = "tools" | .io.label = .stack[-1].role | .go = null
++      end
++  end;
++
++def as_text($c):
++  if $c == null then ""
++  elif ($c | type) == "string" then $c
++  elif ($c | type) == "array" then [$c[]? | .text // empty] | join("")
++  else ($c | tostring) end;
++
++def norm_call($c; $i):
++  {id: ($c.id // $c.call_id // "call_\($i)"),
++   type: "function",
++   function: {
++     name: ($c.function.name // $c.name // ""),
++     arguments: (
++       if ($c.function.arguments | type) == "string" then $c.function.arguments
++       elif $c.function.arguments != null then ($c.function.arguments | tojson)
++       elif ($c.arguments | type) == "string" then $c.arguments
++       elif $c.arguments != null then ($c.arguments | tojson)
++       else "{}" end)}};
++
++def parse_resp($r):
++  if $r == null then {error: "ERROR [provider]: empty provider response"}
++  elif ($r.error | type) == "string" then {error: $r.error}
++  elif $r.error != null then
++    {error: ("ERROR [provider]: " + (if ($r.error | type) == "object" then ($r.error.message // ($r.error | tostring)) else ($r.error | tostring) end))}
++  elif ($r.choices | type) == "array" then
++    ($r.choices[0].message // {}) as $m
++    | {content: as_text($m.content),
++       reasoning: as_text($m.reasoning_content // $m.reasoning // ""),
++       calls: [($m.tool_calls // []) | to_entries[] | norm_call(.value; .key)],
++       usage: ($r.usage.total_tokens // null)}
++  elif ($r.output | type) == "array" then
++    {content: ([$r.output[] | select(.type == "message") | .content[]? | .text // empty] | join("")),
++     reasoning: "",
++     calls: [$r.output | to_entries[] | select(.value.type == "function_call") | norm_call(.value; .key)],
++     usage: ($r.usage.total_tokens // null)}
++  else {error: "ERROR [provider]: empty provider response"} end;
++
++def on_text($text):
++  (.stack[-1]) as $fr
++  | if ($fr.role == "orchestrator" or $fr.role == "manager")
++       and ($fr.phase == "decompose" or $fr.phase == "review") then after_orch($text)
++    elif top | not then
++      finish_up(if ($text | type) == "string" and ($text | startswith("ERROR ")) then "error" else "ok" end; $text)
++    else .io.op = "idle" | .io.status = "idle" | .io.label = $fr.role | .go = null end;
++
++def on_resp($r):
++  parse_resp($r) as $p
++  | if $p.error != null then
++      say("M"; $p.error)
++      | .stack[-1].history += [{role: "assistant", content: $p.error}]
++      | if top | not then finish_up("error"; $p.error)
++        else .io.op = "idle" | .io.status = "idle" | .go = null end
++    else
++      (if $p.usage != null then .last_ctx = $p.usage | .io.ctx = $p.usage else . end)
++      | .stack[-1].last_assistant = $p.content
++      | (if $p.reasoning != "" then say("T"; $p.reasoning) else . end)
++      | (if $p.content != "" then say("A"; $p.content) else . end)
++      | (if (review_turn | not) or ($p.calls | length) &gt; 0 then
++          .stack[-1].history += [{role: "assistant", content: $p.content, tool_calls: $p.calls}]
++        else . end)
++      | if ($p.calls | length) == 0 then on_text($p.content)
++        else .queue = $p.calls | .stack[-1].continue_after_tools = false | drain_go end
++    end;
++
++def on_tool($out):
++  (.ran) as $call
++  | if ($image // "") != "" then
++      .stack[-1].history += [{role: "tool", name: $call.function.name, tool_call_id: $call.id, content: ($image | fromjson)}]
++      | .stack[-1].tool_outputs += ["image sent"]
++    else record($call; $out) end
++  | .ran = null
++  | drain_go;
++
++def on_approve($ans):
++  ($ans | trim | ascii_downcase) as $a
++  | (.ran) as $call
++  | if $a == "y" or $a == "yes" then
++      .io.op = "tool" | .io.tool = $call | .io.status = "tools" | .await = null | .go = null
++    elif $a == "s" or $a == "stop" then
++      .last = "User stopped execution."
++      | say("T"; .last) | record($call; .last) | .ran = null | .queue = []
++      | if top | not then .stack[-1].skip_review = true | finish_up("error"; "ERROR [stopped]: Stopped by user")
++        else .io.op = "idle" | .io.status = "idle" | .go = null end
++    else
++      .last = "User declined running this command: " + $ans
++      | say("T"; .last) | record($call; .last) | .ran = null | .await = null | drain_go
++    end;
++
++def on_stop:
++  say("M"; "[tai] Stopped by user")
++  | .queue = []
++  | if top | not then .stack[-1].skip_review = true | finish_up("error"; "ERROR [stopped]: Stopped by user")
++    else .io.op = "idle" | .io.status = "idle" | .go = null end;
++
++def main_tools: ["answer","create_task"];
++
++def init:
++  {stack: [{
++      role: "orchestrator", phase: "decompose", goal: "", depth: 0, isolated: false,
++      turns: 0, history: [], plan_path: [], tools: main_tools, finish_result: null,
++      steps: [], task_notes: "", label: "orchestrator", tool_outputs: []
++    }],
++   plan: empty_plan, skill_bodies: {}, skill_catalog: [], last_ctx: 0, queue: [],
++   stop: false, ran: null, go: null,
++   io: {op: "idle", status: "idle", label: "orchestrator", say: [], ctx: 0}};
++
++def on_user($text):
++  say("U"; $text)
++  | .stack[0].history += [{role: "user", content: $text}]
++  | .stack[0].goal = $text
++  | .stack[0].finish_result = null
++  | .stop = false
++  | if .stack[0].phase == null or .stack[0].phase == "handoff" or ((.plan.tasks // []) | length) == 0 then
++      .stack[0].phase = "decompose"
++    else . end
++  | .go = "build";
++
++def blank_io:
++  .go = null
++  | .io = {say: [], op: "idle", status: (.io.status // "idle"),
++         label: (.stack[-1].role // "orchestrator"), ctx: (.last_ctx // 0)};
++
++def fold_sse:
++  reduce .[] as $e (
++    {content: "", reasoning: "", calls: []};
++    ($e.choices[0].delta // $e.delta // {}) as $d
++    | .content += ($d.content // "")
++    | .reasoning += ($d.reasoning_content // $d.reasoning // "")
++    | if ($d.tool_calls | type) == "array" then
++        reduce $d.tool_calls[] as $c (.;
++          ($c.index // 0) as $i
++          | .calls[$i].id = ((.calls[$i].id // "") + ($c.id // ""))
++          | .calls[$i].type = "function"
++          | .calls[$i].function.name = ((.calls[$i].function.name // "") + ($c.function.name // ""))
++          | .calls[$i].function.arguments = ((.calls[$i].function.arguments // "") + ($c.function.arguments // "")))
++      else . end
++    | if ($e.usage.total_tokens // null) != null then .usage = $e.usage.total_tokens else . end
++  )
++  | {choices: [{message: {
++      role: "assistant", content: .content, reasoning_content: .reasoning,
++      tool_calls: [.calls[] | select(type == "object" and ((.function.name // "") != ""))]
++    }}], usage: (if .usage then {total_tokens: .usage} else null end)};
++
++def drive:
++  if .go == null then .
++  elif .go == "build" then .go = null | build | drive
++  elif .go == "finish" then .go = null | finish_up(.fs; .ft) | drive
++  else error("bad go " + (.go | tostring)) end;
++
++def dispatch:
++  if $op == "init" then init
++  else
++    blank_io
++    | if $op == "user" then on_user($text)
++      elif $op == "resp" then on_resp($resp[0])
++      elif $op == "tool" then on_tool($result)
++      elif $op == "approve" then on_approve($text)
++      elif $op == "stop" then on_stop
++      elif $op == "skills" then .skill_catalog = ($skills[0] // [])
++      else error("bad op") end
++    | drive
++  end;
+diff --git a/jq/tools.json b/jq/tools.json
+new file mode 100644
+index 0000000..ab68c2c
+--- /dev/null
++++ b/jq/tools.json
+@@ -0,0 +1,15 @@
++{
++  "read": {"type":"function","function":{"name":"read","description":"Read a file (or a line range). Files only, not directories. List a directory with shell ls or find. Line numbers are added.","parameters":{"type":"object","additionalProperties":false,"required":["file"],"properties":{"file":{"type":"string","description":"Path relative to the project folder."},"range":{"type":"string","description":"Optional lines. 5, 1:10, 10:$, -5:$. $ is the last line."}}}}},
++  "shell": {"type":"function","function":{"name":"shell","description":"Run a command in the project root. ls/find to list, grep to search. Do not cd to the root. Pipes and &amp;&amp; are allowed. Redirects are not. stderr is captured.","parameters":{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","description":"The command. Paths are relative to the project. No &gt;, &gt;&gt;, &lt;, or 2&gt;&amp;1."}}}}},
++  "finish": {"type":"function","function":{"name":"finish","description":"Call when you have the answer. result is stored on the task and is the only text the next agent sees.","parameters":{"type":"object","additionalProperties":false,"required":["result"],"properties":{"result":{"type":"string","description":"The answer or conclusion."}}}}},
++  "answer": {"type":"function","function":{"name":"answer","description":"Answer the user. Call this when you can answer. Otherwise create one smaller task.","parameters":{"type":"object","additionalProperties":false,"required":["text"],"properties":{"text":{"type":"string","description":"The answer the user sees."}}}}},
++  "review": {"type":"function","function":{"name":"review","description":"Verdict for this finished task. pass if the goal was done, fail if not. On pass the coder result is kept.","parameters":{"type":"object","additionalProperties":false,"required":["status","result"],"properties":{"status":{"type":"string","enum":["pass","fail"]},"result":{"type":"string","description":"Short conclusion. On fail, what was done and what is missing."},"notes":{"type":"string","description":"Facts to keep on this item. Empty if none."}}}}},
++  "create_task": {"type":"function","function":{"name":"create_task","description":"Add one smaller task that helps answer the user. title is a few words for the plan. The goal is that task, never the whole user task. notes carry the previous report. The top passes agent orchestrator. A nested orchestrator passes manager. A manager passes coder. Fails if a step is already pending or running. A task cannot be changed after it is created.","parameters":{"type":"object","additionalProperties":false,"required":["goal","title"],"properties":{"title":{"type":"string","description":"A few words for the plan."},"goal":{"type":"string","description":"This task only. Never the whole user task."},"notes":{"type":"string","description":"The previous report and what this step must return. The child sees only this and its goal."},"agent":{"type":"string","enum":["coder","manager","orchestrator"],"description":"Top orchestrator passes orchestrator. A phase orchestrator passes manager. A manager passes coder."},"tools":{"type":"array","items":{"type":"string","enum":["read","shell","edit","write","plan","skill","mcp","send_image"]},"description":"Evidence, the problem, and the list of changes: read and shell. The change to one known file: read, shell, and edit. The check: read and shell."}}}}},
++  "plan": {"type":"function","function":{"name":"plan","description":"action=status shows this branch. action=write and action=update are refused. Create the next step with create_task.","parameters":{"type":"object","additionalProperties":false,"required":["action"],"properties":{"action":{"type":"string","enum":["write","update","status"]},"index":{"type":"string"},"goal":{"type":"string"},"notes":{"type":"string"},"agent":{"type":"string","enum":["coder","orchestrator"]},"tools":{"type":"array","items":{"type":"string"}},"tasks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["goal"],"properties":{"goal":{"type":"string"},"notes":{"type":"string"},"agent":{"type":"string"},"tools":{"type":"array","items":{"type":"string"}}}}}}}}},
++  "notes": {"type":"function","function":{"name":"notes","description":"Refused. Notes are set in create_task and are not changed later.","parameters":{"type":"object","additionalProperties":false,"required":["action","content"],"properties":{"action":{"type":"string","enum":["write","append"]},"content":{"type":"string"}}}}},
++  "edit": {"type":"function","function":{"name":"edit","description":"Replace old_text with new_text. Empty old_text inserts at the start. Match is per line after whitespace is collapsed. old_text must occur once unless multi is true. Do not include line numbers from read.","parameters":{"type":"object","additionalProperties":false,"required":["file","old_text","new_text"],"properties":{"file":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},"multi":{"type":"boolean"}}}}},
++  "write": {"type":"function","function":{"name":"write","description":"Create a new file. Fails if it exists. Change an existing file with edit.","parameters":{"type":"object","additionalProperties":false,"required":["file","content"],"properties":{"file":{"type":"string"},"content":{"type":"string"}}}}},
++  "send_image": {"type":"function","function":{"name":"send_image","description":"Send an image so you can see it.","parameters":{"type":"object","additionalProperties":false,"required":["file"],"properties":{"file":{"type":"string"},"prompt":{"type":"string"}}}}},
++  "skill": {"type":"function","function":{"name":"skill","description":"Agent Skills from SKILL.md. action: list, status, load, unload.","parameters":{"type":"object","additionalProperties":false,"required":["action"],"properties":{"action":{"type":"string","enum":["list","status","load","unload"]},"id":{"type":"string"}}}}},
++  "mcp": {"type":"function","function":{"name":"mcp","description":"MCP servers from .tai. action: status, connect, disconnect, list_tools, call.","parameters":{"type":"object","additionalProperties":false,"required":["action"],"properties":{"action":{"type":"string","enum":["status","connect","disconnect","list_tools","call"]},"server":{"type":"string"},"tool":{"type":"string"},"arguments":{"type":"object"}}}}}
++}
+diff --git a/prompts/coder.txt b/prompts/coder.txt
+new file mode 100644
+index 0000000..295b6f9
+--- /dev/null
++++ b/prompts/coder.txt
+@@ -0,0 +1,15 @@
++You are a coder for this project: @ROOT@
++
++Do this one goal. Do not plan the whole request. A reviewer will judge the result.
++- You get this task's goal and its notes. Use them. You do not see the shared pad.
++- The notes hold the outcome to keep. When the goal is a change, edit the lines they name. Do not invent a different outcome.
++- If the goal is only to find and quote, call finish with the path and the quoted lines. Do not edit.
++- If the goal asks for more than one change, finish with each candidate, the lines it would touch, and why to drop it. Do not edit.
++- If the same name exists in more than one place, change the one the goal names.
++- You may take several turns. Keep going until the goal is done.
++- When the goal says to run a command, call shell and finish with that output. Reading the file does not show the outcome.
++- When you have the answer or a conclusion, call finish. Set result to the report the next step needs: paths, quoted lines, what you found, what you changed, and what passed or failed. It is the only message the next agent sees.
++- Quote who calls these lines, what they call, other definitions of the same name, and what else a change here reaches. That is how the parent learns the code.
++- Use only tools you were given.
++- If a path, file, or name in the goal does not exist, say so in the handoff (invalid premise). Do not invent other files or a different task.
++- If the goal cannot be done, say why. Do not invent.
+diff --git a/prompts/guide.txt b/prompts/guide.txt
+new file mode 100644
+index 0000000..bad7949
+--- /dev/null
++++ b/prompts/guide.txt
+@@ -0,0 +1,11 @@
++Coding guidelines
++
++- Do the work. Do not stop at a plan or a promise.
++- Search for the exact name in the goal. Read only the matching lines. Do not wander.
++- To list a directory use shell: ls or find. Never call read on a directory.
++- Decide only from tool results, notes, and previous steps. Never guess paths.
++- Grep to search (use -A/-B). Do not read a whole file to search.
++- Read only a file (and a range); edit needs the previous content, not line numbers. old_text must occur once. A line shared by several places changes the wrong one.
++- Be efficient: use your tool carefully to avoid getting an enormous response.
++- Completely address the goal. No markdown, use ASCII.
++- Use only tools you were given.
+diff --git a/prompts/manager.txt b/prompts/manager.txt
+new file mode 100644
+index 0000000..4ac60c6
+--- /dev/null
++++ b/prompts/manager.txt
+@@ -0,0 +1,34 @@
++You are a manager for one part of this project: @ROOT@
++
++You cannot read, edit, or run commands. Tools: create_task, finish.
++You create coder tasks only. A coder creates nothing.
++
++Break your part into outcomes. Create one coder for the next outcome. Wait for its report. Then create the next outcome.
++Do not give a coder your whole part. A coder goal is one outcome.
++One outcome is one of: quote evidence, state one problem, list more than one change, edit one known file, run one check.
++The quote, the problem, and the list say must not edit.
++An edit outcome names one file and the lines. A check outcome runs the command and returns its output.
++Keep every check from your goal in the coder's goal and notes. An example must stay an example. Do not swap it for a nearby claim.
++If the outcome is a report, do not grant edit.
++Do not create an outcome whose goal is that the work is finished.
++
++The report of each coder is what the next outcome needs, so the next outcome is feasible.
++Put the previous report in the next coder's notes. The coder sees only its goal and those notes.
++
++How to create goals
++Write must not edit in the goal when the step must not edit. Notes do not bind the goal a child writes.
++Say only what the task results say. A blocked result stays blocked.
++
++Put the briefing in create_task notes, in that same call. Do not leave it empty. Do not fill result.
++title is a few words for the plan. The goal is the task.
++create_task adds the next outcome only. A task cannot be changed or removed after it is created.
++Say the outcome its report must contain.
++Name the files. For an edit, paste the lines to change and what must not change.
++Copy the previous report: paths, names, quoted lines, and what failed.
++Say how to verify.
++Grant read and shell on every outcome. Grant edit only when the outcome is a change to one known file.
++It cannot call anything you omit.
++
++When a coder finishes, use its report as the notes of the next outcome.
++You see only your own tasks.
++When they are done, call finish. result is your report for the next part. It is the only text the parent sees.
+diff --git a/prompts/orchestrator-nested.txt b/prompts/orchestrator-nested.txt
+new file mode 100644
+index 0000000..91cdae1
+--- /dev/null
++++ b/prompts/orchestrator-nested.txt
+@@ -0,0 +1,38 @@
++You are an orchestrator for one goal of this project: @ROOT@
++
++You cannot read, edit, or run commands. Tools: create_task, finish.
++You were given one goal. Break that goal into parts. You do not do the work.
++
++Create managers and coders only.
++Create one manager for the next part of this goal. Wait for its report.
++Create another part only when this goal still has a piece that report did not cover.
++Do not give a manager the whole goal. A part is one piece of your goal.
++For a change, order the parts: quote the evidence, state one problem, list more than one change, edit one known file, run the user's examples.
++Skip a part this goal does not need.
++The quote, the problem, and the list say must not edit.
++The edit is one known file. The check is a separate part and runs the user's examples.
++Grant read and shell on every part. Grant edit only on the edit of one known file.
++If a check fails, the next part is that failure. Leave a report that already quoted the lines.
++A manager creates coders only. A coder does one outcome. It creates nothing.
++Keep every check from your goal in the part's goal and notes. An example must stay an example. Do not swap it for a nearby claim.
++If your goal is to report a change, the parts report it. Do not grant edit.
++Do not create a part whose goal is that the work is finished.
++
++The report of each manager and coder should help the next steps.
++Put only the important parts of the previous report in the next task's notes, not the full report. The child sees only its goal and those notes.
++When the reports cover this goal, call finish. Do not create another task.
++
++How to create goals
++Write must not edit in the goal when the step must not edit. Notes do not bind the goal a child writes.
++Say only what the task results say. A blocked result stays blocked.
++
++Put the briefing in create_task notes, in that same call. Do not leave it empty. Do not fill result.
++title is a few words for the plan. The goal is the task.
++Say which part of this goal it is, and what its report must contain.
++Grant every coder the tools it needs. It cannot call anything you omit.
++
++A report is not a status. Check it against the goal and the notes. Reviewer fail means not done.
++Do not repeat work it already finished.
++create_task adds the next step only. A task cannot be changed or removed after it is created.
++
++When the work is done, call finish. result is your report. Include the requested task and the relevant findings. It is the only text the parent sees.
+diff --git a/prompts/orchestrator.txt b/prompts/orchestrator.txt
+new file mode 100644
+index 0000000..e5dda69
+--- /dev/null
++++ b/prompts/orchestrator.txt
+@@ -0,0 +1,28 @@
++You are the orchestrator for this project: @ROOT@
++
++You cannot read, edit, or run commands. Tools: answer, create_task.
++You receive the user's task. You do not do the work.
++
++Call answer when you can answer the user.
++Otherwise create one smaller task that helps you answer. Set agent to orchestrator on that call.
++The goal is what to investigate. title is a few words for the plan.
++Wait for its report. Then call answer, or create the next smaller task.
++Do not give the task the whole user task.
++Keep the user's checks in the goal and the notes. An example must stay an example. Do not swap it for a nearby claim.
++Do not create a task whose goal is that the work is finished.
++A code change is not covered until test has run the user's examples.
++When the user asks for a change, the first task quotes the code and who it affects, and its goal says must not edit.
++The task after that states one problem from that report, and its goal says must not edit.
++Only a later task may change one known file, and only the lines that problem names.
++A change is not covered until a task has run the user's examples.
++If a check fails, create a new task for what failed.
++If you can answer without a change, call answer.
++
++How to create goals
++Write must not edit in the goal when the step must not edit. Notes do not bind the goal a child writes.
++Say only what the task results say. A blocked result stays blocked.
++
++Put the briefing in create_task notes, in that same call. Do not leave it empty.
++Put the previous report in those notes so the next step is feasible. The child sees only its goal and those notes.
++Grant every coder the tools it needs. It cannot call anything you omit.
++create_task adds the next step only. A task cannot be changed or removed after it is created.
+diff --git a/prompts/revisor.txt b/prompts/revisor.txt
+new file mode 100644
+index 0000000..cb3e81b
+--- /dev/null
++++ b/prompts/revisor.txt
+@@ -0,0 +1,15 @@
++You are the revisor for this project: @ROOT@
++
++Judge this one finished task. Do not do the work. Do not edit the plan tree.
++You will receive the Goal and a Transcript. Call the review tool once.
++- status: pass or fail
++- pass: the task keeps the coder's result. Do not replace it.
++- fail: result: what was done and what is missing. That result is stored.
++- notes: briefing to keep on this item, or empty
++pass = the transcript shows the outcome the result claims.
++fail = the result names a different outcome than the goal, or the transcript does not show that outcome.
++Reading the changed lines does not show that a run worked. Fail that.
++Fail an edit when the goal says must not edit.
++Fail a check that has no command output.
++Fail a change that is not the problem stated in the notes.
++Do not retry. Do not invent new work.
+diff --git a/tai b/tai
+new file mode 100755
+index 0000000..fe61c29
+--- /dev/null
++++ b/tai
+@@ -0,0 +1,1253 @@
++#!/bin/sh
++# tai — terminal agent. One shell file. jq and prompts come from the XDG data dir.
++set -u
++
++usage() {
++	cat &lt;&lt;'EOF'
++tai — plan, run, and review work in the terminal.
++
++  tai            open the client (needs a .tai above this directory)
++  tai --help
++
++Keys: type at the &gt; prompt, Enter sends. Scroll the terminal window
++to read earlier output.
++Ctrl-C stops the agent, Ctrl-L redraws, Ctrl-U clears the line.
++Ctrl-N clears the session. Ctrl-H shows this help. Ctrl-Q quits.
++EOF
++}
++
++die() { printf 'tai: %s\n' "$1" &gt;&amp;2; exit 1; }
++command -v jq &gt;/dev/null || die "jq is required"
++command -v curl &gt;/dev/null || die "curl is required"
++
++# $XDG_DATA_HOME/tai, then each directory in $XDG_DATA_DIRS.
++find_share() {
++	xh=$HOME/.local/share
++	[ -n "${XDG_DATA_HOME:-}" ] &amp;&amp; xh=$XDG_DATA_HOME
++	d=$xh/tai
++	if [ -f "$d/jq/fs.jq" ] &amp;&amp; [ -f "$d/prompts/guide.txt" ]; then
++		printf '%s' "$d"
++		return 0
++	fi
++	rest=/usr/local/share:/usr/share
++	[ -n "${XDG_DATA_DIRS:-}" ] &amp;&amp; rest=$XDG_DATA_DIRS
++	while [ -n "$rest" ]; do
++		case $rest in
++			*:*) one=${rest%%:*}; rest=${rest#*:} ;;
++			*) one=$rest; rest= ;;
++		esac
++		[ -n "$one" ] || continue
++		d=$one/tai
++		if [ -f "$d/jq/fs.jq" ] &amp;&amp; [ -f "$d/prompts/guide.txt" ]; then
++			printf '%s' "$d"
++			return 0
++		fi
++	done
++	return 1
++}
++
++if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
++	usage
++	exit 0
++fi
++
++share=$(find_share) || die "no data files in ${XDG_DATA_HOME:-$HOME/.local/share}/tai"
++jqdir=$share/jq
++prompts=$share/prompts
++
++if [ "${1-}" = "--self-check" ]; then
++	tmp=$(mktemp -d)
++	printf 'alpha  beta\ngamma\n' &gt; "$tmp/f"
++	jq -n -L "$jqdir" --rawfile src "$tmp/f" --arg old "alpha beta" --arg new "delta" --argjson multi false \
++		'include "fs"; $src | edit($old; $new; $multi)' | jq -e '.ok == true and (.text | startswith("delta"))' &gt;/dev/null
++	rm -rf "$tmp"
++	printf 'ok\n'
++	exit 0
++fi
++[ "${1-}" = "" ] || die "unknown argument: $1"
++
++# --- project -------------------------------------------------------
++
++find_root() {
++	d=$(pwd)
++	while [ "$d" != "/" ]; do
++		[ -f "$d/.tai" ] &amp;&amp; { printf '%s' "$d"; return 0; }
++		d=$(dirname "$d")
++	done
++	return 1
++}
++
++have_tai=0
++if root=$(find_root); then
++	have_tai=1
++else
++	root=$(pwd)
++fi
++cd "$root" || die "cannot cd to $root"
++
++cfgfile=${TMPDIR:-/tmp}/tai-cfg.$$
++if [ "$have_tai" = 1 ]; then
++	jq -c '
++		.provider //= "" | .model //= "" | .auto_approve //= false
++		| .use_tools //= true | .stream //= false | .options //= {}
++		| .rpm //= 60 | .mcps //= {}
++	' "$root/.tai" &gt; "$cfgfile" || die "cannot read .tai"
++else
++	printf '%s\n' '{"provider":"","model":"","auto_approve":false,"use_tools":true,"stream":false,"options":{},"rpm":60,"mcps":{}}' &gt; "$cfgfile"
++fi
++
++cache=${XDG_CACHE_HOME:-$HOME/.cache}/tai/$$
++mkdir -p "$cache/mcp" || die "cannot make cache"
++state=$cache/state.json
++raw=$cache/raw
++resp=$cache/resp.json
++resultf=$cache/result
++imagef=$cache/image.json
++skillsf=$cache/skills.json
++keylog=$cache/keys
++printf 'null\n' &gt; "$resp"
++printf '[]\n' &gt; "$skillsf"
++printf '{}\n' &gt; "$state"
++: &gt; "$raw"; : &gt; "$resultf"; : &gt; "$imagef"; : &gt; "$keylog"
++cat &gt; "$cache/help.txt" &lt;&lt;'EOF'
++scroll      the terminal window
++enter       send the prompt
++shift-enter new line
++left right  move in the line
++backspace   delete left
++ctrl-d      delete right
++ctrl-u      clear the line
++ctrl-n      clear the session
++ctrl-c      stop, or clear the line
++ctrl-l      redraw the prompt
++ctrl-q      quit
++y/yes       run a waiting command
++s/stop      stop a waiting command
++other       decline a waiting command
++ctrl-h      close help
++EOF
++session=
++[ "$have_tai" = 1 ] &amp;&amp; session=$root/.tai-cli-session.json
++
++# --- jq ------------------------------------------------------------
++
++jq_op() {
++	op=$1
++	text=${2-}
++	jq -n -L "$jqdir" \
++		--arg op "$op" --arg text "$text" --arg root "$root" \
++		--arg mcptext "${mcptext:-}" --arg image "$(cat "$imagef" 2&gt;/dev/null || true)" \
++		--rawfile result "$resultf" \
++		--rawfile porch "$prompts/orchestrator.txt" \
++		--rawfile pnest "$prompts/orchestrator-nested.txt" \
++		--rawfile pman "$prompts/manager.txt" \
++		--rawfile pcoder "$prompts/coder.txt" \
++		--rawfile prev "$prompts/revisor.txt" \
++		--rawfile pguide "$prompts/guide.txt" \
++		--slurpfile cfg "$cfgfile" --slurpfile tools "$jqdir/tools.json" \
++		--slurpfile resp "$resp" --slurpfile skills "$skillsf" --slurpfile st "$state" \
++		'include "request"; if $op == "init" then dispatch else ($st[0] | dispatch) end' \
++		&gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++}
++
++# --- transcript ----------------------------------------------------
++
++raw_count=0
++printed=0
++live=0
++live_row=1
++help=0
++cursor_on=0
++inL=
++inR=
++rows=24
++cols=80
++gap=0
++help_rows=0
++plines=1
++mcptext=
++in_req=0
++drop=0
++kr=
++cpid=
++titlekey=
++
++append_raw() {
++	printf '%s%s\n' "$1" "$2" &gt;&gt; "$raw"
++	raw_count=$((raw_count + 1))
++}
++
++# A blank row is stored as a single kind character. Skip when the
++# transcript is empty or already ends with one.
++blank_before() {
++	[ -s "$raw" ] || return 0
++	last=$(tail -n 1 "$raw" 2&gt;/dev/null || true)
++	[ "${#last}" -le 1 ] &amp;&amp; return 0
++	append_raw A ""
++}
++
++# Print one stored transcript line. The kind byte selects the color.
++# The terminal wraps and keeps the line in its scrollback.
++write_raw_line() {
++	line=$1
++	if [ -z "$line" ]; then
++		printf '\n'
++		return 0
++	fi
++	kind=${line%"${line#?}"}
++	text=${line#?}
++	case $kind in
++		U) printf '\033[1m%s\033[m\n' "$text" ;;
++		T) printf '\033[2m%s\033[m\n' "$text" ;;
++		C) printf '\033[33m%s\033[m\n' "$text" ;;
++		M) printf '\033[36m%s\033[m\n' "$text" ;;
++		*) printf '%s\n' "$text" ;;
++	esac
++}
++
++# Append raw lines that are not on screen yet.
++emit_pending() {
++	[ "${raw_count:-0}" -le "${printed:-0}" ] &amp;&amp; return 0
++	tail -n "+$((printed + 1))" "$raw" | while IFS= read -r line || [ -n "$line" ]; do
++		write_raw_line "$line"
++	done
++	printed=$raw_count
++}
++
++# The status and prompt are the only rows redrawn. The cursor sits on live_row.
++erase_live() {
++	[ "${live:-0}" -lt 1 ] &amp;&amp; return 0
++	printf '\r'
++	if [ "${live_row:-1}" -gt 1 ]; then
++		printf '\033[%dA' "$((live_row - 1))"
++	fi
++	printf '\033[J'
++	live=0
++	live_row=1
++}
++
++flush_say() {
++	jq -c '.io.say[]?' "$state" &gt; "$cache/say.jsonl"
++	while IFS= read -r row; do
++		d=$(printf '%s' "$row" | jq -r '.d // 0')
++		k=$(printf '%s' "$row" | jq -r '.k // "A"')
++		t=$(printf '%s' "$row" | jq -r '.t // empty')
++		sp=
++		i=0
++		while [ "$i" -lt "$d" ]; do sp="  $sp"; i=$((i + 1)); done
++		if [ -z "$t" ]; then
++			append_raw "$k" ""
++		else
++			blank_before
++			printf '%s' "$t" | tr -d '\r\033' &gt; "$cache/say.txt"
++			while IFS= read -r line || [ -n "$line" ]; do
++				append_raw "$k" "$sp$line"
++			done &lt; "$cache/say.txt"
++		fi
++	done &lt; "$cache/say.jsonl"
++	jq '.io.say = []' "$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++}
++
++geom() {
++	# macOS ncurses tput ignores the window size when stderr is not a tty
++	# and returns the terminfo default, 24x80. Read the size from the tty.
++	if [ -t 1 ]; then
++		sz=$(stty size &lt;/dev/tty 2&gt;/dev/null || true)
++		rows=${sz%% *}
++		cols=${sz##* }
++		if ! [ "$rows" -gt 0 ] 2&gt;/dev/null || ! [ "$cols" -gt 0 ] 2&gt;/dev/null; then
++			rows=24
++			cols=80
++		fi
++	fi
++	rows=${ROWS:-$rows}
++	cols=${COLS:-$cols}
++	[ "$rows" -lt 3 ] &amp;&amp; rows=3
++	[ "$cols" -lt 20 ] &amp;&amp; cols=20
++}
++
++# --- draw ----------------------------------------------------------
++
++set_title() {
++	tw=tai
++	if [ -n "$prov" ]; then
++		tw="$tw $prov"
++		[ -n "$model" ] &amp;&amp; tw="$tw/$model"
++	else
++		tw="$tw no provider"
++	fi
++	tw="$tw $role"
++	if [ "$op" = "approve" ]; then
++		tw="$tw [run?]"
++	else
++		tw="$tw [$st]"
++	fi
++	[ "$ctx" != 0 ] &amp;&amp; [ "$ctx" != null ] &amp;&amp; tw="$tw ctx $ctx"
++	[ "$tw" = "$titlekey" ] &amp;&amp; return 0
++	titlekey=$tw
++	tw=$(printf '%s' "$tw" | tr -d '\000-\037\177')
++	printf '\033]2;%s\007' "$tw"
++}
++
++# One prompt line per newline, including a trailing break.
++load_input() {
++	vis=$inL$inR
++	printf '%s\034' "$vis" &gt; "$cache/input.raw"
++	awk '
++		NR &gt; 1 { print prev }
++		{ prev = $0 }
++		END {
++			sub(/\034$/, "", prev)
++			print prev
++		}
++	' "$cache/input.raw" &gt; "$cache/input.lines"
++	ilines=$(wc -l &lt; "$cache/input.lines" | tr -d ' ')
++	[ "$ilines" -lt 1 ] &amp;&amp; ilines=1
++	cur_line=$(printf '%s' "$inL" | tr -cd '\n' | wc -c | tr -d ' ')
++	rest=$inL
++	while [ "$rest" != "${rest#*
++}" ]; do
++		rest=${rest#*
++}
++	done
++	col=${#rest}
++}
++
++fit_prompt() {
++	gap=0
++	help_rows=0
++	if [ "$rows" -ge 4 ] &amp;&amp; [ "$ilines" -le 1 ] &amp;&amp; [ "$help" != 1 ]; then
++		gap=1
++	fi
++	if [ "$help" = 1 ]; then
++		help_all=$(wc -l &lt; "$cache/help.txt" | tr -d ' ')
++		roomh=$((rows - 2))
++		[ "$roomh" -lt 1 ] &amp;&amp; roomh=1
++		help_rows=$help_all
++		[ "$help_rows" -gt "$roomh" ] &amp;&amp; help_rows=$roomh
++	fi
++	maxp=$((rows - 1 - gap - help_rows))
++	[ "$maxp" -lt 1 ] &amp;&amp; maxp=1
++	plines=$ilines
++	[ "$plines" -gt "$maxp" ] &amp;&amp; plines=$maxp
++	[ "$plines" -lt 1 ] &amp;&amp; plines=1
++	if [ "$ilines" -le "$plines" ]; then
++		in_start=0
++	else
++		in_start=$((cur_line - plines + 1))
++		[ "$in_start" -lt 0 ] &amp;&amp; in_start=0
++	fi
++	used=$((1 + gap + plines + help_rows))
++	if [ "$used" -gt "$rows" ] &amp;&amp; [ "$help_rows" -gt 0 ]; then
++		help_rows=$((rows - 1 - gap - plines))
++		[ "$help_rows" -lt 0 ] &amp;&amp; help_rows=0
++	fi
++}
++
++# Status and the prompt. Transcript lines are printed above this block.
++draw_live() {
++	geom
++	load_input
++	fit_prompt
++	st=$(jq -r '.io.status // "idle"' "$state")
++	role=$(jq -r '.io.label // "orchestrator"' "$state")
++	ctx=$(jq -r '.last_ctx // 0' "$state")
++	prov=$(jq -r '.provider // ""' "$cfgfile")
++	model=$(jq -r '.model // ""' "$cfgfile")
++	op=$(jq -r '.io.op // "idle"' "$state")
++	set_title
++	if [ "$op" = "approve" ]; then prew=5; else prew=2; fi
++	room=$((cols - prew))
++	[ "$room" -lt 1 ] &amp;&amp; room=1
++
++	if [ -n "$prov" ]; then
++		provmodel=$prov
++		[ -n "$model" ] &amp;&amp; provmodel=$prov/$model
++	else
++		provmodel="no provider"
++	fi
++	plain=$(printf 'tai  %s  %s  [%s]' "$provmodel" "$role" "$st")
++	extra=
++	if [ "$ctx" != 0 ] &amp;&amp; [ "$ctx" != null ]; then
++		extra=$(printf '  ctx %s' "$ctx")
++	fi
++	if [ $((${#plain} + ${#extra})) -gt "$cols" ]; then
++		printf '%s\n' "$(printf '%s%s' "$plain" "$extra" | cut -c "1-$cols")"
++	else
++		printf '\033[1mtai\033[m  %s  \033[1m%s\033[m  ' "$provmodel" "$role"
++		case $st in
++			idle) printf '\033[2m[idle]\033[m' ;;
++			waiting) printf '\033[36m[waiting]\033[m' ;;
++			thinking) printf '\033[35m[thinking]\033[m' ;;
++			tools) printf '\033[33m[tools]\033[m' ;;
++			throttled) printf '\033[31m[throttled]\033[m' ;;
++			*) printf '[%s]' "$st" ;;
++		esac
++		printf '%s\n' "$extra"
++	fi
++
++	if [ "$help" = 1 ] &amp;&amp; [ "$help_rows" -gt 0 ]; then
++		sed -n "1,${help_rows}p" "$cache/help.txt" | while IFS= read -r hline || [ -n "$hline" ]; do
++			printf '\033[2m%s\033[m\n' "$(printf '%s' "$hline" | cut -c "1-$cols")"
++		done
++	fi
++	if [ "$gap" = 1 ]; then
++		printf '\n'
++	fi
++
++	exec 5&lt; "$cache/input.lines"
++	si=0
++	while [ "$si" -lt "$in_start" ]; do
++		IFS= read -r _skip &lt;&amp;5 || break
++		si=$((si + 1))
++	done
++	pi=0
++	poff=0
++	while [ "$pi" -lt "$plines" ]; do
++		pline_in=
++		IFS= read -r pline_in &lt;&amp;5 || pline_in=
++		line_no=$((in_start + pi))
++		off=0
++		if [ "$line_no" -eq "$cur_line" ]; then
++			[ "$col" -ge "$room" ] &amp;&amp; off=$((col - room + 1))
++			poff=$off
++		fi
++		chunk=$(printf '%s' "$pline_in" | cut -c "$((off + 1))-$((off + room))")
++		if [ "$line_no" -eq 0 ]; then
++			if [ "$op" = "approve" ]; then
++				shown=$(printf '\033[33mrun?\033[m %s' "$chunk")
++			elif [ -z "$vis" ]; then
++				hint=$(printf '%s' 'ctrl-h help' | cut -c "1-$room")
++				shown=$(printf '\033[2m&gt;\033[m \033[2m%s\033[m' "$hint")
++			else
++				shown=$(printf '\033[2m&gt;\033[m %s' "$chunk")
++			fi
++		else
++			shown=$(printf '%*s%s' "$prew" '' "$chunk")
++		fi
++		if [ "$pi" -eq $((plines - 1)) ]; then
++			printf '%s' "$shown"
++		else
++			printf '%s\n' "$shown"
++		fi
++		pi=$((pi + 1))
++	done
++	exec 5&lt;&amp;-
++
++	back=$((plines - 1 - (cur_line - in_start)))
++	[ "$back" -lt 0 ] &amp;&amp; back=0
++	[ "$back" -gt 0 ] &amp;&amp; printf '\033[%dA' "$back"
++	printf '\r'
++	colpos=$((prew + col - poff))
++	[ "$colpos" -gt 0 ] &amp;&amp; printf '\033[%dC' "$colpos"
++
++	live=$((1 + help_rows + gap + plines))
++	live_row=$((1 + help_rows + gap + cur_line - in_start + 1))
++	[ "$live_row" -lt 1 ] &amp;&amp; live_row=1
++	[ "$live_row" -gt "$live" ] &amp;&amp; live_row=$live
++	if [ "$st" = "idle" ] || [ "$op" = "approve" ]; then
++		[ "$cursor_on" = 1 ] || printf '\033[?25h'
++		cursor_on=1
++	else
++		[ "$cursor_on" = 0 ] || printf '\033[?25l'
++		cursor_on=0
++	fi
++}
++
++paint() {
++	erase_live
++	emit_pending
++	draw_live
++}
++
++# --- providers / tools --------------------------------------------
++
++provider_url() {
++	case $1 in
++		mistral) echo https://api.mistral.ai/v1/chat/completions ;;
++		gemini) echo https://generativelanguage.googleapis.com/v1beta/openai/chat/completions ;;
++		groq) echo https://api.groq.com/openai/v1/chat/completions ;;
++		openrouter) echo https://openrouter.ai/api/v1/chat/completions ;;
++		minimax) echo https://api.minimax.io/v1/chat/completions ;;
++		stepfun) echo https://api.stepfun.ai/v1/chat/completions ;;
++		z_ai) echo https://api.z.ai/api/paas/v4/chat/completions ;;
++		xai) echo https://api.x.ai/v1/chat/completions ;;
++		zyphra) echo https://api.zyphracloud.com/api/v1/chat/completions ;;
++		openai_responses) echo https://api.openai.com/v1/responses ;;
++		ollama) echo http://localhost:11434/v1/chat/completions ;;
++		llama_cpp) echo http://localhost:8080/v1/chat/completions ;;
++		custom) jq -r '.options.url // empty' "$cfgfile" ;;
++		*) echo "" ;;
++	esac
++}
++
++api_key() {
++	case $1 in
++		mistral) printf '%s' "${MISTRAL_API_KEY:-}" ;;
++		gemini) printf '%s' "${GEMINI_API_KEY:-}" ;;
++		groq) printf '%s' "${GROQ_API_KEY:-}" ;;
++		openrouter) printf '%s' "${OPENROUTER_API_KEY:-}" ;;
++		minimax) printf '%s' "${MINIMAX_API_KEY:-}" ;;
++		stepfun) printf '%s' "${STEPFUN_API_KEY:-}" ;;
++		z_ai) printf '%s' "${Z_AI_API_KEY:-}" ;;
++		xai) printf '%s' "${XAI_API_KEY:-}" ;;
++		zyphra) printf '%s' "${ZYPHRA_API_KEY:-}" ;;
++		openai_responses) printf '%s' "${OPENAI_API_KEY:-}" ;;
++		*) printf '' ;;
++	esac
++}
++
++tool_args() {
++	jq -c '.io.tool.function.arguments | if type == "string" then (try fromjson catch {}) else . end' "$state"
++}
++
++bad_path() {
++	case $1 in
++		""|/*|..|../*|*/..|*/../*) return 0 ;;
++		*) return 1 ;;
++	esac
++}
++
++is_bin() {
++	dd if="$1" bs=8192 count=1 2&gt;/dev/null | od -An -tu1 | awk '
++		{ for (i = 1; i &lt;= NF; i++) if ($i + 0 &lt; 9) bad = 1 }
++		END { exit (bad ? 0 : 1) }'
++}
++
++cap_out() {
++	head -c 16000 "$1" &gt; "$resultf"
++	if [ "$(wc -c &lt; "$1" | tr -d ' ')" -gt 16000 ]; then
++		printf '\n[truncated]\n' &gt;&gt; "$resultf"
++	fi
++}
++
++show_out() {
++	kind=$1
++	while IFS= read -r line || [ -n "$line" ]; do
++		append_raw "$kind" "  $line"
++	done &lt; "$resultf"
++}
++
++# Tool call text is kind C. The result that follows stays kind T.
++show_call() {
++	blank_before
++	while IFS= read -r line || [ -n "$line" ]; do
++		append_raw C "$line"
++	done &lt; "$1"
++}
++
++run_read() {
++	a=$(tool_args)
++	file=$(printf '%s' "$a" | jq -r '.file // ""')
++	range=$(printf '%s' "$a" | jq -r '.range // ""')
++	printf 'read: %s%s\n' "$file" "${range:+ [$range]}" &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	if bad_path "$file"; then
++		printf 'Paths cannot start from root (/). Use relative.\n' &gt; "$resultf"
++	elif [ -d "$root/$file" ]; then
++		printf 'Error: `%s` is a directory. List it with shell: ls %s\n' "$file" "$file" &gt; "$resultf"
++	elif [ ! -f "$root/$file" ]; then
++		printf 'Error: `%s` does not exist (project %s). List with shell: ls\n' "$file" "$root" &gt; "$resultf"
++	elif is_bin "$root/$file"; then
++		printf 'Binary file detected. Use send_image for images.\n' &gt; "$resultf"
++	else
++		jq -nr -L "$jqdir" --rawfile src "$root/$file" --arg range "$range" \
++			'include "fs"; $src | read_range($range)' &gt; "$resultf"
++	fi
++	show_out T
++}
++
++run_shell_now() {
++	a=$(tool_args)
++	cmd=$(printf '%s' "$a" | jq -r '.command // ""')
++	printf 'shell: %s\n' "$cmd" &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	tmp=$cache/cmd.out
++	(cd "$root" &amp;&amp; sh -c "$cmd") &gt; "$tmp" 2&gt;&amp;1
++	code=$?
++	[ "$code" -ne 0 ] &amp;&amp; printf '\n[exit %s]\n' "$code" &gt;&gt; "$tmp"
++	cap_out "$tmp"
++	show_out T
++}
++
++run_edit() {
++	a=$(tool_args)
++	file=$(printf '%s' "$a" | jq -r '.file // ""')
++	old=$(printf '%s' "$a" | jq -r '.old_text // ""')
++	new=$(printf '%s' "$a" | jq -r '.new_text // ""')
++	multi=$(printf '%s' "$a" | jq -c '.multi // false')
++	{
++		printf 'edit: %s\n' "$file"
++		printf 'old:\n%s\n' "$old"
++		printf 'new:\n%s\n' "$new"
++	} &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	if bad_path "$file" || [ ! -f "$root/$file" ]; then
++		printf 'Error: `%s` is not a readable file.\n' "$file" &gt; "$resultf"
++	elif is_bin "$root/$file"; then
++		printf 'Binary file detected. Use send_image for images.\n' &gt; "$resultf"
++	else
++		jq -n -L "$jqdir" --rawfile src "$root/$file" --arg old "$old" --arg new "$new" --argjson multi "$multi" \
++			'include "fs"; $src | edit($old; $new; $multi)' &gt; "$cache/edit.json"
++		if [ "$(jq -r '.ok' "$cache/edit.json")" = true ]; then
++			jq -r '.text' "$cache/edit.json" &gt; "$root/$file"
++			printf 'Patched %s\n' "$file" &gt; "$resultf"
++		else
++			jq -r '.err' "$cache/edit.json" &gt; "$resultf"
++		fi
++	fi
++	show_out T
++}
++
++run_write() {
++	a=$(tool_args)
++	file=$(printf '%s' "$a" | jq -r '.file // ""')
++	{
++		printf 'write: %s\n' "$file"
++		printf '%s' "$a" | jq -r '.content // ""'
++	} &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	if bad_path "$file"; then
++		printf 'Paths cannot start from root (/). Use relative.\n' &gt; "$resultf"
++	elif [ -e "$root/$file" ]; then
++		printf 'Error: `%s` already exists. Use edit.\n' "$file" &gt; "$resultf"
++	else
++		mkdir -p "$(dirname "$root/$file")" || { printf 'Error: could not create directory\n' &gt; "$resultf"; show_out T; return; }
++		printf '%s' "$a" | jq -r '.content // ""' &gt; "$root/$file"
++		printf 'File created: %s\n' "$file" &gt; "$resultf"
++	fi
++	show_out T
++}
++
++run_image() {
++	a=$(tool_args)
++	file=$(printf '%s' "$a" | jq -r '.file // ""')
++	prompt=$(printf '%s' "$a" | jq -r '.prompt // "image"')
++	printf 'image: %s\n%s\n' "$file" "$prompt" &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	ext=$(printf '%s' "$file" | sed 's/.*\.//')
++	case $ext in
++		png) mime=image/png ;;
++		jpg|jpeg) mime=image/jpeg ;;
++		gif) mime=image/gif ;;
++		webp) mime=image/webp ;;
++		bmp) mime=image/bmp ;;
++		*) mime= ;;
++	esac
++	if bad_path "$file" || [ ! -f "$root/$file" ] || [ -z "$mime" ]; then
++		printf 'Error: unsupported or missing image %s\n' "$file" &gt; "$resultf"
++		: &gt; "$imagef"
++	else
++		b64=$(base64 &lt; "$root/$file" | tr -d '\n')
++		jq -n --arg u "data:$mime;base64,$b64" --arg p "$prompt" \
++			'[{type:"text", text:$p}, {type:"image_url", image_url:{url:$u}}]' &gt; "$imagef"
++		printf 'sent\n' &gt; "$resultf"
++	fi
++	show_out T
++}
++
++skill_body() {
++	awk 'BEGIN{p=0;b=0} NR==1 &amp;&amp; $0=="---"{p=1; next} p &amp;&amp; $0=="---"{b=1; next} b{print}' "$1"
++}
++
++scan_skills() {
++	printf '[]\n' &gt; "$skillsf"
++	for dir in "${XDG_CONFIG_HOME:-$HOME/.config}/tai/skills" "$root/.tai-skills"; do
++		[ -d "$dir" ] || continue
++		for d in "$dir"/*; do
++			[ -f "$d/SKILL.md" ] || continue
++			name=$(basename "$d")
++			fm_name=$(awk 'NR==1 &amp;&amp; $0!="---"{exit} NR==1{next} $0=="---"{exit} /^name:/{sub(/^name: */,""); print; exit}' "$d/SKILL.md" | tr -d "\"'")
++			fm_desc=$(awk 'NR==1 &amp;&amp; $0!="---"{exit} NR==1{next} $0=="---"{exit} /^description:/{sub(/^description: */,""); print; exit}' "$d/SKILL.md")
++			[ "$fm_name" = "$name" ] || continue
++			printf '%s' "$fm_name" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?$' || continue
++			printf '%s' "$fm_name" | grep -q -- '--' &amp;&amp; continue
++			[ "${#fm_name}" -le 64 ] &amp;&amp; [ "${#fm_desc}" -ge 1 ] &amp;&amp; [ "${#fm_desc}" -le 1024 ] || continue
++			jq --arg name "$fm_name" --arg desc "$fm_desc" --arg file "$d/SKILL.md" \
++				'map(select(.name != $name)) + [{name:$name, desc:$desc, file:$file}]' \
++				"$skillsf" &gt; "$skillsf.new" &amp;&amp; mv "$skillsf.new" "$skillsf"
++		done
++	done
++	jq_op skills
++}
++
++run_skill() {
++	a=$(tool_args)
++	action=$(printf '%s' "$a" | jq -r '.action // ""')
++	id=$(printf '%s' "$a" | jq -r '.id // ""')
++	printf 'skill: %s %s\n' "$action" "$id" &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	case $action in
++		list)
++			jq -r '.[] | "- \(.name): \(.desc)"' "$skillsf" &gt; "$resultf"
++			[ -s "$resultf" ] || printf 'No skills found.\n' &gt; "$resultf"
++			;;
++		status|load|unload)
++			file=$(jq -r --arg id "$id" '.[] | select(.name == $id) | .file' "$skillsf")
++			if [ -z "$file" ]; then
++				printf 'Error: skill %s not found.\n' "$id" &gt; "$resultf"
++			elif [ "$action" = status ]; then
++				printf '%s\n%s\n' "$id" "$file" &gt; "$resultf"
++			elif [ "$action" = unload ]; then
++				jq --arg id "$id" 'del(.skill_bodies[$id])' "$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++				printf 'Skill %s unloaded.\n' "$id" &gt; "$resultf"
++			else
++				skill_body "$file" &gt; "$cache/skill.body"
++				jq --rawfile b "$cache/skill.body" --arg id "$id" '.skill_bodies[$id] = $b' \
++					"$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++				printf 'Skill %s loaded.\n' "$id" &gt; "$resultf"
++			fi
++			;;
++		*) printf 'Error: unknown action %s\n' "$action" &gt; "$resultf" ;;
++	esac
++	show_out T
++}
++
++mcp_summary() {
++	: &gt; "$cache/mcp.txt"
++	jq -r '.mcps // {} | keys[]' "$cfgfile" | while IFS= read -r name; do
++		if [ -f "$cache/mcp/$name/pid" ] &amp;&amp; kill -0 "$(cat "$cache/mcp/$name/pid")" 2&gt;/dev/null; then
++			printf '%s: connected\n' "$name"
++		else
++			printf '%s: configured\n' "$name"
++		fi
++	done &gt;&gt; "$cache/mcp.txt"
++	mcptext=$(cat "$cache/mcp.txt" 2&gt;/dev/null || true)
++}
++
++mcp_rpc() {
++	name=$1 method=$2 params=$3
++	d=$cache/mcp/$name
++	id=$(( $(cat "$d/id" 2&gt;/dev/null || echo 0) + 1 ))
++	printf '%s\n' "$id" &gt; "$d/id"
++	jq -n --arg m "$method" --argjson id "$id" --argjson p "$params" \
++		'{jsonrpc:"2.0", id:$id, method:$m, params:$p}' &gt; "$d/req"
++	if [ "$(cat "$d/kind" 2&gt;/dev/null)" = http ]; then
++		key=$(jq -r --arg n "$name" '.mcps[$n].api_key // empty' "$cfgfile")
++		if [ -n "$key" ]; then
++			curl -sS -m 30 -X POST "$(cat "$d/url")" -H "Content-Type: application/json" \
++				-H "Authorization: Bearer $key" --data-binary @"$d/req" &gt; "$d/last" || printf '{"error":"curl"}\n' &gt; "$d/last"
++		else
++			curl -sS -m 30 -X POST "$(cat "$d/url")" -H "Content-Type: application/json" \
++				--data-binary @"$d/req" &gt; "$d/last" || printf '{"error":"curl"}\n' &gt; "$d/last"
++		fi
++		return 0
++	fi
++	before=$(wc -l &lt; "$d/out" | tr -d ' ')
++	cat "$d/req" &gt;&gt; "$d/msg"
++	i=0
++	while [ "$i" -lt 200 ]; do
++		if awk -v b="$before" 'NR &gt; b &amp;&amp; /"id"/ { f = 1 } END { exit !f }' "$d/out"; then
++			awk -v b="$before" 'NR &gt; b' "$d/out" | jq -s --argjson id "$id" 'map(select(.id == $id)) | last // {error:"no reply"}' &gt; "$d/last"
++			return 0
++		fi
++		sleep 0.05
++		i=$((i + 1))
++	done
++	printf '{"error":"timeout"}\n' &gt; "$d/last"
++	return 1
++}
++
++mcp_connect() {
++	name=$1
++	d=$cache/mcp/$name
++	mkdir -p "$d"
++	: &gt; "$d/out"; : &gt; "$d/msg"; printf '0\n' &gt; "$d/id"
++	url=$(jq -r --arg n "$name" '.mcps[$n].url // empty' "$cfgfile")
++	if [ -n "$url" ]; then
++		printf 'http\n' &gt; "$d/kind"
++		printf '%s\n' "$url" &gt; "$d/url"
++		mcp_rpc "$name" initialize '{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"tai","version":"0.1"}}'
++		return 0
++	fi
++	cmd=$(jq -r --arg n "$name" '.mcps[$n].command // empty' "$cfgfile")
++	[ -n "$cmd" ] || { printf 'Error: mcp %s has no command or url\n' "$name"; return 1; }
++	printf 'stdio\n' &gt; "$d/kind"
++	jq -r --arg n "$name" '.mcps[$n].args[]?' "$cfgfile" &gt; "$d/args"
++	(
++		set --
++		while IFS= read -r arg; do set -- "$@" "$arg"; done &lt; "$d/args"
++		tail -n +1 -f "$d/msg" | "$cmd" "$@" &gt; "$d/out" 2&gt;"$d/err"
++	) &amp;
++	printf '%s\n' "$!" &gt; "$d/pid"
++	sleep 0.1
++	mcp_rpc "$name" initialize '{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"tai","version":"0.1"}}'
++	printf '%s\n' '{"jsonrpc":"2.0","method":"notifications/initialized"}' &gt;&gt; "$d/msg"
++}
++
++run_mcp() {
++	a=$(tool_args)
++	action=$(printf '%s' "$a" | jq -r '.action // ""')
++	name=$(printf '%s' "$a" | jq -r '.server // ""')
++	tool=$(printf '%s' "$a" | jq -r '.tool // ""')
++	printf 'mcp: %s %s %s\n' "$action" "$name" "$tool" &gt; "$cache/call.txt"
++	show_call "$cache/call.txt"
++	case $action in
++		status) mcp_summary; cp "$cache/mcp.txt" "$resultf" ;;
++		connect)
++			if mcp_connect "$name" &gt; "$cache/mcp.err" 2&gt;&amp;1; then
++				printf 'connected %s\n' "$name" &gt; "$resultf"
++			else
++				cp "$cache/mcp.err" "$resultf"
++			fi
++			mcp_summary
++			;;
++		disconnect)
++			if [ -f "$cache/mcp/$name/pid" ]; then
++				kill "$(cat "$cache/mcp/$name/pid")" 2&gt;/dev/null || true
++				rm -f "$cache/mcp/$name/pid"
++			fi
++			printf 'disconnected %s\n' "$name" &gt; "$resultf"
++			mcp_summary
++			;;
++		list_tools)
++			mcp_rpc "$name" "tools/list" '{}' || true
++			jq -r '.result.tools[]? | "- \(.name): \(.description // "")"' "$cache/mcp/$name/last" &gt; "$resultf" 2&gt;/dev/null \
++				|| cp "$cache/mcp/$name/last" "$resultf"
++			;;
++		call)
++			if jq -e --arg n "$name" --arg t "$tool" '.mcps[$n].denylist // [] | index($t) != null' "$cfgfile" &gt;/dev/null; then
++				printf 'Error: tool %s is denied\n' "$tool" &gt; "$resultf"
++			else
++				args=$(printf '%s' "$a" | jq -c '.arguments // {}')
++				mcp_rpc "$name" "tools/call" "$(jq -n --arg t "$tool" --argjson a "$args" '{name:$t, arguments:$a}')" || true
++				jq -c '.result // .error // .' "$cache/mcp/$name/last" &gt; "$resultf"
++			fi
++			;;
++		*) printf 'Error: unknown action %s\n' "$action" &gt; "$resultf" ;;
++	esac
++	show_out T
++}
++
++do_tool() {
++	name=$(jq -r '.io.tool.function.name' "$state")
++	: &gt; "$imagef"
++	: &gt; "$resultf"
++	case $name in
++		read) run_read ;;
++		shell) run_shell_now ;;
++		edit) run_edit ;;
++		write) run_write ;;
++		send_image) run_image ;;
++		skill) run_skill ;;
++		mcp) run_mcp ;;
++		*) printf 'Error: unknown tool %s\n' "$name" &gt; "$resultf" ;;
++	esac
++	jq_op tool
++}
++
++# --- requests ------------------------------------------------------
++
++# Bracketed paste ends at ESC [201~. Bytes stay in the body file.
++take_paste() {
++	paste_seq=$((paste_seq + 1))
++	body=$cache/paste.$paste_seq
++	: &gt; "$body"
++	cr=0
++	while :; do
++		rb=
++		IFS= read -r -d '' -n 1 rb &lt;/dev/tty || exit 0
++		[ -n "$rb" ] || continue
++		bb=$(printf '%d' "'$rb" 2&gt;/dev/null) || continue
++		if [ "$bb" = 27 ]; then
++			[ "$cr" = 1 ] &amp;&amp; printf '\n' &gt;&gt; "$body"
++			cr=0
++			dd bs=5 count=1 &lt;/dev/tty 2&gt;/dev/null &gt; "$cache/paste.end" || true
++			printf '[201~' &gt; "$cache/paste.mark"
++			if cmp -s "$cache/paste.end" "$cache/paste.mark"; then
++				break
++			fi
++			printf '\033' &gt;&gt; "$body"
++			cat "$cache/paste.end" &gt;&gt; "$body"
++			continue
++		fi
++		if [ "$bb" = 13 ]; then
++			cr=1
++			continue
++		fi
++		if [ "$bb" = 10 ]; then
++			printf '\n' &gt;&gt; "$body"
++			cr=0
++			continue
++		fi
++		if [ "$cr" = 1 ]; then
++			printf '\n' &gt;&gt; "$body"
++			cr=0
++		fi
++		if [ "$bb" = 9 ] || [ "$bb" -ge 32 ]; then
++			printf '%s' "$rb" &gt;&gt; "$body"
++		fi
++	done
++	[ "$cr" = 1 ] &amp;&amp; printf '\n' &gt;&gt; "$body"
++	[ -s "$body" ] || return 0
++	printf 'P %s\n' "$paste_seq" &gt;&amp;8 || exit 0
++}
++
++# One blocked read on the tty. An arrow is ESC plus two bytes that are
++# already buffered, so take those with dd and no timer, as ereandel does.
++# A timer waits out the whole interval on every arrow.
++key_reader() {
++	trap - EXIT INT HUP TERM
++	LC_ALL=C
++	export LC_ALL
++	exec &lt;/dev/tty
++	paste_seq=0
++	while :; do
++		c=
++		IFS= read -r -d '' -n 1 c &lt;/dev/tty || [ -n "$c" ] || exit 0
++		[ -n "$c" ] || continue
++		b=$(printf '%d' "'$c" 2&gt;/dev/null) || continue
++		if [ "$b" = 27 ]; then
++			# The whole sequence is already buffered. Read it with no timer.
++			seq=
++			IFS= read -r -d '' -n 1 seq &lt;/dev/tty || exit 0
++			k=
++			if [ "$seq" = '[' ]; then
++				csi=
++				n=0
++				while [ "$n" -lt 16 ]; do
++					cb=
++					IFS= read -r -d '' -n 1 cb &lt;/dev/tty || exit 0
++					[ -n "$cb" ] || exit 0
++					csi=$csi$cb
++					fb=$(printf '%d' "'$cb" 2&gt;/dev/null) || fb=0
++					[ "$fb" -ge 64 ] &amp;&amp; break
++					n=$((n + 1))
++				done
++				case $csi in
++					A) k=UP ;;
++					B) k=DOWN ;;
++					C) k=RIGHT ;;
++					D) k=LEFT ;;
++					5~) k=PGUP ;;
++					6~) k=PGDN ;;
++					200~) k=PASTE ;;
++					201~) k= ;;
++					# Shift-Enter is its own key. A plain Enter, even as a line feed, submits.
++					13\;2u|13\;2:*u|13\;2\;*u|27\;2\;13~|27\;2\;13u|27\;2\;10~) k=NL ;;
++					13u|13\;1u|13\;1:*u|13\;1\;*u|27\;1\;13~|27\;13~) k=13 ;;
++					*) k=ESC ;;
++				esac
++			else
++				k=ESC
++			fi
++			if [ "$k" = PASTE ]; then
++				take_paste
++				continue
++			fi
++			[ -n "$k" ] || continue
++		elif [ "$b" -ge 32 ] &amp;&amp; [ "$b" -le 126 ]; then
++			k="C $(printf "\\$(printf '%03o' "$b")")"
++		else
++			k=$b
++		fi
++		printf '%s\n' "$k" &gt;&amp;8 || exit 0
++	done
++}
++
++kill_req() {
++	if [ -f "$cache/curl.pid" ]; then
++		kill "$(cat "$cache/curl.pid")" 2&gt;/dev/null || true
++	fi
++	[ -n "$cpid" ] &amp;&amp; kill "$cpid" 2&gt;/dev/null || true
++}
++
++rate_wait() {
++	rpm=$(jq -r '.rpm // 60' "$cfgfile")
++	[ "$rpm" -lt 1 ] &amp;&amp; rpm=1000000
++	now=$(date +%s)
++	touch "$cache/rpm"
++	awk -v n="$now" '$1 &gt; n - 60 { print }' "$cache/rpm" &gt; "$cache/rpm.new"
++	mv "$cache/rpm.new" "$cache/rpm"
++	count=$(wc -l &lt; "$cache/rpm" | tr -d ' ')
++	if [ "$count" -ge "$rpm" ]; then
++		jq '.io.status = "throttled"' "$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++		paint
++		sleep 1
++		rate_wait
++		return
++	fi
++	printf '%s\n' "$now" &gt;&gt; "$cache/rpm"
++}
++
++fold_stream() {
++	awk 'sub(/^data: /, "") &amp;&amp; $0 != "[DONE]" { print }' "$cache/sse" &gt; "$cache/sse.jsonl"
++	if [ ! -s "$cache/sse.jsonl" ]; then
++		if [ -s "$cache/sse" ]; then
++			cp "$cache/sse" "$resp"
++		else
++			printf '%s\n' '{"error":"ERROR [provider]: empty provider response"}' &gt; "$resp"
++		fi
++		return
++	fi
++	jq -s -L "$jqdir" 'include "request"; fold_sse' "$cache/sse.jsonl" &gt; "$resp" \
++		|| printf '%s\n' '{"error":"ERROR [provider]: bad stream"}' &gt; "$resp"
++}
++
++do_request() {
++	jq '.io.body' "$state" &gt; "$cache/body.json"
++	limit=$(jq -r '.context_tokens // empty' "$cfgfile")
++	if [ -n "$limit" ]; then
++		chars=$(wc -c &lt; "$cache/body.json" | tr -d ' ')
++		est=$((chars / 4))
++		if [ "$est" -gt "$limit" ]; then
++			printf '{"error":"ERROR [context]: request is %s tokens, limit is %s."}\n' "$est" "$limit" &gt; "$resp"
++			jq_op resp
++			return
++		fi
++	fi
++	rate_wait
++	prov=$(jq -r '.provider // ""' "$cfgfile")
++	url=$(provider_url "$prov")
++	if [ -z "$url" ]; then
++		printf '%s\n' '{"error":"ERROR [provider]: set provider and model in .tai"}' &gt; "$resp"
++		jq_op resp
++		return
++	fi
++	key=$(api_key "$prov")
++	stream=$(jq -r 'if .stream == true and .provider != "openai_responses" then "yes" else "no" end' "$cfgfile")
++	rm -f "$cache/stop"
++	if [ -n "${TAI_FAKE_RESPONSE:-}" ]; then
++		cp "$TAI_FAKE_RESPONSE" "$resp"
++		jq_op resp
++		return
++	fi
++	out=$resp
++	[ "$stream" = yes ] &amp;&amp; out=$cache/sse
++	nflag=
++	[ "$stream" = yes ] &amp;&amp; nflag=-N
++	# shellcheck disable=SC2086
++	(
++		trap - EXIT INT HUP TERM
++		curlpid=
++		trap '[ -n "$curlpid" ] &amp;&amp; kill "$curlpid" 2&gt;/dev/null || true; printf "DONE\n" &gt;&amp;8' EXIT
++		trap 'exit 1' TERM
++		# shellcheck disable=SC2086
++		curl -sS $nflag -D "$cache/hdr" -o "$out" -w '%{http_code}' \
++			-X POST "$url" \
++			-H "Authorization: Bearer $key" \
++			-H "Content-Type: application/json" \
++			-H "HTTP-Referer: https://terminal.pink/tai" \
++			-H "X-Title: tai" \
++			--data-binary @"$cache/body.json" &gt; "$cache/code" &amp;
++		curlpid=$!
++		printf '%s\n' "$curlpid" &gt; "$cache/curl.pid"
++		wait "$curlpid"
++	) &amp;
++	cpid=$!
++	in_req=1
++	while IFS= read -r k &lt;&amp;8; do
++		[ "$k" = DONE ] &amp;&amp; break
++		case $k in
++			3) printf x &gt; "$cache/stop"; kill_req ;;
++			8) help=$((1 - help)); paint ;;
++			12) paint ;;
++			14) clear_session ;;
++			17) quit ;;
++		esac
++	done
++	wait "$cpid" 2&gt;/dev/null || true
++	cpid=
++	in_req=0
++	rm -f "$cache/curl.pid"
++	if [ "$drop" = 1 ]; then
++		drop=0
++		return
++	fi
++	if [ -f "$cache/stop" ]; then
++		rm -f "$cache/stop"
++		jq_op stop
++		return
++	fi
++	code=$(cat "$cache/code" 2&gt;/dev/null || echo 000)
++	if [ "$stream" = yes ]; then
++		fold_stream
++	fi
++	case $code in
++		2*) ;;
++		000) printf '%s\n' '{"error":"ERROR [provider]: curl failed"}' &gt; "$resp" ;;
++		*)
++			jq -n --arg c "$code" --rawfile b "$resp" \
++				'{error: ("ERROR [HTTP " + $c + "]: " + ($b[0:400]))}' &gt; "$cache/err.json"
++			mv "$cache/err.json" "$resp"
++			;;
++	esac
++	jq_op resp
++}
++
++drive() {
++	busy=0
++	while :; do
++		op=$(jq -r '.io.op // "idle"' "$state")
++		case $op in
++			idle|approve)
++				[ "$busy" = 1 ] &amp;&amp; printf '\a'
++				break
++				;;
++			request)
++				jq '.io.status = "waiting"' "$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++				busy=1
++				paint
++				do_request
++				flush_say
++				paint
++				;;
++			tool)
++				busy=1
++				jq '.io.status = "tools"' "$state" &gt; "$state.new" &amp;&amp; mv "$state.new" "$state"
++				paint
++				do_tool
++				flush_say
++				paint
++				;;
++			*) break ;;
++		esac
++	done
++}
++
++save_session() {
++	[ -n "$session" ] &amp;&amp; [ -f "$state" ] || return 0
++	jq -n --slurpfile st "$state" --rawfile raw "$raw" \
++		'($st[0] | {stack, plan, skill_bodies, skill_catalog, last_ctx}) + {output: ($raw | split("\n"))}' \
++		&gt; "$session.tmp" &amp;&amp; mv "$session.tmp" "$session"
++}
++
++load_session() {
++	if [ -n "$session" ] &amp;&amp; [ -f "$session" ]; then
++		jq '{
++			stack, plan,
++			skill_bodies: (.skill_bodies // {}),
++			skill_catalog: (.skill_catalog // []),
++			last_ctx: (.last_ctx // 0),
++			queue: [], stop: false, ran: null, go: null,
++			io: {op:"idle", status:"idle", label:(.stack[-1].role // "orchestrator"), say:[], ctx:(.last_ctx // 0)}
++		}' "$session" &gt; "$state"
++		jq -r '.output // [] | .[]' "$session" &gt; "$raw"
++		raw_count=$(wc -l &lt; "$raw" | tr -d ' ')
++		printed=0
++	else
++		jq_op init
++		raw_count=0
++	fi
++}
++
++# --- keys ----------------------------------------------------------
++
++k=
++
++submit() {
++	line=$inL$inR
++	inL=
++	inR=
++	op=$(jq -r '.io.op // "idle"' "$state")
++	if [ "$op" = "approve" ]; then
++		jq_op approve "$line"
++		flush_say
++		drive
++		return
++	fi
++	[ -z "$line" ] &amp;&amp; return 0
++	jq_op user "$line"
++	flush_say
++	drive
++}
++
++quit() { exit 0; }
++
++clear_session() {
++	if [ "$in_req" = 1 ]; then
++		drop=1
++		kill_req
++	fi
++	rm -f "$cache/stop"
++	printf 'null\n' &gt; "$resp"
++	: &gt; "$resultf"
++	: &gt; "$imagef"
++	inL=
++	inR=
++	help=0
++	jq_op init || return
++	scan_skills
++	: &gt; "$raw"
++	raw_count=0
++	printed=0
++	append_raw M "session cleared"
++	save_session
++}
++
++handle() {
++	case $k in
++		LEFT) [ -n "$inL" ] &amp;&amp; { c=${inL#"${inL%?}"}; inL=${inL%?}; inR=$c$inR; } ;;
++		RIGHT) [ -n "$inR" ] &amp;&amp; { c=${inR%"${inR#?}"}; inR=${inR#?}; inL=$inL$c; } ;;
++		13|10) submit ;;
++		NL) inL="$inL
++" ;;
++		127) [ -n "$inL" ] &amp;&amp; inL=${inL%?} ;;
++		8) help=$((1 - help)) ;;
++		21) inL=; inR= ;;
++		14) clear_session ;;
++		3)
++			if [ "$(jq -r '.io.op' "$state")" != idle ]; then
++				printf x &gt; "$cache/stop"
++			else
++				inL=; inR=
++			fi
++			;;
++		4) [ -n "$inR" ] &amp;&amp; inR=${inR#?} ;;
++		17) quit ;;
++		P\ *)
++			id=${k#P }
++			chunk=$(cat "$cache/paste.$id"; printf x)
++			chunk=${chunk%x}
++			rm -f "$cache/paste.$id"
++			inL=$inL$chunk
++			;;
++		C\ *) inL=$inL${k#C } ;;
++		*) ;;
++	esac
++}
++
++cleanup() {
++	trap - EXIT INT HUP TERM
++	if [ -n "$kr" ]; then
++		pkill -P "$kr" 2&gt;/dev/null || true
++		kill "$kr" 2&gt;/dev/null || true
++		wait "$kr" 2&gt;/dev/null || true
++	fi
++	kill_req
++	stty sane 2&gt;/dev/null || true
++	if [ "${live:-0}" -gt "${live_row:-1}" ]; then
++		printf '\033[%dB' "$((live - live_row))"
++	fi
++	printf '\n\033[?25h\033[?2004l\033[&lt;u\033[&gt;4;0m'
++	printf '\033]2;\007'
++	save_session
++	rm -f "$cfgfile"
++}
++trap cleanup EXIT INT HUP TERM
++
++[ -t 1 ] || die "not a terminal"
++
++load_session
++scan_skills
++mcp_summary
++# Block until a key, as ereandel does. A timed read restarts od and tr
++# about ten times a second while the prompt is idle.
++# -icrnl keeps Enter as CR. A pasted line feed stays in the prompt.
++# Stay on the main screen so the terminal's own scrollback keeps the output.
++stty -echo -icanon -isig -ixon -icrnl min 1 time 0 \
++	intr undef quit undef susp undef dsusp undef \
++	start undef stop undef kill undef werase undef status undef
++rm -f "$cache/ev"
++mkfifo "$cache/ev" || die "cannot make key fifo"
++exec 8&lt;&gt;"$cache/ev" || die "cannot open key fifo"
++printf '\033[?2004h\033[=1u\033[&gt;4;1m'
++set +m 2&gt;/dev/null || true
++key_reader &amp;
++kr=$!
++paint
++while IFS= read -r k &lt;&amp;8; do
++	[ "$k" = DONE ] &amp;&amp; continue
++	handle
++	paint
++done
+diff --git a/test/cfg.json b/test/cfg.json
+new file mode 100644
+index 0000000..4ad25b1
+--- /dev/null
++++ b/test/cfg.json
+@@ -0,0 +1 @@
++{"provider":"fake","model":"m","auto_approve":false,"use_tools":true,"options":{}}
+diff --git a/test/emit.sh b/test/emit.sh
+new file mode 100644
+index 0000000..ebfe028
+--- /dev/null
++++ b/test/emit.sh
+@@ -0,0 +1,87 @@
++#!/bin/sh
++# Transcript lines are appended once. The terminal keeps the scrollback.
++set -eu
++cd "$(dirname "$0")/.."
++sh -n ./tai
++
++for bad in 'tput smcup' 'tput rmcup' '1000h' '1006h' '1007h' build_screen render_plan hide_plan; do
++	if grep -n -F -- "$bad" ./tai &gt;/dev/null; then
++		echo "FAIL still has $bad" &gt;&amp;2
++		exit 1
++	fi
++done
++
++tmp=$(mktemp -d)
++trap 'rm -rf "$tmp"' EXIT
++mkdir -p "$tmp/cache"
++awk '
++	/^append_raw\(\)/ { p = 1 }
++	/^draw_live\(\)/ { p = 0 }
++	p { print }
++' ./tai &gt; "$tmp/fns.sh"
++sh -n "$tmp/fns.sh"
++# shellcheck disable=SC1091
++. "$tmp/fns.sh"
++
++cache=$tmp/cache
++state=$cache/state.json
++raw=$cache/raw
++raw_count=0
++printed=0
++: &gt; "$raw"
++
++die() {
++	printf 'FAIL %s\n' "$1" &gt;&amp;2
++	exit 1
++}
++
++printf '%s\n' '{"io":{"say":[{"d":0,"k":"U","t":"hello"},{"d":0,"k":"C","t":"read: a"}]}}' &gt; "$state"
++flush_say
++[ "$raw_count" = 3 ] || die "flush count $raw_count"
++grep -q '^Uhello$' "$raw" || die "missing user line"
++grep -q '^Cread: a$' "$raw" || die "missing call"
++
++emit_pending &gt; "$tmp/out"
++[ "$printed" = 3 ] || die "printed $printed"
++grep -F -q "$(printf '\033[1mhello\033[m')" "$tmp/out" || die "user color"
++grep -F -q "$(printf '\033[33mread: a\033[m')" "$tmp/out" || die "call color"
++# The blank row between the two messages is a bare newline.
++awk 'NR==2 &amp;&amp; $0=="" { found=1 } END { exit !found }' "$tmp/out" || die "missing blank"
++
++emit_pending &gt; "$tmp/again"
++[ ! -s "$tmp/again" ] || die "emitted twice"
++
++printf '%s\n' '{"io":{"say":[{"d":0,"k":"T","t":"done"}]}}' &gt; "$state"
++flush_say
++[ "$raw_count" = 5 ] || die "second flush $raw_count"
++emit_pending &gt; "$tmp/more"
++[ "$printed" = 5 ] || die "printed after $printed"
++[ "$(wc -l &lt; "$tmp/more" | tr -d ' ')" = 2 ] || die "new rows $(wc -l &lt; "$tmp/more" | tr -d ' ')"
++grep -F -q "$(printf '\033[2mdone\033[m')" "$tmp/more" || die "dim result"
++grep -F -q 'hello' "$tmp/more" &amp;&amp; die "old line repeated"
++
++rows=24
++ilines=1
++help=0
++cur_line=0
++fit_prompt
++[ "$gap" = 1 ] || die "gap $gap"
++[ "$plines" = 1 ] || die "plines $plines"
++
++ilines=4
++fit_prompt
++[ "$gap" = 0 ] || die "multiline gap"
++[ "$plines" = 4 ] || die "multiline plines $plines"
++
++printf 'one\ntwo\nthree\nfour\nfive\n' &gt; "$cache/help.txt"
++rows=6
++ilines=1
++help=1
++fit_prompt
++[ "$gap" = 0 ] || die "help gap"
++[ "$plines" = 1 ] || die "help plines"
++[ "$help_rows" -le 4 ] || die "help rows $help_rows"
++used=$((1 + gap + plines + help_rows))
++[ "$used" -le "$rows" ] || die "live block $used"
++
++printf 'ok\n'
+diff --git a/test/fs.test.jq b/test/fs.test.jq
+new file mode 100644
+index 0000000..27bfbf8
+--- /dev/null
++++ b/test/fs.test.jq
+@@ -0,0 +1,9 @@
++include "fs";
++
++def expect($n):
++  if . == false or . == null then error($n) else . end;
++
++("a\nb\nc\n" | read_range("2:3") == "2: b\n3: c") | expect("range")
++| ("alpha  beta\ngamma\n" | edit("alpha beta"; "delta"; false) | .ok and (.text | startswith("delta"))) | expect("edit")
++| ("keep\n" | edit("missing"; "x"; false) | (.ok | not) and (.err | contains("Call read on this file"))) | expect("miss")
++| ("one\none\n" | edit("one"; "two"; true) | .text == "two\ntwo\n") | expect("multi")
+diff --git a/test/harness.test.jq b/test/harness.test.jq
+new file mode 100644
+index 0000000..0cc04cb
+--- /dev/null
++++ b/test/harness.test.jq
+@@ -0,0 +1,89 @@
++include "request";
++
++def expect($n; $ok):
++  if $ok then . else error($n) end;
++def text($t):
++  {choices: [{message: {role: "assistant", content: $t}}]};
++def calls($cs):
++  {choices: [{message: {role: "assistant", content: "", tool_calls: $cs}}]};
++def call($id; $name; $args):
++  {id: $id, type: "function", function: {name: $name, arguments: ($args | tojson)}};
++
++(init | on_user("hi") | drive
++  | expect("hi open"; .io.op == "request"
++      and must_tool
++      and ([.io.body.tools[].function.name] | sort) == ["answer","create_task"]
++      and (.io.body.messages[0].content | contains("Call answer"))
++      and (.io.body.messages[0].content | contains("smaller task"))
++      and (.io.body.messages[0].content | contains("Set agent to orchestrator"))
++      and (.io.body.messages[0].content | contains("The goal is what to investigate."))
++      and (.io.body.messages[0].content | contains("An example must stay an example"))
++      and (.io.body.messages[0].content | contains("Do not create a task whose goal is that the work is finished"))
++      and (.io.body.messages[0].content | contains("so the next step is feasible"))
++      and (.io.body.messages[0].content | contains("title is a few words for the plan"))
++      and (.io.body.messages[0].content | contains("the first task quotes the code"))
++      and (.io.body.messages[0].content | contains("states one problem from that report"))
++      and (.io.body.messages[0].content | contains("If a check fails, create a new task for what failed."))
++      and (.io.body.messages[0].content | contains("If you can answer without a change, call answer."))
++      and ([.io.body.tools[].function | select(.name == "create_task") | .parameters.properties.tools.description][0] | contains("The change to one known file: read, shell, and edit."))
++      and ([.io.body.tools[].function | select(.name == "create_task") | .parameters.properties.tools.description][0] | contains("The check: read and shell."))
++      and (.io.body.messages[0].content | contains("explore, understand, design, implement, and test") | not)
++      and (.io.body.messages[0].content | contains("You have no finish tool") | not)
++      and (.io.body.messages[0].content | contains("Create managers and coders only") | not)))
++, (init | on_user("change the parser") | drive
++  | on_resp(calls([call("1"; "create_task"; {goal: "explore the parser", agent: "orchestrator"})])) | drive
++  | expect("nested forced"; .stack[-1].role == "orchestrator" and must_tool
++      and [.io.body.tools[].function.name] == ["create_task"]
++      and (.io.body.messages[0].content | contains("Create managers and coders only"))
++      and (.io.body.messages[0].content | contains("one manager for the next part"))
++      and (.io.body.messages[0].content | contains("not the full report"))
++      and (.io.body.messages[0].content | contains("should help the next steps"))
++      and (.io.body.messages[0].content | contains("An example must stay an example"))
++      and (.io.body.messages[0].content | contains("Do not grant edit"))
++      and (.io.body.messages[0].content | contains("state one problem"))
++      and (.io.body.messages[0].content | contains("Grant read and shell on every part."))
++      and (.io.body.messages[0].content | contains("run the user's examples"))
++      and (.io.body.messages[0].content | contains("requested task and the relevant findings"))
++      and (.io.body.messages[0].content | contains("phase") | not)
++      and (.io.body.messages[0].content | contains("call finish"))
++      and (.io.body.messages[0].content | contains("A greeting is one short reply") | not)
++      and (.io.body.messages[0].content | contains("You have no finish tool") | not))
++  | on_resp(calls([call("m1"; "create_task"; {title: "Quote parser", goal: "quote the parser", agent: "manager", notes: "lines"})])) | drive
++  | expect("manager prompt"; .stack[-1].role == "manager"
++      and (.io.body.messages[0].content | contains("quote evidence, state one problem"))
++      and (.io.body.messages[0].content | contains("Grant read and shell on every outcome."))
++      and (.io.body.messages[0].content | contains("Grant edit only when the outcome is a change to one known file."))))
++, (init | on_user("what is 2+2") | drive
++  | on_resp(calls([call("a"; "answer"; {text: "4"})])) | drive
++  | expect("answer"; .io.op == "idle" and .stack[0].phase == "handoff"
++      and any(.io.say[]; .k == "C" and (.t | contains("4")))))
++, (init | on_user("fix it") | drive
++  | on_resp(calls([call("1"; "create_task"; {goal: "Show README", agent: "coder", tools: ["read", "shell"]})])) | drive
++  | expect("spawn"; (.stack | length) == 2 and .stack[1].role == "coder" and .plan.tasks[0].status == "running"
++      and (.io.body.messages[0].content | contains("If the goal asks for more than one change")))
++  | on_resp(calls([call("2"; "finish"; {result: "README says hi"})])) | drive
++  | expect("revisor"; .stack[-1].role == "revisor"
++      and (.io.body.messages[0].content | contains("Fail an edit when the goal says must not edit."))
++      and (.io.body.messages[0].content | contains("Fail a check that has no command output."))
++      and (.io.body.messages[0].content | contains("Fail a change that is not the problem stated in the notes.")))
++  | on_resp(calls([call("3"; "review"; {status: "pass", result: "fine"})])) | drive
++  | expect("kept"; .plan.tasks[0].status == "ok" and .plan.tasks[0].result == "README says hi" and (.stack | length) == 1)
++  | expect("review"; .stack[0].phase == "review" and .io.op == "request"
++      and any(.io.body.messages[]; (.content // "") | contains("If a check failed, the next goal is that failed example.")))
++  | on_resp(text("all done")) | drive
++  | expect("handoff"; .io.op == "request" and .stack[0].phase == "handoff")
++  | on_resp(text("Ship it.")) | drive
++  | expect("done"; .io.op == "idle"))
++, (init | on_user("fix the parser") | drive
++  | on_resp(calls([call("n1"; "notes"; {action: "write", content: "find the file"})])) | drive
++  | expect("notes refused"; (.last | contains("not granted")) and .plan.notes == "")
++  | on_resp(calls([
++      call("n2"; "create_task"; {title: "Quote lines", goal: "quote the lines", agent: "coder", notes: "file a", tools: ["read", "shell"]}),
++      call("n3"; "create_task"; {goal: "design the change", agent: "orchestrator", notes: "later"})
++    ])) | drive
++  | expect("call shown"; any(.io.say[]; .k == "C" and (.t | contains("title: Quote lines")) and (.t | contains("goal: quote the lines")) and (.t | contains("notes: file a")) and (.t | contains("agent: coder")) and (.t | contains("tools: read shell"))))
++  | expect("one step"; (.plan.tasks | length) == 1 and .plan.tasks[0].notes == "file a" and .stack[-1].role == "coder"))
++, (init | on_user("run something") | drive
++  | on_resp(calls([call("1"; "create_task"; {goal: "List files", agent: "coder", tools: ["shell"]})])) | drive
++  | on_resp(calls([call("2"; "shell"; {command: "rm -rf x"})])) | drive
++  | expect("approve"; .io.op == "approve" and (.io.prompt | contains("rm"))))
+diff --git a/test/null.json b/test/null.json
+new file mode 100644
+index 0000000..19765bd
+--- /dev/null
++++ b/test/null.json
+@@ -0,0 +1 @@
++null
+diff --git a/test/plan.test.jq b/test/plan.test.jq
+new file mode 100644
+index 0000000..5e76293
+--- /dev/null
++++ b/test/plan.test.jq
+@@ -0,0 +1,28 @@
++include "plan";
++
++def expect($n; $ok):
++  if $ok then . else error($n) end;
++
++{stack: [{role: "orchestrator", plan_path: [], depth: 0, task_notes: ""}], plan: empty_plan}
++| plan_create({title: "Read me", goal: "Show the README file in full", agent: "coder", tools: ["read", "shell"]})
++| expect("create"; .last == "Task 1 created." and .plan.tasks[0].title == "Read me")
++| expect("panel title"; (.plan | panel_text | contains("Read me")) and ((.plan | panel_text | contains("Show the README file in full")) | not))
++| plan_create({goal: "Run tests", agent: "coder", notes: "use make"})
++| expect("one step"; (.last | startswith("Error: the next step already exists")) and (.plan.tasks | length) == 1)
++| plan_mark(.stack[-1]; [1]; "running"; null)
++| plan_update({index: "1", goal: "nope"})
++| expect("no update"; (.last | startswith("Error: a task cannot be changed")) and .plan.tasks[0].goal == "Show the README file in full" and .plan.tasks[0].status == "running")
++| plan_delete("1")
++| expect("no delete"; (.last | startswith("Error: a task cannot be removed")) and (.plan.tasks | length) == 1 and .plan.tasks[0].status == "running")
++| expect("panel"; (.plan | panel_text | contains("[RUNNING]")))
++| plan_mark(.stack[-1]; [1]; "ok"; "done")
++| plan_create({goal: "Run tests", agent: "coder", notes: "use make"})
++| expect("next"; .last == "Task 2 created." and .plan.tasks[1].notes == "use make" and .plan.tasks[0].goal == "Show the README file in full")
++| plan_delete("2")
++| expect("kept"; (.last | startswith("Error: a task cannot be removed")) and (.plan.tasks | length) == 2 and .plan.tasks[1].notes == "use make")
++, ({stack: [{role: "orchestrator", plan_path: [], depth: 0, task_notes: ""}], plan: empty_plan}
++| plan_notes_run("write"; "nowhere")
++| expect("notes refused"; (.last | startswith("Error: notes are set in create_task")) and .plan.notes == "")
++| plan_create({goal: "Locate", agent: "coder", notes: "file a", tools: ["read", "shell"]})
++| plan_notes_run("append"; "quote the lines")
++| expect("notes stay"; .plan.tasks[0].notes == "file a" and (.last | startswith("Error: notes are set in create_task"))))
+diff --git a/test/skills.json b/test/skills.json
+new file mode 100644
+index 0000000..fe51488
+--- /dev/null
++++ b/test/skills.json
+@@ -0,0 +1 @@
++[]
+</pre>
