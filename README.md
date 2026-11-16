@@ -1,6 +1,6 @@
 # tai
 
-Terminal client for the tai agent. The Neovim plugin is [tai.nvim](https://github.com/blmayer/tai).
+Terminal client for the tai agent. The Neovim plugin is [tai.nvim](https://github.com/blmayer/tai.nvim).
 
 One POSIX shell script. `jq` and `curl` do the JSON and HTTP. It reads `.tai` from the project (same file as the plugin) and keeps its own session at `.tai-cli-session.json`. The `jq` filters and prompts are read from `$XDG_DATA_HOME/tai` (default `~/.local/share/tai`), then from each directory in `$XDG_DATA_DIRS`.
 
