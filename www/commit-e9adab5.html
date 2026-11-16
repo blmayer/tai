@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai e9adab5</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit e9adab5
+parent <a href=commit-810fd8f.html>810fd8f</a> 
+author Brian Mayer &lt;bleemayer@gmail.com&gt;
+date   2026-11-16T16:36:48-03:00
+
+    Print an answer as the reply, without the tool name.
+
+<a href=tree-e9adab5.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index bb1c160..418f112 100644
+--- a/README.md
++++ b/README.md
+@@ -7,7 +7,6 @@ One POSIX shell script. `jq` and `curl` do the JSON and HTTP. It reads `.tai` fr
+ ```
+ hi
+ 
+-answer
+ Hello.
+ tai  llama_cpp/gemma  orchestrator  [idle]
+ 
+diff --git a/jq/request.jq b/jq/request.jq
+index 590cae0..0756393 100644
+--- a/jq/request.jq
++++ b/jq/request.jq
+@@ -524,7 +524,7 @@ def apply_pure($call):
+         .stack[-1].answer_text = ($a.text | trim)
+         | .stack[-1].phase = "handoff"
+         | .last = "Answered."
+-        | show_call($name; $a)
++        | say("A"; .stack[-1].answer_text)
+       end
+     elif $name == "create_task" then
+       if ((.stack[-1].answer_text // "") | trim) != "" then
+diff --git a/test/harness.test.jq b/test/harness.test.jq
+index 0cc04cb..3387760 100644
+--- a/test/harness.test.jq
++++ b/test/harness.test.jq
+@@ -56,7 +56,8 @@ def call($id; $name; $args):
+ , (init | on_user("what is 2+2") | drive
+   | on_resp(calls([call("a"; "answer"; {text: "4"})])) | drive
+   | expect("answer"; .io.op == "idle" and .stack[0].phase == "handoff"
+-      and any(.io.say[]; .k == "C" and (.t | contains("4")))))
++      and any(.io.say[]; .k == "A" and .t == "4")
++      and (any(.io.say[]; .t == "answer" or (.t | startswith("answer\n"))) | not)))
+ , (init | on_user("fix it") | drive
+   | on_resp(calls([call("1"; "create_task"; {goal: "Show README", agent: "coder", tools: ["read", "shell"]})])) | drive
+   | expect("spawn"; (.stack | length) == 2 and .stack[1].role == "coder" and .plan.tasks[0].status == "running"
+diff --git a/www/index.html b/www/index.html
+index 671fbfb..efdad8d 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -35,7 +35,6 @@ line. the bell rings when the agent stops.
+ 
+ hi
+ 
+-answer
+ Hello.
+ tai  llama_cpp/gemma  orchestrator  [idle]
+ 
+</pre>
