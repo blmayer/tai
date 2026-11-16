@@ -16,22 +16,21 @@
 terminal client for the tai agent. the neovim
 plugin is <a href=https://terminal.pink/tai.nvim/index.html>tai.nvim</a>.
 
-one posix shell script. jq and curl do the json
-and http. it reads <i>.tai</i> from the project
-(the same file as the plugin) and keeps its own
-session at <i>.tai-cli-session.json</i>. the jq
-filters and prompts are read from
-<i>$XDG_DATA_HOME/tai</i> (default
-<i>~/.local/share/tai</i>), then from each directory
-in <i>$XDG_DATA_DIRS</i>.
+one posix shell script. jq and curl do the json and
+http. it reads <i>.tai</i> from the project (the same file
+as the plugin) and keeps its own session at
+<i>.tai-cli-session.json</i>. the jq filters and prompts
+are read from <i>$XDG_DATA_HOME/tai</i> (default
+<i>~/.local/share/tai</i>), then from each directory in
+<i>$XDG_DATA_DIRS</i>.
 
 
 <b>screen</b>
 
 output is appended to the terminal. scroll the
-window to read earlier lines. the input is the
-&gt; line. the terminal title tracks the status
-line. the bell rings when the agent stops.
+window to read earlier lines. the input is the &gt;
+line. the terminal title tracks the status line.
+the bell rings when the agent stops.
 
 hi
 
@@ -40,8 +39,8 @@ tai  llama_cpp/gemma  orchestrator  [idle]
 
 &gt; ctrl-h help
 
-an empty prompt shows ctrl-h help in dim text.
-that text is not part of the line.
+an empty prompt shows ctrl-h help in dim text. that
+text is not part of the line.
 
 
 <b>keys</b>
@@ -61,10 +60,10 @@ ctrl-q     quit
 make test
 make install
 
-make install puts the script in ~/.local/bin
-and the data files in ~/.local/share/tai
-($(PREFIX)/share/tai when PREFIX is set).
-a PREFIX of /usr/local or /usr is found
-through the default XDG_DATA_DIRS.
+make install puts the script in ~/.local/bin and
+the data files in ~/.local/share/tai
+($(PREFIX)/share/tai when PREFIX is set). a PREFIX
+of /usr/local or /usr is found through the default
+XDG_DATA_DIRS.
 
 </pre>
