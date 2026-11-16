@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>tai e80b08d</title>
+<meta name="color-scheme" content="light dark">
+<link rel=icon href=data:,>
+<style>pre{width:52ch;margin:2ch auto;white-space:pre-wrap}a{color:#ff00ff}</style>
+<pre>
+<a href=index.html>tai</a> / <b>commit</b>
+
+<a href=log.html>log</a> | <a href=tree.html>tree</a> | <a href=refs.html>refs</a>
+
+commit e80b08d
+parent <a href=commit-8eb2849.html>8eb2849</a> 
+author Brian Mayer &lt;bleemayer@gmail.com&gt;
+date   2026-11-16T15:34:23-03:00
+
+    Show the real transcript in the sample.
+
+<a href=tree-e80b08d.html>tree</a>
+
+<b>diff</b>
+
+diff --git a/README.md b/README.md
+index e34a30b..7bd8d10 100644
+--- a/README.md
++++ b/README.md
+@@ -5,10 +5,14 @@ Terminal client for the tai agent. The Neovim plugin is [tai.nvim](https://githu
+ One POSIX shell script. `jq` and `curl` do the JSON and HTTP. It reads `.tai` from the project (same file as the plugin) and keeps its own session at `.tai-cli-session.json`. The `jq` filters and prompts are read from `$XDG_DATA_HOME/tai` (default `~/.local/share/tai`), then from each directory in `$XDG_DATA_DIRS`.
+ 
+ ```
++fix the build
++
++ORCHESTRATOR Show the error [1]
++
++  tools: create_task, finish
+ tai  llama_cpp/gemma  orchestrator  [idle]
+-you: fix the build
+-CODER show the error [1]
+-&gt;
++
++&gt; ctrl-h help
+ ```
+ 
+ Output is appended to the terminal. Scroll the window to read earlier lines. The input is the `&gt;` line. The terminal title tracks the status line. The bell rings when the agent stops.
+diff --git a/www/index.html b/www/index.html
+index 4bb5bd4..aeccf3e 100644
+--- a/www/index.html
++++ b/www/index.html
+@@ -33,10 +33,14 @@ window to read earlier lines. the input is the
+ &amp;gt; line. the terminal title tracks the status
+ line. the bell rings when the agent stops.
+ 
++fix the build
++
++ORCHESTRATOR Show the error [1]
++
++  tools: create_task, finish
+ tai  llama_cpp/gemma  orchestrator  [idle]
+-you: fix the build
+-CODER show the error [1]
+-&amp;gt;
++
++&amp;gt; ctrl-h help
+ 
+ an empty prompt shows ctrl-h help in dim text.
+ that text is not part of the line.
+</pre>
