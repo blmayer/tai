@@ -56,7 +56,8 @@ def call($id; $name; $args):
 , (init | on_user("what is 2+2") | drive
   | on_resp(calls([call("a"; "answer"; {text: "4"})])) | drive
   | expect("answer"; .io.op == "idle" and .stack[0].phase == "handoff"
-      and any(.io.say[]; .k == "C" and (.t | contains("4")))))
+      and any(.io.say[]; .k == "A" and .t == "4")
+      and (any(.io.say[]; .t == "answer" or (.t | startswith("answer\n"))) | not)))
 , (init | on_user("fix it") | drive
   | on_resp(calls([call("1"; "create_task"; {goal: "Show README", agent: "coder", tools: ["read", "shell"]})])) | drive
   | expect("spawn"; (.stack | length) == 2 and .stack[1].role == "coder" and .plan.tasks[0].status == "running"

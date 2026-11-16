@@ -524,7 +524,7 @@ def apply_pure($call):
         .stack[-1].answer_text = ($a.text | trim)
         | .stack[-1].phase = "handoff"
         | .last = "Answered."
-        | show_call($name; $a)
+        | say("A"; .stack[-1].answer_text)
       end
     elif $name == "create_task" then
       if ((.stack[-1].answer_text // "") | trim) != "" then

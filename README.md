@@ -7,7 +7,6 @@ One POSIX shell script. `jq` and `curl` do the JSON and HTTP. It reads `.tai` fr
 ```
 hi
 
-answer
 Hello.
 tai  llama_cpp/gemma  orchestrator  [idle]
 
